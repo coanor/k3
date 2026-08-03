@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs::{self, File},
     io::Write,
     path::{Component, Path, PathBuf},
@@ -25,6 +26,7 @@ impl ProjectPath {
         let path = path.into();
         let candidate = Path::new(&path);
         let is_safe = !path.is_empty()
+            && !path.contains(['\\', ':'])
             && !candidate.is_absolute()
             && candidate
                 .components()
@@ -65,6 +67,51 @@ impl<'de> Deserialize<'de> for ProjectPath {
     }
 }
 
+/// Validated lowercase-or-uppercase hexadecimal SHA-256 digest.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CheckpointSha256(String);
+
+impl CheckpointSha256 {
+    /// Parses a checkpoint digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] unless the input contains exactly 64 hexadecimal bytes.
+    pub fn new(value: impl Into<String>) -> Result<Self, ProjectError> {
+        let value = value.into();
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ProjectError::Invalid(
+                "checkpoint SHA-256 must contain 64 hexadecimal characters".into(),
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for CheckpointSha256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for CheckpointSha256 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(de::Error::custom)
+    }
+}
+
 /// Quality/cost profile requested from a separation adapter.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -82,7 +129,7 @@ pub struct ModelProvenance {
     pub provider: String,
     pub architecture: String,
     pub checkpoint_id: String,
-    pub checkpoint_sha256: String,
+    pub checkpoint_sha256: CheckpointSha256,
     pub profile: SeparationProfile,
 }
 
@@ -92,6 +139,26 @@ pub struct SeparationManifest {
     pub vocals: ProjectPath,
     pub accompaniment: ProjectPath,
     pub provenance: ModelProvenance,
+}
+
+impl SeparationManifest {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for path in [&self.vocals, &self.accompaniment] {
+            if !path.as_str().starts_with("stems/") {
+                return Err(format!("stem is outside stems/: {}", path.as_str()));
+            }
+        }
+        for (name, value) in [
+            ("provider", self.provenance.provider.as_str()),
+            ("architecture", self.provenance.architecture.as_str()),
+            ("checkpoint ID", self.provenance.checkpoint_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("model {name} cannot be empty"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Persistent song-preparation state.
@@ -105,6 +172,18 @@ pub enum SeparationState {
     Failed {
         message: String,
     },
+}
+
+impl fmt::Display for SeparationState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::NotRequested => "not requested",
+            Self::Running => "running",
+            Self::Ready(_) => "ready",
+            Self::Failed { .. } => "failed",
+        };
+        formatter.write_str(label)
+    }
 }
 
 /// One immutable dry vocal recording.
@@ -218,8 +297,7 @@ impl Project {
             ProjectPath::new(path.as_str())?;
         }
         if let SeparationState::Ready(manifest) = &self.separation {
-            ProjectPath::new(manifest.vocals.as_str())?;
-            ProjectPath::new(manifest.accompaniment.as_str())?;
+            manifest.validate().map_err(ProjectError::Invalid)?;
         }
         Ok(())
     }

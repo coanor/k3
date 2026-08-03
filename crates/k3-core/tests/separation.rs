@@ -3,8 +3,8 @@ mod support;
 use std::path::Path;
 
 use k3_core::{
-    ModelProvenance, ProjectPath, SeparationFailure, SeparationManifest, SeparationProfile,
-    SeparationState, SongPreparation, StemSeparator,
+    CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure, SeparationManifest,
+    SeparationProfile, SeparationState, SongPreparation, StemSeparator,
 };
 
 struct SuccessfulSeparator;
@@ -24,7 +24,7 @@ impl StemSeparator for SuccessfulSeparator {
                 provider: "local-worker".into(),
                 architecture: "mel-band-roformer".into(),
                 checkpoint_id: "vocals-v1".into(),
-                checkpoint_sha256: "a".repeat(64),
+                checkpoint_sha256: CheckpointSha256::new("a".repeat(64)).unwrap(),
                 profile,
             },
         })
@@ -58,7 +58,7 @@ impl StemSeparator for InvalidManifestSeparator {
                 provider: "broken".into(),
                 architecture: "broken".into(),
                 checkpoint_id: "broken".into(),
-                checkpoint_sha256: "b".repeat(64),
+                checkpoint_sha256: CheckpointSha256::new("b".repeat(64)).unwrap(),
                 profile,
             },
         })
@@ -78,7 +78,10 @@ fn preparation_records_stems_and_model_provenance() {
         panic!("expected prepared project")
     };
     assert_eq!(manifest.accompaniment.as_str(), "stems/accompaniment.wav");
-    assert_eq!(manifest.provenance.checkpoint_sha256, "a".repeat(64));
+    assert_eq!(
+        manifest.provenance.checkpoint_sha256.as_str(),
+        "a".repeat(64)
+    );
 }
 
 #[test]
@@ -114,4 +117,56 @@ fn invalid_worker_manifest_is_recorded_as_a_failure() {
         project.separation(),
         SeparationState::Failed { .. }
     ));
+}
+
+#[test]
+fn preparation_rejects_incomplete_model_provenance() {
+    struct IncompleteProvenance;
+    impl StemSeparator for IncompleteProvenance {
+        fn separate(
+            &mut self,
+            _input: &Path,
+            profile: SeparationProfile,
+        ) -> Result<SeparationManifest, SeparationFailure> {
+            Ok(SeparationManifest {
+                vocals: ProjectPath::new("stems/vocals.wav").unwrap(),
+                accompaniment: ProjectPath::new("stems/accompaniment.wav").unwrap(),
+                provenance: ModelProvenance {
+                    provider: String::new(),
+                    architecture: "model".into(),
+                    checkpoint_id: "v1".into(),
+                    checkpoint_sha256: CheckpointSha256::new("c".repeat(64)).unwrap(),
+                    profile,
+                },
+            })
+        }
+    }
+
+    let mut project = support::project_fixture();
+    let mut preparation = SongPreparation::new(IncompleteProvenance);
+
+    preparation
+        .prepare(&mut project, SeparationProfile::Balanced)
+        .unwrap_err();
+
+    assert!(matches!(
+        project.separation(),
+        SeparationState::Failed { .. }
+    ));
+}
+
+#[test]
+fn preparation_cannot_restart_a_completed_project() {
+    let mut project = support::project_fixture();
+    let mut preparation = SongPreparation::new(SuccessfulSeparator);
+    preparation
+        .prepare(&mut project, SeparationProfile::Quality)
+        .unwrap();
+
+    let error = preparation
+        .prepare(&mut project, SeparationProfile::Quality)
+        .unwrap_err();
+
+    assert!(matches!(error, SeparationFailure::InvalidState(_)));
+    assert!(matches!(project.separation(), SeparationState::Ready(_)));
 }

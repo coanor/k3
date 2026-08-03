@@ -64,6 +64,8 @@ fn project_paths_reject_absolute_and_traversing_locations() {
         "/tmp/escape.wav",
         "../escape.wav",
         "stems/../escape.wav",
+        "C:\\escape.wav",
+        "stems\\..\\escape.wav",
         ".",
     ] {
         assert!(

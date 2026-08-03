@@ -40,6 +40,12 @@ impl<S: StemSeparator> SongPreparation<S> {
         project: &mut Project,
         profile: SeparationProfile,
     ) -> Result<(), SeparationFailure> {
+        if !matches!(project.separation(), SeparationState::NotRequested) {
+            return Err(SeparationFailure::InvalidState(format!(
+                "cannot prepare project while separation is {:?}",
+                project.separation()
+            )));
+        }
         project.set_separation(SeparationState::Running);
         let result = self
             .separator
@@ -69,30 +75,22 @@ pub enum SeparationFailure {
     Worker(String),
     #[error("invalid separation manifest: {0}")]
     InvalidManifest(String),
+    #[error("invalid separation state: {0}")]
+    InvalidState(String),
 }
 
 impl SeparationFailure {
     fn detail(&self) -> &str {
         match self {
-            Self::Worker(message) | Self::InvalidManifest(message) => message,
+            Self::Worker(message)
+            | Self::InvalidManifest(message)
+            | Self::InvalidState(message) => message,
         }
     }
 }
 
 fn validate_manifest(manifest: &SeparationManifest) -> Result<(), SeparationFailure> {
-    for path in [&manifest.vocals, &manifest.accompaniment] {
-        if !path.as_str().starts_with("stems/") {
-            return Err(SeparationFailure::InvalidManifest(format!(
-                "stem is outside stems/: {}",
-                path.as_str()
-            )));
-        }
-    }
-    let sha = &manifest.provenance.checkpoint_sha256;
-    if sha.len() != 64 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(SeparationFailure::InvalidManifest(
-            "checkpoint SHA-256 must contain 64 hexadecimal characters".into(),
-        ));
-    }
-    Ok(())
+    manifest
+        .validate()
+        .map_err(SeparationFailure::InvalidManifest)
 }
