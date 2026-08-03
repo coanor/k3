@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "k3-separator"
+version = "0.1.0"
+description = "Local stem-separation worker for K3"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+gpu = ["audio-separator[gpu]>=0.44.5,<0.45"]
+cpu = ["audio-separator[cpu]>=0.44.5,<0.45"]
+
+[project.scripts]
+k3-separator = "k3_separator.worker:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/k3_separator"]

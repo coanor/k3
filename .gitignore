@@ -1,2 +1,6 @@
 /target/
 *.tmp
+.venv-separator/
+__pycache__/
+*.py[cod]
+.pytest_cache/

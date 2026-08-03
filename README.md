@@ -5,6 +5,9 @@ The current vertical slice creates durable song projects, imports LRC lyrics,
 models recording sessions, and isolates local stem-separation workers behind a
 small Rust interface.
 
+For installation and end-user workflows, see the
+[Chinese user manual](docs/user-manual.md).
+
 ## Build and test
 
 ```bash
@@ -25,7 +28,26 @@ cargo run -p k3 -- show --project ./songs/example
 cargo run -p k3 -- tui --project ./songs/example
 ```
 
-The microphone/audio-device and model-process adapters are deliberately not
-part of this first milestone. See [the MVP specification](docs/mvp-spec.md) for
-scope and acceptance criteria.
+Run the local Python worker through the Rust `StemSeparator` adapter:
 
+```bash
+cargo run -p k3 -- separate \
+  --project ./songs/example \
+  --profile quality \
+  --model mel-band-roformer-kim-vocal-2 \
+  --worker ./.venv-separator/bin/k3-separator \
+  --model-dir ~/.cache/k3/models
+```
+
+The microphone/audio-device adapter is not part of this milestone. Local model
+separation is available through the Python worker and Rust process adapter
+described below. See [the MVP specification](docs/mvp-spec.md) for the original
+slice boundaries and acceptance criteria.
+
+## Local separation worker
+
+The Python JSON-lines worker under [`python/separator`](python/separator) runs
+the local model outside the Rust process. It supports profile defaults, explicit
+checkpoint selection, custom registries, SHA-256 provenance, and normalized
+`vocals.wav` / `accompaniment.wav` output. See its
+[README](python/separator/README.md) for installation and protocol examples.

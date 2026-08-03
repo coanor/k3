@@ -1,0 +1,23 @@
+# Direct audio-separator 0.44.x runtime dependencies, excluding diffq.
+# diffq needs Python development headers on Linux and is not used by the
+# RoFormer, MDX, or non-quantized HTDemucs checkpoints in the built-in registry.
+beartype>=0.18.5,<0.19
+einops>=0.7
+imageio-ffmpeg>=0.6
+julius>=0.2
+librosa>=0.10
+ml-collections
+numpy>=2
+onnx-weekly
+onnx2torch-py313>=1.6
+onnxruntime-gpu>=1.17
+pydub>=0.25
+pyyaml
+requests>=2
+resampy>=0.4
+rotary-embedding-torch>=0.6.1,<0.7
+samplerate==0.1.0
+scipy>=1.13,<2
+six>=1.16
+soundfile>=0.12
+tqdm

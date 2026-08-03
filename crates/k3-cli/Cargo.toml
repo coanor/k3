@@ -9,7 +9,11 @@ clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
-

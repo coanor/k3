@@ -637,6 +637,9 @@ dependencies = [
  "crossterm",
  "k3-core",
  "ratatui",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
