@@ -1,0 +1,14 @@
+//! Domain modules for K3.
+
+mod lyrics;
+mod project;
+mod recording;
+mod separation;
+
+pub use lyrics::{LyricsLine, LyricsTimeline};
+pub use project::{
+    CreateProject, FileProjectRepository, ModelProvenance, Project, ProjectError, ProjectPath,
+    ProjectRepository, SeparationManifest, SeparationProfile, SeparationState, Take,
+};
+pub use recording::{RecordingError, RecordingSession, RecordingState};
+pub use separation::{SeparationFailure, SongPreparation, StemSeparator};

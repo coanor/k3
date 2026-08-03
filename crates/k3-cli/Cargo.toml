@@ -1,0 +1,15 @@
+[package]
+name = "k3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+crossterm.workspace = true
+k3-core = { path = "../k3-core" }
+ratatui.workspace = true
+
+[lints]
+workspace = true
+
