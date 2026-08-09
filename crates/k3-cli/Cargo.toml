@@ -10,9 +10,9 @@ crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 hound = "3.5.1"
 lofty = "0.24.0"
-pitch_shift = "2.1.0"
 ratatui.workspace = true
 rodio = "0.22.2"
+rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
 serde.workspace = true
 serde_json.workspace = true

@@ -19,9 +19,9 @@ use rodio::{ChannelCount, SampleRate, Source, cpal, mixer::Mixer};
 
 const WRITER_QUEUE_DEPTH: usize = 64;
 const MONITOR_BUFFER_MS: usize = 250;
-const WSL_MONITOR_PREFILL_MS: usize = 100;
-const NATIVE_MONITOR_PREFILL_MS: usize = 20;
 const MONITOR_GAIN: f32 = 4.0;
+
+use crate::audio_config;
 
 enum WriterMessage {
     Samples(Vec<f32>),
@@ -69,7 +69,9 @@ impl AudioRecorder {
             .unwrap_or_default();
         let supported = select_input_config(default_config, &supported_ranges);
         let sample_format = supported.sample_format();
-        let config: cpal::StreamConfig = supported.into();
+        let supported_buffer_size = *supported.buffer_size();
+        let mut config: cpal::StreamConfig = supported.into();
+        config.buffer_size = audio_config::input_buffer_size(&supported_buffer_size);
         let channels = config.channels;
         let sample_rate = config.sample_rate;
 
@@ -105,8 +107,12 @@ impl AudioRecorder {
         let stream_error = Arc::new(Mutex::new(None));
         let (monitor_tap, monitor_enabled, monitor_closed) =
             monitor_mixer.map_or((None, None, None), |mixer| {
-                let (tap, source) =
-                    live_monitor(channels, sample_rate, monitor_enabled, monitor_prefill_ms());
+                let (tap, source) = live_monitor(
+                    channels,
+                    sample_rate,
+                    monitor_enabled,
+                    audio_config::monitor_prefill_ms(),
+                );
                 let enabled = Arc::clone(&tap.enabled);
                 let closed = Arc::clone(&tap.closed);
                 mixer.add(source);
@@ -377,20 +383,6 @@ fn live_monitor(
     (tap, source)
 }
 
-fn monitor_prefill_ms() -> usize {
-    fs::read_to_string("/proc/sys/kernel/osrelease").map_or(NATIVE_MONITOR_PREFILL_MS, |release| {
-        monitor_prefill_ms_for_os_release(&release)
-    })
-}
-
-fn monitor_prefill_ms_for_os_release(os_release: &str) -> usize {
-    if os_release.to_ascii_lowercase().contains("microsoft") {
-        WSL_MONITOR_PREFILL_MS
-    } else {
-        NATIVE_MONITOR_PREFILL_MS
-    }
-}
-
 fn select_input_config(
     default: cpal::SupportedStreamConfig,
     supported: &[cpal::SupportedStreamConfigRange],
@@ -422,7 +414,7 @@ fn select_input_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{live_monitor, monitor_prefill_ms_for_os_release, select_input_config};
+    use super::{live_monitor, select_input_config};
     use rodio::cpal::{
         SampleFormat, SupportedBufferSize, SupportedStreamConfig, SupportedStreamConfigRange,
     };
@@ -461,15 +453,6 @@ mod tests {
 
         tap.send(&vec![0.125; 99]);
         assert_eq!(source.next(), Some(0.5));
-    }
-
-    #[test]
-    fn native_linux_uses_a_low_latency_monitor_prefill() {
-        assert_eq!(monitor_prefill_ms_for_os_release("7.0.12-arch1-1"), 20);
-        assert_eq!(
-            monitor_prefill_ms_for_os_release("6.18.33.2-microsoft-standard-WSL2"),
-            100
-        );
     }
 
     #[test]

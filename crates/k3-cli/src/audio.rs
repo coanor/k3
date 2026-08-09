@@ -8,7 +8,7 @@ use std::{
 
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source, cpal};
 
-use crate::pitch::PitchShiftSource;
+use crate::{audio_config, pitch::PitchShiftSource};
 
 /// Owns the operating-system audio stream and one controllable decoded track.
 ///
@@ -24,7 +24,11 @@ impl AudioPlayer {
     pub fn open(path: &Path, key_shift_semitones: i8) -> Result<Self, Box<dyn Error>> {
         let stream_error = Arc::new(Mutex::new(None));
         let callback_state = Arc::clone(&stream_error);
-        let mut device = DeviceSinkBuilder::from_default_device()?
+        let mut builder = DeviceSinkBuilder::from_default_device()?;
+        if let Some(buffer_size) = audio_config::output_buffer_size() {
+            builder = builder.with_buffer_size(buffer_size);
+        }
+        let mut device = builder
             .with_error_callback(move |error| record_stream_error(&callback_state, &error))
             .open_sink_or_fallback()?;
         device.log_on_drop(false);

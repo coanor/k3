@@ -1,4 +1,5 @@
 mod audio;
+mod audio_config;
 mod effects;
 mod lyrics_download;
 mod mix;

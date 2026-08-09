@@ -1,31 +1,32 @@
 use std::time::Duration;
 
-use pitch_shift::{Shifter, TOTAL_F32};
-use rodio::{ChannelCount, SampleRate, Source, source::SeekError};
+use rodio::{
+    ChannelCount, SampleRate, Source,
+    source::{SeekError, Speed, UniformSourceIterator},
+};
+use rodio_wsola::Wsola;
 
-const BLOCK_FRAMES: usize = 128;
-const ALGORITHM_LATENCY_FRAMES: usize = 1024 - BLOCK_FRAMES;
+type ShiftedInput<S> = UniformSourceIterator<Speed<Wsola<S>>>;
 
-type ShifterState = Box<[f32; TOTAL_F32]>;
+pub struct Shifted<S>
+where
+    S: Source,
+{
+    input: ShiftedInput<S>,
+    duration: Option<Duration>,
+    remaining_samples: Option<usize>,
+}
 
-/// A duration-preserving, latency-compensated pitch shifter for interleaved audio.
+/// 保持时长不变的变调音源。
 ///
-/// Channel splitting, fixed-size processing and phase-vocoder latency stay private so
-/// playback and offline rendering share the same small semitone-based interface.
-pub struct PitchShiftSource<S> {
-    input: S,
-    semitones: i8,
-    channels: usize,
-    sample_rate: u32,
-    shifters: Vec<Shifter<ShifterState>>,
-    input_block: Vec<Vec<f32>>,
-    shifted_block: Vec<Vec<f32>>,
-    output_block: Vec<f32>,
-    output_index: usize,
-    skipped_frames: usize,
-    input_frames: usize,
-    emitted_frames: usize,
-    input_ended: bool,
+/// WSOLA 先在不改变音高的前提下补偿时长，随后通过重采样改变音高。
+/// 播放与离线混音共用这个只暴露半音数的小接口。
+pub enum PitchShiftSource<S>
+where
+    S: Source,
+{
+    Unchanged(S),
+    Shifted(Box<Shifted<S>>),
 }
 
 impl<S> PitchShiftSource<S>
@@ -34,100 +35,22 @@ where
 {
     #[must_use]
     pub fn new(input: S, semitones: i8) -> Self {
-        let channels = usize::from(input.channels().get());
-        let sample_rate = input.sample_rate().get();
-        let mut this = Self {
-            input,
-            semitones,
-            channels,
-            sample_rate,
-            shifters: Vec::new(),
-            input_block: Vec::new(),
-            shifted_block: Vec::new(),
-            output_block: Vec::new(),
-            output_index: 0,
-            skipped_frames: 0,
-            input_frames: 0,
-            emitted_frames: 0,
-            input_ended: false,
-        };
-        this.reset_processing();
-        this
-    }
-
-    fn reset_processing(&mut self) {
-        self.shifters = (0..self.channels).map(|_| new_shifter()).collect();
-        self.input_block = vec![vec![0.0; BLOCK_FRAMES]; self.channels];
-        self.shifted_block = vec![vec![0.0; BLOCK_FRAMES]; self.channels];
-        self.output_block.clear();
-        self.output_block.reserve(BLOCK_FRAMES * self.channels);
-        self.output_index = 0;
-        self.skipped_frames = 0;
-        self.input_frames = 0;
-        self.emitted_frames = 0;
-        self.input_ended = false;
-    }
-
-    fn prepare_output(&mut self) -> bool {
-        self.output_block.clear();
-        self.output_index = 0;
-
-        while self.output_block.is_empty() {
-            if self.input_ended && self.emitted_frames >= self.input_frames {
-                return false;
-            }
-
-            for channel in &mut self.input_block {
-                channel.fill(0.0);
-            }
-            let mut actual_frames = 0;
-            if !self.input_ended {
-                for frame in 0..BLOCK_FRAMES {
-                    let mut complete = true;
-                    for channel in 0..self.channels {
-                        if let Some(sample) = self.input.next() {
-                            self.input_block[channel][frame] = sample;
-                        } else {
-                            complete = false;
-                            self.input_ended = true;
-                            break;
-                        }
-                    }
-                    if !complete {
-                        break;
-                    }
-                    actual_frames += 1;
-                }
-                self.input_frames += actual_frames;
-            }
-
-            if actual_frames == 0 && !self.input_ended {
-                continue;
-            }
-
-            for channel in 0..self.channels {
-                let shifted = self.shifters[channel].shift(
-                    &self.input_block[channel],
-                    f32::from(self.semitones),
-                    BLOCK_FRAMES,
-                    sample_rate_as_f32(self.sample_rate),
-                );
-                self.shifted_block[channel].copy_from_slice(shifted);
-            }
-            let skip = (ALGORITHM_LATENCY_FRAMES - self.skipped_frames).min(BLOCK_FRAMES);
-            self.skipped_frames += skip;
-            let available = BLOCK_FRAMES - skip;
-            let remaining = self.input_frames.saturating_sub(self.emitted_frames);
-            let frames_to_emit = available.min(remaining);
-            self.output_block.reserve(frames_to_emit * self.channels);
-            for frame in skip..skip + frames_to_emit {
-                for channel in &self.shifted_block {
-                    self.output_block.push(channel[frame]);
-                }
-            }
-            self.emitted_frames += frames_to_emit;
+        if semitones == 0 {
+            return Self::Unchanged(input);
         }
-        true
+
+        let channels = input.channels();
+        let sample_rate = input.sample_rate();
+        let duration = input.total_duration();
+        let pitch_factor = 2.0_f32.powf(f32::from(semitones) / 12.0);
+        let duration_compensation = pitch_factor.recip();
+        let stretched = Wsola::new(input, duration_compensation).speed(pitch_factor);
+        Self::Shifted(Box::new(Shifted {
+            input: UniformSourceIterator::new(stretched, channels, sample_rate),
+            duration,
+            remaining_samples: duration
+                .and_then(|duration| sample_count(duration, sample_rate, channels)),
+        }))
     }
 }
 
@@ -138,15 +61,17 @@ where
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.semitones == 0 {
-            return self.input.next();
+        match self {
+            Self::Unchanged(input) => input.next(),
+            Self::Shifted(shifted) => match &mut shifted.remaining_samples {
+                Some(0) => None,
+                Some(remaining) => {
+                    *remaining -= 1;
+                    Some(shifted.input.next().unwrap_or(0.0))
+                }
+                None => shifted.input.next(),
+            },
         }
-        if self.output_index >= self.output_block.len() && !self.prepare_output() {
-            return None;
-        }
-        let sample = self.output_block[self.output_index];
-        self.output_index += 1;
-        Some(sample)
     }
 }
 
@@ -155,40 +80,61 @@ where
     S: Source,
 {
     fn current_span_len(&self) -> Option<usize> {
-        None
+        match self {
+            Self::Unchanged(input) => input.current_span_len(),
+            Self::Shifted(shifted) => shifted.remaining_samples,
+        }
     }
 
     fn channels(&self) -> ChannelCount {
-        self.input.channels()
+        match self {
+            Self::Unchanged(input) => input.channels(),
+            Self::Shifted(shifted) => shifted.input.channels(),
+        }
     }
 
     fn sample_rate(&self) -> SampleRate {
-        self.input.sample_rate()
+        match self {
+            Self::Unchanged(input) => input.sample_rate(),
+            Self::Shifted(shifted) => shifted.input.sample_rate(),
+        }
     }
 
     fn total_duration(&self) -> Option<Duration> {
-        self.input.total_duration()
+        match self {
+            Self::Unchanged(input) => input.total_duration(),
+            Self::Shifted(shifted) => shifted.duration,
+        }
     }
 
     fn try_seek(&mut self, position: Duration) -> Result<(), SeekError> {
-        self.input.try_seek(position)?;
-        self.reset_processing();
-        Ok(())
+        match self {
+            Self::Unchanged(input) => input.try_seek(position),
+            Self::Shifted(shifted) => {
+                shifted.input.try_seek(position)?;
+                shifted.remaining_samples = shifted.duration.and_then(|duration| {
+                    sample_count(
+                        duration.saturating_sub(position),
+                        shifted.input.sample_rate(),
+                        shifted.input.channels(),
+                    )
+                });
+                Ok(())
+            }
+        }
     }
 }
 
-fn new_shifter() -> Shifter<ShifterState> {
-    let state: ShifterState = vec![0.0; TOTAL_F32]
-        .into_boxed_slice()
-        .try_into()
-        .expect("pitch shifter state has the declared size");
-    Shifter::new(state)
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn sample_rate_as_f32(sample_rate: u32) -> f32 {
-    // Audio sample rates are several orders of magnitude below f32's exact integer range.
-    sample_rate as f32
+fn sample_count(
+    duration: Duration,
+    sample_rate: SampleRate,
+    channels: ChannelCount,
+) -> Option<usize> {
+    let frames = duration
+        .as_nanos()
+        .checked_mul(u128::from(sample_rate.get()))?
+        / 1_000_000_000;
+    usize::try_from(frames.checked_mul(u128::from(channels.get()))?).ok()
 }
 
 #[cfg(test)]
@@ -208,8 +154,8 @@ mod tests {
     }
 
     #[test]
-    fn shifted_stereo_keeps_duration_and_channel_alignment() {
-        let frames = 4_096_u16;
+    fn shifted_stereo_keeps_duration_pitch_and_channel_alignment() {
+        let frames = 16_000_u16;
         let samples = (0..frames)
             .flat_map(|frame| {
                 let phase = f32::from(frame) * std::f32::consts::TAU * 220.0 / 8_000.0;
@@ -221,25 +167,21 @@ mod tests {
             SampleRate::new(8_000).unwrap(),
             samples.clone(),
         );
-        let shifted = PitchShiftSource::new(source, 6).collect::<Vec<_>>();
+        let shifted = PitchShiftSource::new(source, -4).collect::<Vec<_>>();
 
-        assert_eq!(shifted.len(), samples.len());
+        let frame_delta = shifted.len().abs_diff(samples.len()) / 2;
+        assert!(frame_delta <= 2, "duration differs by {frame_delta} frames");
         assert!(
             shifted
                 .chunks_exact(2)
                 .all(|frame| frame[1].abs() < 0.000_1)
         );
-        let frequency = estimate_frequency(
-            &shifted
-                .chunks_exact(2)
-                .map(|frame| frame[0])
-                .collect::<Vec<_>>()[512..3_584],
-            8_000.0,
-        );
-        assert!(
-            (frequency - 311.1).abs() < 12.0,
-            "frequency was {frequency}"
-        );
+        let left = shifted
+            .chunks_exact(2)
+            .map(|frame| frame[0])
+            .collect::<Vec<_>>();
+        let frequency = estimate_frequency(&left[4_000..12_000], 8_000.0);
+        assert!((frequency - 174.6).abs() < 8.0, "frequency was {frequency}");
     }
 
     fn estimate_frequency(samples: &[f32], sample_rate: f32) -> f32 {
