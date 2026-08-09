@@ -250,6 +250,46 @@ target/release/k3 tui --project ./songs/example --latency-ms 150
 - `Esc`：取消尚未开始的录音预备状态；
 - `q`：退出。
 
+### 人声效果与录后修改
+
+每个 take 独立保存一个人声效果预设：
+
+- `clean`：原声，不增加空间效果；
+- `studio`：轻度棚录混响，声音较近；
+- `ktv`：短回声和中等混响，适合常见包房演唱；
+- `theater`：较宽的中型空间和更长尾音；
+- `church`：大空间、长混响，尾音最长。
+
+效果只处理 dry 人声，再与伴奏重新生成 mix；不会处理伴奏，也不会覆盖或反复
+处理 dry。因此可以在录音结束后多次切换预设。
+
+在 TUI 中：
+
+- `[` / `]`：循环选择已有 take；
+- `e`：切换到下一个效果，重新生成 mix 并立即播放；
+- `4`：播放当前选择的 take mix。
+
+也可以退出 TUI 后使用命令行修改，`--take` 默认为最新 take：
+
+```bash
+target/release/k3 effect \
+  --project ./songs/example \
+  --take latest \
+  --preset ktv
+```
+
+指定旧 take：
+
+```bash
+target/release/k3 effect \
+  --project ./songs/example \
+  --take take-1786272214377 \
+  --preset church
+```
+
+渲染过程先写临时文件，成功后才替换旧 mix，并把预设保存到
+`project.json`。剧场和教堂预设会在录音末尾增加混响尾音。
+
 歌词由播放器的真实位置驱动，暂停和跳转时会同步变化。歌词区域会滚动展示
 上下文：当前行以 `▶` 和黄色粗体高亮，已唱行变暗，并把更多空间留给后续
 待唱歌词。终端越高，可提前看到的歌词越多。如果当前系统没有可用输出设备或

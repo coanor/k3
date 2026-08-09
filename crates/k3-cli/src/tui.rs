@@ -14,7 +14,7 @@ use crossterm::{
 };
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
-    RecordingSession, RecordingState, SeparationState, Take,
+    RecordingSession, RecordingState, SeparationState, Take, VocalEffectPreset,
 };
 use ratatui::{
     Frame, Terminal,
@@ -25,13 +25,18 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{audio::AudioPlayer, mix::render_take_mix, recorder::AudioRecorder};
+use crate::{
+    audio::AudioPlayer,
+    mix::{render_take_mix, render_take_preview},
+    recorder::AudioRecorder,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrackKind {
     Original,
     Accompaniment,
     Vocals,
+    Take,
 }
 
 impl TrackKind {
@@ -40,6 +45,7 @@ impl TrackKind {
             Self::Original => "original",
             Self::Accompaniment => "accompaniment",
             Self::Vocals => "vocals",
+            Self::Take => "take",
         }
     }
 }
@@ -186,6 +192,31 @@ impl PlaybackState {
         self.error = None;
         Ok(())
     }
+
+    fn play_take(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
+        let index = if let Some(index) = self
+            .tracks
+            .iter()
+            .position(|track| track.kind == TrackKind::Take)
+        {
+            self.tracks[index].path = path.to_path_buf();
+            index
+        } else {
+            self.tracks.push(PlaybackTrack {
+                kind: TrackKind::Take,
+                path: path.to_path_buf(),
+            });
+            self.tracks.len() - 1
+        };
+        if let Some(player) = &mut self.audio {
+            player.load(path, Duration::ZERO, true)?;
+        } else {
+            self.audio = Some(AudioPlayer::open(path)?);
+        }
+        self.selected = index;
+        self.error = None;
+        Ok(())
+    }
 }
 
 struct ActiveRecording {
@@ -207,10 +238,12 @@ struct App {
     recording_message: Option<String>,
     project_dirty: bool,
     monitoring_enabled: bool,
+    selected_take: Option<usize>,
 }
 
 impl App {
     fn new(project: Project) -> Self {
+        let selected_take = project.takes().len().checked_sub(1);
         Self {
             playback: PlaybackState::new(playback_tracks(&project)),
             session: RecordingSession::new(project),
@@ -218,6 +251,7 @@ impl App {
             recording_message: None,
             project_dirty: false,
             monitoring_enabled: false,
+            selected_take,
         }
     }
 
@@ -225,6 +259,10 @@ impl App {
         match (self.session.state(), key) {
             (_, KeyCode::Char('m')) => self.toggle_monitoring(),
             (RecordingState::Idle, KeyCode::Char('a')) => self.arm(),
+            (RecordingState::Idle, KeyCode::Char('[')) => self.select_take(-1),
+            (RecordingState::Idle, KeyCode::Char(']')) => self.select_take(1),
+            (RecordingState::Idle, KeyCode::Char('e')) => self.cycle_take_effect(),
+            (RecordingState::Idle, KeyCode::Char('4')) => self.play_selected_take(),
             (RecordingState::Armed, KeyCode::Enter) => self.start_recording(),
             (RecordingState::Armed, KeyCode::Esc) => self.cancel_arm(),
             (RecordingState::Recording, KeyCode::Enter) => {
@@ -262,6 +300,80 @@ impl App {
         } else {
             "麦克风监听已关闭".into()
         });
+    }
+
+    fn select_take(&mut self, direction: i32) {
+        let count = self.session.project().takes().len();
+        let Some(current) = self.selected_take else {
+            self.recording_message = Some("当前 project 还没有 take".into());
+            return;
+        };
+        let next = if direction.is_negative() {
+            current.checked_sub(1).unwrap_or(count - 1)
+        } else {
+            (current + 1) % count
+        };
+        self.selected_take = Some(next);
+        let take = &self.session.project().takes()[next];
+        self.recording_message = Some(format!(
+            "selected take {}/{}: {} · effect {}",
+            next + 1,
+            count,
+            take.id(),
+            take.effect_preset().label()
+        ));
+    }
+
+    fn play_selected_take(&mut self) {
+        let Some(index) = self.selected_take else {
+            self.recording_message = Some("当前 project 还没有 take".into());
+            return;
+        };
+        let Some(relative) = self.session.project().takes()[index].mix_audio() else {
+            self.recording_message = Some("所选 take 还没有 mix，请按 e 生成".into());
+            return;
+        };
+        let path = self
+            .session
+            .project()
+            .root()
+            .join(Path::new(relative.as_str()));
+        let result = self.playback.play_take(&path);
+        self.recording_message = result.err().map_or_else(
+            || Some("playing selected take mix".into()),
+            |error| Some(error.to_string()),
+        );
+    }
+
+    fn cycle_take_effect(&mut self) {
+        let Some(index) = self.selected_take else {
+            self.recording_message = Some("当前 project 还没有 take".into());
+            return;
+        };
+        let take = &self.session.project().takes()[index];
+        let take_id = take.id().to_owned();
+        let preset = take.effect_preset().next();
+        let rendered = match render_take_preview(self.session.project(), &take_id, preset) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                self.recording_message = Some(format!("effect render failed: {error}"));
+                return;
+            }
+        };
+        if let Err(error) = self
+            .session
+            .set_take_render(&take_id, preset, rendered.relative_path)
+        {
+            self.recording_message = Some(error.to_string());
+            return;
+        }
+        self.project_dirty = true;
+        let playback_warning = self.playback.play_take(&rendered.path).err();
+        let _ = self.save_project();
+        self.recording_message = Some(playback_warning.map_or_else(
+            || format!("take effect: {} · mix rebuilt and playing", preset.label()),
+            |error| format!("take effect: {} · playback error: {error}", preset.label()),
+        ));
     }
 
     fn arm(&mut self) {
@@ -379,6 +491,7 @@ impl App {
             &active.dry_final_path,
             &active.mix_temporary_path,
             self.session.project().latency_compensation_ms(),
+            VocalEffectPreset::Clean,
         )
         .and_then(|()| {
             fs::rename(&active.mix_temporary_path, &active.mix_final_path).map_err(Into::into)
@@ -402,6 +515,7 @@ impl App {
             self.recording_message = Some(error.to_string());
             return false;
         }
+        self.selected_take = self.session.project().takes().len().checked_sub(1);
         self.project_dirty = true;
 
         let warning = summary
@@ -493,6 +607,18 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
     let duration = app.playback.audio.as_ref().and_then(AudioPlayer::duration);
     let volume = app.playback.audio.as_ref().map_or(0.0, AudioPlayer::volume);
     let track = app.playback.tracks[app.playback.selected].kind.label();
+    let take_status = app.selected_take.map_or_else(
+        || "selected take: none".to_owned(),
+        |index| {
+            let take = &project.takes()[index];
+            format!(
+                "selected take: {}/{} · effect {}",
+                index + 1,
+                project.takes().len(),
+                take.effect_preset().label()
+            )
+        },
+    );
     let audio_line = if let Some(error) = &app.playback.error {
         format!("audio: {track} · error: {error}")
     } else {
@@ -517,10 +643,11 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
         ]),
         Line::from(format!("source: {}", project.source().as_str())),
         Line::from(format!(
-            "separation: {}  recording: {:?}  takes: {}",
+            "separation: {}  recording: {:?}  takes: {}  {}",
             project.separation(),
             app.session.state(),
-            project.takes().len()
+            project.takes().len(),
+            take_status
         )),
         Line::from(audio_line),
         Line::from(
@@ -549,8 +676,8 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
 
     let footer = Paragraph::new(vec![
         Line::from("Space play/pause · ←/→ seek 5s · r restart · -/+ volume"),
-        Line::from("1 original · 2 accompaniment · 3 vocals · q quit"),
-        Line::from("a arm recording · Enter start/stop · m monitor · Esc cancel arm"),
+        Line::from("1 original · 2 accompaniment · 3 vocals · 4 selected take · q quit"),
+        Line::from("[/] select take · e next effect · a arm · Enter start/stop · m monitor"),
     ])
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, areas[2]);
@@ -683,6 +810,12 @@ fn playback_tracks(project: &Project) -> Vec<PlaybackTrack> {
         tracks.push(PlaybackTrack {
             kind: TrackKind::Vocals,
             path: project.root().join(Path::new(manifest.vocals.as_str())),
+        });
+    }
+    if let Some(mix_audio) = project.takes().last().and_then(Take::mix_audio) {
+        tracks.push(PlaybackTrack {
+            kind: TrackKind::Take,
+            path: project.root().join(Path::new(mix_audio.as_str())),
         });
     }
     tracks

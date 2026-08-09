@@ -186,13 +186,51 @@ impl fmt::Display for SeparationState {
     }
 }
 
-/// One immutable dry vocal recording.
+/// Stable user-facing vocal-effect choices persisted with each take.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VocalEffectPreset {
+    #[default]
+    Clean,
+    Studio,
+    Ktv,
+    Theater,
+    Church,
+}
+
+impl VocalEffectPreset {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Clean => Self::Studio,
+            Self::Studio => Self::Ktv,
+            Self::Ktv => Self::Theater,
+            Self::Theater => Self::Church,
+            Self::Church => Self::Clean,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::Studio => "studio",
+            Self::Ktv => "ktv",
+            Self::Theater => "theater",
+            Self::Church => "church",
+        }
+    }
+}
+
+/// One immutable dry vocal recording plus mutable render choices.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Take {
     id: String,
     dry_audio: ProjectPath,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mix_audio: Option<ProjectPath>,
+    #[serde(default)]
+    effect_preset: VocalEffectPreset,
 }
 
 impl Take {
@@ -202,12 +240,19 @@ impl Take {
             id: id.into(),
             dry_audio,
             mix_audio: None,
+            effect_preset: VocalEffectPreset::Clean,
         }
     }
 
     #[must_use]
     pub fn with_mix_audio(mut self, mix_audio: ProjectPath) -> Self {
         self.mix_audio = Some(mix_audio);
+        self
+    }
+
+    #[must_use]
+    pub fn with_effect_preset(mut self, effect_preset: VocalEffectPreset) -> Self {
+        self.effect_preset = effect_preset;
         self
     }
 
@@ -224,6 +269,11 @@ impl Take {
     #[must_use]
     pub fn mix_audio(&self) -> Option<&ProjectPath> {
         self.mix_audio.as_ref()
+    }
+
+    #[must_use]
+    pub fn effect_preset(&self) -> VocalEffectPreset {
+        self.effect_preset
     }
 }
 
@@ -285,6 +335,11 @@ impl Project {
     }
 
     #[must_use]
+    pub fn take(&self, take_id: &str) -> Option<&Take> {
+        self.takes.iter().find(|take| take.id == take_id)
+    }
+
+    #[must_use]
     pub fn latency_compensation_ms(&self) -> i32 {
         self.latency_compensation_ms
     }
@@ -292,6 +347,27 @@ impl Project {
     /// Sets how far a recorded voice is advanced when rendering a take mix.
     pub fn set_latency_compensation_ms(&mut self, milliseconds: i32) {
         self.latency_compensation_ms = milliseconds;
+    }
+
+    /// Records a successfully rendered mix and the preset used to create it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProjectError::TakeNotFound` when the ID is not part of the project.
+    pub fn set_take_render(
+        &mut self,
+        take_id: &str,
+        preset: VocalEffectPreset,
+        mix_audio: ProjectPath,
+    ) -> Result<(), ProjectError> {
+        let take = self
+            .takes
+            .iter_mut()
+            .find(|take| take.id == take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?;
+        take.effect_preset = preset;
+        take.mix_audio = Some(mix_audio);
+        Ok(())
     }
 
     pub(crate) fn set_separation(&mut self, state: SeparationState) {
@@ -439,6 +515,8 @@ pub enum ProjectError {
     UnsupportedSchema(u32),
     #[error("invalid project: {0}")]
     Invalid(String),
+    #[error("take is not part of this project: {0}")]
+    TakeNotFound(String),
     #[error("media file is not readable: {0}")]
     MissingMedia(PathBuf),
     #[error("path is not valid UTF-8: {0}")]

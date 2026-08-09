@@ -1,4 +1,5 @@
 mod audio;
+mod effects;
 mod mix;
 mod python_separator;
 mod recorder;
@@ -12,6 +13,7 @@ use k3_core::{
     SongPreparation,
 };
 
+use crate::mix::render_take_preview;
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator};
 
 #[derive(Debug, Parser)]
@@ -64,6 +66,16 @@ enum Command {
         #[arg(long)]
         no_autocast: bool,
     },
+    /// Rebuild a recorded take preview with a vocal-effect preset.
+    Effect {
+        #[arg(long)]
+        project: PathBuf,
+        /// Take ID, or "latest" for the newest take.
+        #[arg(long, default_value = "latest")]
+        take: String,
+        #[arg(long, value_enum)]
+        preset: EffectArgument,
+    },
     /// Open the terminal interface. Press q to exit.
     Tui {
         #[arg(long)]
@@ -80,6 +92,27 @@ enum ProfileArgument {
     Balanced,
     Quality,
     Compatible,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum EffectArgument {
+    Clean,
+    Studio,
+    Ktv,
+    Theater,
+    Church,
+}
+
+impl From<EffectArgument> for k3_core::VocalEffectPreset {
+    fn from(value: EffectArgument) -> Self {
+        match value {
+            EffectArgument::Clean => Self::Clean,
+            EffectArgument::Studio => Self::Studio,
+            EffectArgument::Ktv => Self::Ktv,
+            EffectArgument::Theater => Self::Theater,
+            EffectArgument::Church => Self::Church,
+        }
+    }
 }
 
 impl From<ProfileArgument> for SeparationProfile {
@@ -146,6 +179,28 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             repository.save(&project)?;
             result?;
             print_summary(&project);
+        }
+        Command::Effect {
+            project,
+            take,
+            preset,
+        } => {
+            let mut project = repository.open(&project)?;
+            let take_id = if take == "latest" {
+                project
+                    .takes()
+                    .last()
+                    .ok_or("project has no recorded takes")?
+                    .id()
+                    .to_owned()
+            } else {
+                take
+            };
+            let preset = preset.into();
+            let rendered = render_take_preview(&project, &take_id, preset)?;
+            project.set_take_render(&take_id, preset, rendered.relative_path)?;
+            repository.save(&project)?;
+            println!("{}", rendered.path.display());
         }
         Command::Tui {
             project,

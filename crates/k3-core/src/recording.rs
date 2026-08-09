@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{Project, Take};
+use crate::{Project, ProjectError, Take, VocalEffectPreset};
 
 /// Observable state of a dry-vocal recording session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +99,20 @@ impl RecordingSession {
     /// Returns [`RecordingError::InvalidTransition`] unless the session is recording.
     pub fn abort(&mut self) -> Result<(), RecordingError> {
         self.transition(RecordingState::Recording, RecordingState::Idle, "abort")
+    }
+
+    /// Attaches a newly rendered mix and its effect choice to an existing take.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProjectError::TakeNotFound` when the ID is not part of the project.
+    pub fn set_take_render(
+        &mut self,
+        take_id: &str,
+        preset: VocalEffectPreset,
+        mix_audio: crate::ProjectPath,
+    ) -> Result<(), ProjectError> {
+        self.project.set_take_render(take_id, preset, mix_audio)
     }
 
     fn transition(

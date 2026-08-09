@@ -21,6 +21,7 @@ K3 是完全本地运行的终端 K 歌软件。最终产品支持 Windows、mac
 6. 建立录音会话状态机并通过默认输入设备写入 WAV 干声 take；
 7. 工程永久区分原始歌曲、分轨结果、原始干声 take 和试听混音；
 8. TUI 展示工程、歌曲准备状态、录音状态与当前歌词；
+9. 为 take 提供 clean、studio、KTV、剧场和教堂人声效果，并可从 dry 录后重建 mix；
 9. 提供非交互 CLI，方便自动化创建和检查工程。
 
 ## 3. 明确不在本次范围
@@ -131,11 +132,13 @@ arm / start / stop / cancel
 k3 new --root <dir> --song <file> [--lyrics <file>] [--title <title>]
 k3 show --project <dir>
 k3 tui --project <dir>
+k3 effect --project <dir> [--take latest|<id>] --preset <preset>
 ```
 
 - `new` 成功后输出工程目录；
 - `show` 输出人类可读摘要；
 - `tui` 使用终端 alternate screen，滚动展示歌词上下文并高亮当前行，`q` 退出；
+- `effect` 从不可变 dry 重建指定 take 的 mix，并持久化效果预设；
 - CLI 错误输出到 stderr，并返回非零退出码。
 
 ## 7. 质量约束
