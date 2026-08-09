@@ -115,6 +115,15 @@ impl RecordingSession {
         self.project.set_take_render(take_id, preset, mix_audio)
     }
 
+    /// Changes the project key while preserving the immutable dry recordings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] when the shift is outside -6 through +6 semitones.
+    pub fn set_key_shift_semitones(&mut self, semitones: i8) -> Result<(), ProjectError> {
+        self.project.set_key_shift_semitones(semitones)
+    }
+
     fn transition(
         &mut self,
         expected: RecordingState,

@@ -231,6 +231,8 @@ pub struct Take {
     mix_audio: Option<ProjectPath>,
     #[serde(default)]
     effect_preset: VocalEffectPreset,
+    #[serde(default)]
+    rendered_key_semitones: i8,
 }
 
 impl Take {
@@ -241,12 +243,20 @@ impl Take {
             dry_audio,
             mix_audio: None,
             effect_preset: VocalEffectPreset::Clean,
+            rendered_key_semitones: 0,
         }
     }
 
     #[must_use]
     pub fn with_mix_audio(mut self, mix_audio: ProjectPath) -> Self {
         self.mix_audio = Some(mix_audio);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mix_audio_at_key(mut self, mix_audio: ProjectPath, semitones: i8) -> Self {
+        self.mix_audio = Some(mix_audio);
+        self.rendered_key_semitones = semitones;
         self
     }
 
@@ -275,6 +285,11 @@ impl Take {
     pub fn effect_preset(&self) -> VocalEffectPreset {
         self.effect_preset
     }
+
+    #[must_use]
+    pub fn rendered_key_semitones(&self) -> i8 {
+        self.rendered_key_semitones
+    }
 }
 
 /// Persisted karaoke project plus its location on disk.
@@ -290,6 +305,8 @@ pub struct Project {
     separation: SeparationState,
     takes: Vec<Take>,
     latency_compensation_ms: i32,
+    #[serde(default)]
+    key_shift_semitones: i8,
     effects_schema_version: u32,
 }
 
@@ -349,6 +366,27 @@ impl Project {
         self.latency_compensation_ms = milliseconds;
     }
 
+    /// Returns the project-wide backing-track pitch shift in semitones.
+    #[must_use]
+    pub fn key_shift_semitones(&self) -> i8 {
+        self.key_shift_semitones
+    }
+
+    /// Sets the project-wide pitch shift used for playback and rendered backing tracks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] unless the shift is between -6 and +6 semitones.
+    pub fn set_key_shift_semitones(&mut self, semitones: i8) -> Result<(), ProjectError> {
+        if !(-6..=6).contains(&semitones) {
+            return Err(ProjectError::Invalid(
+                "key shift must be between -6 and +6 semitones".into(),
+            ));
+        }
+        self.key_shift_semitones = semitones;
+        Ok(())
+    }
+
     /// Records a successfully rendered mix and the preset used to create it.
     ///
     /// # Errors
@@ -360,6 +398,7 @@ impl Project {
         preset: VocalEffectPreset,
         mix_audio: ProjectPath,
     ) -> Result<(), ProjectError> {
+        let rendered_key_semitones = self.key_shift_semitones;
         let take = self
             .takes
             .iter_mut()
@@ -367,6 +406,7 @@ impl Project {
             .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?;
         take.effect_preset = preset;
         take.mix_audio = Some(mix_audio);
+        take.rendered_key_semitones = rendered_key_semitones;
         Ok(())
     }
 
@@ -385,6 +425,11 @@ impl Project {
         if self.title.trim().is_empty() {
             return Err(ProjectError::Invalid(
                 "project title cannot be empty".into(),
+            ));
+        }
+        if !(-6..=6).contains(&self.key_shift_semitones) {
+            return Err(ProjectError::Invalid(
+                "key shift must be between -6 and +6 semitones".into(),
             ));
         }
         for path in self
@@ -475,6 +520,7 @@ impl ProjectRepository for FileProjectRepository {
             separation: SeparationState::NotRequested,
             takes: Vec::new(),
             latency_compensation_ms: 0,
+            key_shift_semitones: 0,
             effects_schema_version: 1,
         };
         project.validate()?;

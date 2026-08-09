@@ -7,7 +7,7 @@ use std::{
 use k3_core::{Project, ProjectPath, SeparationState, VocalEffectPreset};
 use rodio::{ChannelCount, Decoder, SampleRate, source::UniformSourceIterator};
 
-use crate::effects::VocalEffect;
+use crate::{effects::VocalEffect, pitch::PitchShiftSource};
 
 const VOICE_GAIN: f32 = 4.0;
 const BACKING_GAIN: f32 = 0.65;
@@ -51,6 +51,7 @@ pub fn render_take_preview(
         &project.root().join(Path::new(take.dry_audio().as_str())),
         &temporary,
         project.latency_compensation_ms(),
+        project.key_shift_semitones(),
         preset,
     );
     if let Err(error) = render {
@@ -69,6 +70,7 @@ pub fn render_take_mix(
     dry_path: &Path,
     destination: &Path,
     latency_compensation_ms: i32,
+    key_shift_semitones: i8,
     effect_preset: VocalEffectPreset,
 ) -> Result<(), Box<dyn Error>> {
     let mut dry_reader = hound::WavReader::open(dry_path)?;
@@ -83,11 +85,12 @@ pub fn render_take_mix(
         i64::from(latency_compensation_ms) * i64::from(dry_spec.sample_rate) / 1_000;
 
     let backing = Decoder::try_from(File::open(backing_path)?)?;
-    let mut backing = UniformSourceIterator::new(
+    let backing = UniformSourceIterator::new(
         backing,
         ChannelCount::new(2).expect("mix channel count is non-zero"),
         SampleRate::new(dry_spec.sample_rate).expect("recording sample rate is non-zero"),
     );
+    let mut backing = PitchShiftSource::new(backing, key_shift_semitones);
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: dry_spec.sample_rate,
@@ -153,7 +156,7 @@ mod tests {
         write_wav(&dry, 1, &[0.1; 4]);
         write_wav(&backing, 2, &[0.2; 8]);
 
-        render_take_mix(&backing, &dry, &mix, 0, VocalEffectPreset::Clean).unwrap();
+        render_take_mix(&backing, &dry, &mix, 0, 0, VocalEffectPreset::Clean).unwrap();
 
         let mut reader = hound::WavReader::open(mix).unwrap();
         assert_eq!(reader.spec().channels, 2);
@@ -172,7 +175,7 @@ mod tests {
         write_wav_at_rate(&dry, 1, 1_000, &[0.0, 0.0, 0.1, 0.0]);
         write_wav_at_rate(&backing, 2, 1_000, &[0.0; 8]);
 
-        render_take_mix(&backing, &dry, &mix, 2, VocalEffectPreset::Clean).unwrap();
+        render_take_mix(&backing, &dry, &mix, 2, 0, VocalEffectPreset::Clean).unwrap();
 
         let mut reader = hound::WavReader::open(mix).unwrap();
         let samples: Vec<f32> = reader.samples::<f32>().map(Result::unwrap).collect();
@@ -191,13 +194,54 @@ mod tests {
         write_wav_at_rate(&dry, 1, 1_000, &impulse);
         write_wav_at_rate(&backing, 2, 1_000, &[0.0; 200]);
 
-        render_take_mix(&backing, &dry, &mix, 0, VocalEffectPreset::Church).unwrap();
+        render_take_mix(&backing, &dry, &mix, 0, 0, VocalEffectPreset::Church).unwrap();
 
         let mut reader = hound::WavReader::open(mix).unwrap();
         let samples: Vec<f32> = reader.samples::<f32>().map(Result::unwrap).collect();
         assert!(samples.len() > impulse.len() * 2);
         assert!(samples.iter().all(|sample| sample.is_finite()));
         assert!(samples[2..].iter().any(|sample| sample.abs() > 0.001));
+    }
+
+    #[test]
+    fn shifts_only_the_backing_without_changing_duration() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let dry = sandbox.path().join("dry.wav");
+        let backing = sandbox.path().join("backing.wav");
+        let mix = sandbox.path().join("mix.wav");
+        let frames = 8_000;
+        write_wav_at_rate(&dry, 1, 8_000, &vec![0.0; frames]);
+        let backing_samples = (0..frames)
+            .flat_map(|frame| {
+                let frame = u16::try_from(frame).unwrap();
+                let phase = f32::from(frame) * std::f32::consts::TAU * 220.0 / 8_000.0;
+                [phase.sin() * 0.25, phase.sin() * 0.25]
+            })
+            .collect::<Vec<_>>();
+        write_wav_at_rate(&backing, 2, 8_000, &backing_samples);
+
+        render_take_mix(&backing, &dry, &mix, 0, 6, VocalEffectPreset::Clean).unwrap();
+
+        let mut reader = hound::WavReader::open(mix).unwrap();
+        let samples = reader
+            .samples::<f32>()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        assert_eq!(samples.len(), frames * 2);
+        let left = samples
+            .chunks_exact(2)
+            .map(|frame| frame[0])
+            .collect::<Vec<_>>();
+        let crossings = left[1_000..7_000]
+            .windows(2)
+            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+            .count();
+        let crossings = u16::try_from(crossings).unwrap();
+        let frequency = f32::from(crossings) * 8_000.0 / 6_000.0;
+        assert!(
+            (frequency - 311.1).abs() < 12.0,
+            "frequency was {frequency}"
+        );
     }
 
     #[test]

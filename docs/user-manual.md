@@ -237,6 +237,16 @@ target/release/k3 tui --project ./songs/example --latency-ms 150
 录音预备阶段已经预加载伴奏，开始录音时不会再次解码，以减少每次录音不一致
 的启动延迟。
 
+如需在不改变播放速度的情况下升降调，可以在启动时指定半音数：
+
+```bash
+target/release/k3 tui --project ./songs/example --key -2
+```
+
+允许范围是 `-6..6`，并会保存到 `project.json`。负数降调，正数升调；每次变化
+一个半音。该设置会应用到原曲、伴奏和分离人声的播放，以及新生成的 take
+伴奏，但不会变调麦克风录下的 dry 人声。
+
 播放按键：
 
 - `Space`：暂停或继续；
@@ -244,6 +254,8 @@ target/release/k3 tui --project ./songs/example --latency-ms 150
 - `r`：从头播放；
 - `1` / `2` / `3`：切换原曲、伴奏、人声；
 - `-` / `+`：调整音量；
+- `,` / `.`：降调或升调一个半音；
+- `/`：恢复原 Key（`+0`）；
 - `a`：将录音置于预备状态并把当前音轨归零；
 - `m`：开启或关闭麦克风实时监听（耳返）；
 - `Enter`：从头播放并开始录音；再次按下则停止并保存；
@@ -268,6 +280,10 @@ target/release/k3 tui --project ./songs/example --latency-ms 150
 - `[` / `]`：循环选择已有 take；
 - `e`：切换到下一个效果，重新生成 mix 并立即播放；
 - `4`：播放当前选择的 take mix。
+
+如果修改 Key 后播放旧 take，K3 会使用原始 dry 人声、当前效果和新 Key 的伴奏
+自动重建 mix，再开始播放。dry 人声始终保持不变，已经做进 mix 的人声也不会被
+整体二次变调。
 
 也可以退出 TUI 后使用命令行修改，`--take` 默认为最新 take：
 

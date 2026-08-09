@@ -1,6 +1,7 @@
 mod audio;
 mod effects;
 mod mix;
+mod pitch;
 mod python_separator;
 mod recorder;
 mod tui;
@@ -83,6 +84,9 @@ enum Command {
         /// Advance recorded vocals by this many milliseconds in generated mixes.
         #[arg(long, allow_hyphen_values = true)]
         latency_ms: Option<i32>,
+        /// Shift playback and backing tracks by -6 to +6 semitones without changing speed.
+        #[arg(long, allow_hyphen_values = true)]
+        key: Option<i8>,
     },
 }
 
@@ -205,6 +209,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Command::Tui {
             project,
             latency_ms,
+            key,
         } => {
             let mut project = repository.open(&project)?;
             if let Some(latency_ms) = latency_ms {
@@ -212,6 +217,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     return Err("--latency-ms must be between -1000 and 1000".into());
                 }
                 project.set_latency_compensation_ms(latency_ms);
+                repository.save(&project)?;
+            }
+            if let Some(key) = key {
+                project.set_key_shift_semitones(key)?;
                 repository.save(&project)?;
             }
             tui::open(project)?;
@@ -226,6 +235,7 @@ fn print_summary(project: &Project) {
     println!("source: {}", project.source().as_str());
     println!("separation: {}", project.separation());
     println!("takes: {}", project.takes().len());
+    println!("key shift: {:+} semitones", project.key_shift_semitones());
     println!(
         "latency compensation: {} ms",
         project.latency_compensation_ms()

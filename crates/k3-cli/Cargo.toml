@@ -9,6 +9,7 @@ clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 hound = "3.5.1"
+pitch_shift = "2.1.0"
 ratatui.workspace = true
 rodio = "0.22.2"
 rtrb = "0.3.4"

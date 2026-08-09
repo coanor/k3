@@ -74,3 +74,27 @@ fn project_paths_reject_absolute_and_traversing_locations() {
         );
     }
 }
+
+#[test]
+fn project_key_is_validated_and_persisted() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let song = sandbox.path().join("song.wav");
+    fs::write(&song, b"audio").unwrap();
+    let root = sandbox.path().join("keyed-song");
+    let repository = FileProjectRepository;
+    let mut project = repository
+        .create(CreateProject {
+            root: root.clone(),
+            song,
+            lyrics: None,
+            title: None,
+        })
+        .unwrap();
+
+    assert_eq!(project.key_shift_semitones(), 0);
+    project.set_key_shift_semitones(3).unwrap();
+    repository.save(&project).unwrap();
+    assert_eq!(repository.open(&root).unwrap().key_shift_semitones(), 3);
+    assert!(project.set_key_shift_semitones(7).is_err());
+    assert_eq!(project.key_shift_semitones(), 3);
+}

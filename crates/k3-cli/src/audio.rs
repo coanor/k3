@@ -8,6 +8,8 @@ use std::{
 
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source, cpal};
 
+use crate::pitch::PitchShiftSource;
+
 /// Owns the operating-system audio stream and one controllable decoded track.
 ///
 /// This adapter deliberately knows nothing about the TUI or project format.
@@ -19,7 +21,7 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    pub fn open(path: &Path) -> Result<Self, Box<dyn Error>> {
+    pub fn open(path: &Path, key_shift_semitones: i8) -> Result<Self, Box<dyn Error>> {
         let stream_error = Arc::new(Mutex::new(None));
         let callback_state = Arc::clone(&stream_error);
         let mut device = DeviceSinkBuilder::from_default_device()?
@@ -33,7 +35,7 @@ impl AudioPlayer {
             duration: None,
             stream_error,
         };
-        this.load(path, Duration::ZERO, true)?;
+        this.load(path, Duration::ZERO, true, key_shift_semitones)?;
         Ok(this)
     }
 
@@ -42,11 +44,13 @@ impl AudioPlayer {
         path: &Path,
         position: Duration,
         should_play: bool,
+        key_shift_semitones: i8,
     ) -> Result<(), Box<dyn Error>> {
         let decoder = Decoder::try_from(File::open(path)?)?;
         let duration = decoder.total_duration();
         self.player.clear();
-        self.player.append(decoder);
+        self.player
+            .append(PitchShiftSource::new(decoder, key_shift_semitones));
         self.player.try_seek(position)?;
         if should_play {
             self.player.play();

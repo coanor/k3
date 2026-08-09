@@ -60,16 +60,17 @@ struct PlaybackState {
     selected: usize,
     audio: Option<AudioPlayer>,
     error: Option<String>,
+    key_shift_semitones: i8,
 }
 
 impl PlaybackState {
-    fn new(tracks: Vec<PlaybackTrack>) -> Self {
+    fn new(tracks: Vec<PlaybackTrack>, key_shift_semitones: i8) -> Self {
         let selected = tracks
             .iter()
             .position(|track| track.kind == TrackKind::Accompaniment)
             .unwrap_or(0);
         let mut error = None;
-        let audio = match AudioPlayer::open(&tracks[selected].path) {
+        let audio = match AudioPlayer::open(&tracks[selected].path, key_shift_semitones) {
             Ok(player) => Some(player),
             Err(open_error) => {
                 error = Some(open_error.to_string());
@@ -81,6 +82,7 @@ impl PlaybackState {
             selected,
             audio,
             error,
+            key_shift_semitones,
         }
     }
 
@@ -121,10 +123,10 @@ impl PlaybackState {
             }
             KeyCode::Char('r') => {
                 let path = &self.tracks[self.selected].path;
-                let result = self
-                    .audio
-                    .as_mut()
-                    .map_or(Ok(()), |player| player.load(path, Duration::ZERO, true));
+                let key_shift = self.selected_key_shift();
+                let result = self.audio.as_mut().map_or(Ok(()), |player| {
+                    player.load(path, Duration::ZERO, true, key_shift)
+                });
                 self.update_error(result);
             }
             KeyCode::Char('1') => self.switch_track(TrackKind::Original),
@@ -157,9 +159,19 @@ impl PlaybackState {
         let result = if let Some(player) = &mut self.audio {
             let position = player.position();
             let should_play = !player.is_paused() && !player.is_finished();
-            player.load(&self.tracks[next].path, position, should_play)
+            let key_shift = if self.tracks[next].kind == TrackKind::Take {
+                0
+            } else {
+                self.key_shift_semitones
+            };
+            player.load(&self.tracks[next].path, position, should_play, key_shift)
         } else {
-            AudioPlayer::open(&self.tracks[next].path).map(|player| {
+            let key_shift = if self.tracks[next].kind == TrackKind::Take {
+                0
+            } else {
+                self.key_shift_semitones
+            };
+            AudioPlayer::open(&self.tracks[next].path, key_shift).map(|player| {
                 self.audio = Some(player);
             })
         };
@@ -174,11 +186,17 @@ impl PlaybackState {
     }
 
     fn prepare_recording(&mut self) -> Result<(), Box<dyn Error>> {
+        let key_shift = self.selected_key_shift();
         let player = self
             .audio
             .as_mut()
             .ok_or("playback is unavailable; cannot synchronize recording")?;
-        player.load(&self.tracks[self.selected].path, Duration::ZERO, false)?;
+        player.load(
+            &self.tracks[self.selected].path,
+            Duration::ZERO,
+            false,
+            key_shift,
+        )?;
         self.error = None;
         Ok(())
     }
@@ -209,13 +227,37 @@ impl PlaybackState {
             self.tracks.len() - 1
         };
         if let Some(player) = &mut self.audio {
-            player.load(path, Duration::ZERO, true)?;
+            player.load(path, Duration::ZERO, true, 0)?;
         } else {
-            self.audio = Some(AudioPlayer::open(path)?);
+            self.audio = Some(AudioPlayer::open(path, 0)?);
         }
         self.selected = index;
         self.error = None;
         Ok(())
+    }
+
+    fn selected_key_shift(&self) -> i8 {
+        if self.tracks[self.selected].kind == TrackKind::Take {
+            0
+        } else {
+            self.key_shift_semitones
+        }
+    }
+
+    fn set_key_shift(&mut self, semitones: i8) -> Result<(), Box<dyn Error>> {
+        self.key_shift_semitones = semitones;
+        let key_shift = self.selected_key_shift();
+        let Some(player) = &mut self.audio else {
+            return Ok(());
+        };
+        let position = player.position();
+        let should_play = !player.is_paused() && !player.is_finished();
+        player.load(
+            &self.tracks[self.selected].path,
+            position,
+            should_play,
+            key_shift,
+        )
     }
 }
 
@@ -229,6 +271,7 @@ struct ActiveRecording {
     mix_temporary_path: PathBuf,
     mix_final_path: PathBuf,
     backing_path: PathBuf,
+    backing_key_shift_semitones: i8,
 }
 
 struct App {
@@ -244,8 +287,9 @@ struct App {
 impl App {
     fn new(project: Project) -> Self {
         let selected_take = project.takes().len().checked_sub(1);
+        let key_shift_semitones = project.key_shift_semitones();
         Self {
-            playback: PlaybackState::new(playback_tracks(&project)),
+            playback: PlaybackState::new(playback_tracks(&project), key_shift_semitones),
             session: RecordingSession::new(project),
             active_recording: None,
             recording_message: None,
@@ -263,6 +307,9 @@ impl App {
             (RecordingState::Idle, KeyCode::Char(']')) => self.select_take(1),
             (RecordingState::Idle, KeyCode::Char('e')) => self.cycle_take_effect(),
             (RecordingState::Idle, KeyCode::Char('4')) => self.play_selected_take(),
+            (RecordingState::Idle, KeyCode::Char(',')) => self.adjust_key(-1),
+            (RecordingState::Idle, KeyCode::Char('.')) => self.adjust_key(1),
+            (RecordingState::Idle, KeyCode::Char('/')) => self.reset_key(),
             (RecordingState::Armed, KeyCode::Enter) => self.start_recording(),
             (RecordingState::Armed, KeyCode::Esc) => self.cancel_arm(),
             (RecordingState::Recording, KeyCode::Enter) => {
@@ -329,15 +376,23 @@ impl App {
             self.recording_message = Some("当前 project 还没有 take".into());
             return;
         };
-        let Some(relative) = self.session.project().takes()[index].mix_audio() else {
-            self.recording_message = Some("所选 take 还没有 mix，请按 e 生成".into());
-            return;
+        let take = &self.session.project().takes()[index];
+        let stale = take.mix_audio().is_none()
+            || take.rendered_key_semitones() != self.session.project().key_shift_semitones();
+        let path = if stale {
+            match self.rerender_take(index, take.effect_preset()) {
+                Ok(path) => path,
+                Err(error) => {
+                    self.recording_message = Some(format!("重建 take mix 失败: {error}"));
+                    return;
+                }
+            }
+        } else {
+            self.session
+                .project()
+                .root()
+                .join(Path::new(take.mix_audio().expect("checked above").as_str()))
         };
-        let path = self
-            .session
-            .project()
-            .root()
-            .join(Path::new(relative.as_str()));
         let result = self.playback.play_take(&path);
         self.recording_message = result.err().map_or_else(
             || Some("playing selected take mix".into()),
@@ -350,29 +405,65 @@ impl App {
             self.recording_message = Some("当前 project 还没有 take".into());
             return;
         };
-        let take = &self.session.project().takes()[index];
-        let take_id = take.id().to_owned();
-        let preset = take.effect_preset().next();
-        let rendered = match render_take_preview(self.session.project(), &take_id, preset) {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                self.recording_message = Some(format!("effect render failed: {error}"));
-                return;
+        let preset = self.session.project().takes()[index].effect_preset().next();
+        match self.rerender_take(index, preset) {
+            Ok(path) => {
+                let playback_warning = self.playback.play_take(&path).err();
+                self.recording_message = Some(playback_warning.map_or_else(
+                    || format!("take effect: {} · mix rebuilt and playing", preset.label()),
+                    |error| format!("take effect: {} · playback error: {error}", preset.label()),
+                ));
             }
-        };
-        if let Err(error) = self
-            .session
-            .set_take_render(&take_id, preset, rendered.relative_path)
-        {
+            Err(error) => self.recording_message = Some(format!("effect render failed: {error}")),
+        }
+    }
+
+    fn rerender_take(
+        &mut self,
+        index: usize,
+        preset: VocalEffectPreset,
+    ) -> Result<PathBuf, Box<dyn Error>> {
+        let take_id = self.session.project().takes()[index].id().to_owned();
+        let rendered = render_take_preview(self.session.project(), &take_id, preset)?;
+        let path = rendered.path;
+        self.session
+            .set_take_render(&take_id, preset, rendered.relative_path)?;
+        self.project_dirty = true;
+        if !self.save_project() {
+            return Err("cannot save rebuilt take".into());
+        }
+        Ok(path)
+    }
+
+    fn adjust_key(&mut self, delta: i8) {
+        let current = self.session.project().key_shift_semitones();
+        self.set_key((current + delta).clamp(-6, 6));
+    }
+
+    fn reset_key(&mut self) {
+        self.set_key(0);
+    }
+
+    fn set_key(&mut self, semitones: i8) {
+        if semitones == self.session.project().key_shift_semitones() {
+            self.recording_message = Some(format!("Key {}", format_key(semitones)));
+            return;
+        }
+        if let Err(error) = self.session.set_key_shift_semitones(semitones) {
             self.recording_message = Some(error.to_string());
             return;
         }
         self.project_dirty = true;
-        let playback_warning = self.playback.play_take(&rendered.path).err();
+        let playback_warning = self.playback.set_key_shift(semitones).err();
         let _ = self.save_project();
         self.recording_message = Some(playback_warning.map_or_else(
-            || format!("take effect: {} · mix rebuilt and playing", preset.label()),
-            |error| format!("take effect: {} · playback error: {error}", preset.label()),
+            || {
+                format!(
+                    "Key {} · 已保存；旧 take 将在播放时自动重建",
+                    format_key(semitones)
+                )
+            },
+            |error| format!("Key {} · playback error: {error}", format_key(semitones)),
         ));
     }
 
@@ -443,6 +534,7 @@ impl App {
             mix_temporary_path: paths.mix_temporary_path,
             mix_final_path: paths.mix_final_path,
             backing_path: self.playback.tracks[self.playback.selected].path.clone(),
+            backing_key_shift_semitones: self.playback.selected_key_shift(),
         });
         let monitoring = if self.monitoring_enabled {
             "on · use headphones"
@@ -491,6 +583,7 @@ impl App {
             &active.dry_final_path,
             &active.mix_temporary_path,
             self.session.project().latency_compensation_ms(),
+            active.backing_key_shift_semitones,
             VocalEffectPreset::Clean,
         )
         .and_then(|()| {
@@ -500,7 +593,8 @@ impl App {
         let mix_warning = match mix_result {
             Ok(()) => match ProjectPath::new(active.mix_relative_path) {
                 Ok(path) => {
-                    take = take.with_mix_audio(path);
+                    take = take
+                        .with_mix_audio_at_key(path, self.session.project().key_shift_semitones());
                     None
                 }
                 Err(error) => Some(error.to_string()),
@@ -623,12 +717,13 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
         format!("audio: {track} · error: {error}")
     } else {
         format!(
-            "audio: {} · {} · {} / {} · volume {:.0}%",
+            "audio: {} · {} · {} / {} · volume {:.0}% · Key {}",
             track,
             playback_status,
             format_duration(position),
             duration.map_or_else(|| "--:--".into(), format_duration),
             volume * 100.0,
+            format_key(project.key_shift_semitones()),
         )
     };
     let header = Paragraph::new(vec![
@@ -675,12 +770,18 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
     frame.render_widget(lyric_panel, areas[1]);
 
     let footer = Paragraph::new(vec![
-        Line::from("Space play/pause · ←/→ seek 5s · r restart · -/+ volume"),
+        Line::from("Space play/pause · ←/→ seek 5s · r restart · -/+ volume · ,/. Key -/+"),
         Line::from("1 original · 2 accompaniment · 3 vocals · 4 selected take · q quit"),
-        Line::from("[/] select take · e next effect · a arm · Enter start/stop · m monitor"),
+        Line::from(
+            "[/] select take · e next effect · / reset Key · a arm · Enter start/stop · m monitor",
+        ),
     ])
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, areas[2]);
+}
+
+fn format_key(semitones: i8) -> String {
+    format!("{semitones:+}")
 }
 
 fn lyrics_for_display(
