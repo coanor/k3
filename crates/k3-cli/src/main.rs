@@ -1,3 +1,4 @@
+mod audio;
 mod python_separator;
 mod tui;
 

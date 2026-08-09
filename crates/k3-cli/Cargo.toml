@@ -9,6 +9,7 @@ clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 ratatui.workspace = true
+rodio = "0.22.2"
 serde.workspace = true
 serde_json.workspace = true
 
