@@ -1,5 +1,7 @@
 mod audio;
+mod mix;
 mod python_separator;
+mod recorder;
 mod tui;
 
 use std::{error::Error, path::PathBuf};
@@ -66,6 +68,9 @@ enum Command {
     Tui {
         #[arg(long)]
         project: PathBuf,
+        /// Advance recorded vocals by this many milliseconds in generated mixes.
+        #[arg(long, allow_hyphen_values = true)]
+        latency_ms: Option<i32>,
     },
 }
 
@@ -142,8 +147,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             result?;
             print_summary(&project);
         }
-        Command::Tui { project } => {
-            let project = repository.open(&project)?;
+        Command::Tui {
+            project,
+            latency_ms,
+        } => {
+            let mut project = repository.open(&project)?;
+            if let Some(latency_ms) = latency_ms {
+                if !(-1_000..=1_000).contains(&latency_ms) {
+                    return Err("--latency-ms must be between -1000 and 1000".into());
+                }
+                project.set_latency_compensation_ms(latency_ms);
+                repository.save(&project)?;
+            }
             tui::open(project)?;
         }
     }
@@ -156,4 +171,8 @@ fn print_summary(project: &Project) {
     println!("source: {}", project.source().as_str());
     println!("separation: {}", project.separation());
     println!("takes: {}", project.takes().len());
+    println!(
+        "latency compensation: {} ms",
+        project.latency_compensation_ms()
+    );
 }

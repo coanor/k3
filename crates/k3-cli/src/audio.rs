@@ -1,24 +1,37 @@
-use std::{error::Error, fs::File, path::Path, time::Duration};
+use std::{
+    error::Error,
+    fs::File,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source, cpal};
 
 /// Owns the operating-system audio stream and one controllable decoded track.
 ///
 /// This adapter deliberately knows nothing about the TUI or project format.
 pub struct AudioPlayer {
-    _device: MixerDeviceSink,
+    device: MixerDeviceSink,
     player: Player,
     duration: Option<Duration>,
+    stream_error: Arc<Mutex<Option<String>>>,
 }
 
 impl AudioPlayer {
     pub fn open(path: &Path) -> Result<Self, Box<dyn Error>> {
-        let device = DeviceSinkBuilder::open_default_sink()?;
+        let stream_error = Arc::new(Mutex::new(None));
+        let callback_state = Arc::clone(&stream_error);
+        let mut device = DeviceSinkBuilder::from_default_device()?
+            .with_error_callback(move |error| record_stream_error(&callback_state, &error))
+            .open_sink_or_fallback()?;
+        device.log_on_drop(false);
         let player = Player::connect_new(device.mixer());
         let mut this = Self {
-            _device: device,
+            device,
             player,
             duration: None,
+            stream_error,
         };
         this.load(path, Duration::ZERO, true)?;
         Ok(this)
@@ -50,6 +63,10 @@ impl AudioPlayer {
         } else {
             self.player.pause();
         }
+    }
+
+    pub fn play_prepared(&self) {
+        self.player.play();
     }
 
     pub fn seek_by(&self, seconds: i64) -> Result<(), Box<dyn Error>> {
@@ -86,5 +103,52 @@ impl AudioPlayer {
 
     pub fn is_finished(&self) -> bool {
         self.player.empty()
+    }
+
+    pub fn mixer(&self) -> rodio::mixer::Mixer {
+        self.device.mixer().clone()
+    }
+
+    pub fn take_stream_error(&self) -> Option<String> {
+        self.stream_error.lock().ok()?.take()
+    }
+}
+
+fn record_stream_error(state: &Mutex<Option<String>>, error: &cpal::StreamError) {
+    // WSLg can report a transient output underrun when its microphone stream starts.
+    // CPAL keeps the stream alive, so treating this as fatal only corrupts the TUI.
+    if *error == cpal::StreamError::BufferUnderrun {
+        return;
+    }
+    if let Ok(mut state) = state.lock() {
+        *state = Some(error.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_stream_error;
+    use rodio::cpal::StreamError;
+    use std::sync::Mutex;
+
+    #[test]
+    fn ignores_recoverable_buffer_underrun() {
+        let state = Mutex::new(None);
+        record_stream_error(&state, &StreamError::BufferUnderrun);
+        assert_eq!(*state.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn retains_fatal_stream_error() {
+        let state = Mutex::new(None);
+        record_stream_error(&state, &StreamError::DeviceNotAvailable);
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .as_deref()
+                .unwrap()
+                .contains("no longer available")
+        );
     }
 }

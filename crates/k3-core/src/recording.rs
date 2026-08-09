@@ -80,9 +80,25 @@ impl RecordingSession {
                 take.dry_audio().as_str().to_owned(),
             ));
         }
+        if let Some(mix_audio) = take.mix_audio()
+            && !mix_audio.as_str().starts_with("takes/")
+        {
+            return Err(RecordingError::InvalidTakePath(
+                mix_audio.as_str().to_owned(),
+            ));
+        }
         self.project.add_take(take);
         self.state = RecordingState::Idle;
         Ok(())
+    }
+
+    /// Aborts an active recording without attaching a take.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecordingError::InvalidTransition`] unless the session is recording.
+    pub fn abort(&mut self) -> Result<(), RecordingError> {
+        self.transition(RecordingState::Recording, RecordingState::Idle, "abort")
     }
 
     fn transition(

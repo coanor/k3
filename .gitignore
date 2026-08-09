@@ -1,4 +1,5 @@
 /target/
+/dist/
 *.tmp
 .venv-separator/
 __pycache__/

@@ -48,6 +48,13 @@ impl LyricsTimeline {
     /// Returns the lyric active at `position` after applying a signed offset.
     #[must_use]
     pub fn line_at(&self, position: Duration, offset_ms: i64) -> Option<&LyricsLine> {
+        self.active_index(position, offset_ms)
+            .map(|index| &self.lines[index])
+    }
+
+    /// Returns the index of the lyric active at `position` after a signed offset.
+    #[must_use]
+    pub fn active_index(&self, position: Duration, offset_ms: i64) -> Option<usize> {
         let adjusted_ms =
             i128::try_from(position.as_millis()).unwrap_or(i128::MAX) + i128::from(offset_ms);
         if adjusted_ms < 0 {
@@ -58,7 +65,6 @@ impl LyricsTimeline {
         self.lines
             .partition_point(|line| line.at <= adjusted)
             .checked_sub(1)
-            .map(|index| &self.lines[index])
     }
 }
 

@@ -18,17 +18,16 @@ K3 是完全本地运行的终端 K 歌软件。最终产品支持 Windows、mac
 3. 导入歌曲及可选 LRC 歌词，并保存规范化工程元数据；
 4. 解析 LRC，根据播放位置选择当前歌词，支持全局偏移；
 5. 定义并使用本地分轨 worker seam，业务层不依赖 Demucs、RoFormer 或 Python；
-6. 建立录音会话状态机，禁止非法 start/stop 顺序；
-7. 工程永久区分原始歌曲、分轨结果和原始干声 take；
+6. 建立录音会话状态机并通过默认输入设备写入 WAV 干声 take；
+7. 工程永久区分原始歌曲、分轨结果、原始干声 take 和试听混音；
 8. TUI 展示工程、歌曲准备状态、录音状态与当前歌词；
 9. 提供非交互 CLI，方便自动化创建和检查工程。
 
 ## 3. 明确不在本次范围
 
-- 真实音频设备枚举、WASAPI/CoreAudio/ALSA 回调；
-- 实际写入麦克风 PCM；
+- 手动音频设备选择以及 Windows/macOS 原生输入 adapter；
 - 调用真实 Demucs/RoFormer 权重；
-- 实时监听 DSP、变调、共振峰和混响；
+- 监听效果 DSP、变调、共振峰和混响；
 - 离线混音与 WAV/FLAC/MP3 导出；
 - 在线曲库、在线歌词和评分。
 
@@ -136,7 +135,7 @@ k3 tui --project <dir>
 
 - `new` 成功后输出工程目录；
 - `show` 输出人类可读摘要；
-- `tui` 使用终端 alternate screen，`q` 退出；
+- `tui` 使用终端 alternate screen，滚动展示歌词上下文并高亮当前行，`q` 退出；
 - CLI 错误输出到 stderr，并返回非零退出码。
 
 ## 7. 质量约束
@@ -149,7 +148,7 @@ k3 tui --project <dir>
 
 ## 8. 后续里程碑
 
-1. CPAL 音频设备 adapter 和 WAV 干声录制；
+1. 音频输入设备选择和录音电平显示；
 2. JSON-lines Python worker 与首个分轨模型；
 3. 播放、歌词时钟与设备延迟校准；
 4. 离线效果链和 WAV 渲染；

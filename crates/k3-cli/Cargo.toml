@@ -8,8 +8,10 @@ license.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
+hound = "3.5.1"
 ratatui.workspace = true
 rodio = "0.22.2"
+rtrb = "0.3.4"
 serde.workspace = true
 serde_json.workspace = true
 

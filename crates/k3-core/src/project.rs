@@ -191,6 +191,8 @@ impl fmt::Display for SeparationState {
 pub struct Take {
     id: String,
     dry_audio: ProjectPath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mix_audio: Option<ProjectPath>,
 }
 
 impl Take {
@@ -199,7 +201,14 @@ impl Take {
         Self {
             id: id.into(),
             dry_audio,
+            mix_audio: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_mix_audio(mut self, mix_audio: ProjectPath) -> Self {
+        self.mix_audio = Some(mix_audio);
+        self
     }
 
     #[must_use]
@@ -210,6 +219,11 @@ impl Take {
     #[must_use]
     pub fn dry_audio(&self) -> &ProjectPath {
         &self.dry_audio
+    }
+
+    #[must_use]
+    pub fn mix_audio(&self) -> Option<&ProjectPath> {
+        self.mix_audio.as_ref()
     }
 }
 
@@ -270,6 +284,16 @@ impl Project {
         &self.takes
     }
 
+    #[must_use]
+    pub fn latency_compensation_ms(&self) -> i32 {
+        self.latency_compensation_ms
+    }
+
+    /// Sets how far a recorded voice is advanced when rendering a take mix.
+    pub fn set_latency_compensation_ms(&mut self, milliseconds: i32) {
+        self.latency_compensation_ms = milliseconds;
+    }
+
     pub(crate) fn set_separation(&mut self, state: SeparationState) {
         self.separation = state;
     }
@@ -291,6 +315,7 @@ impl Project {
             .takes
             .iter()
             .map(Take::dry_audio)
+            .chain(self.takes.iter().filter_map(Take::mix_audio))
             .chain(self.lyrics.iter())
             .chain(std::iter::once(&self.source))
         {

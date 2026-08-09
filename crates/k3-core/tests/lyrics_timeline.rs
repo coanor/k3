@@ -30,3 +30,15 @@ fn timeline_returns_nothing_before_the_first_lyric() {
 
     assert_eq!(timeline.line_at(Duration::from_secs(9), 0), None);
 }
+
+#[test]
+fn timeline_reports_the_active_line_index_at_boundaries() {
+    let timeline = LyricsTimeline::parse("[00:01.000]One\n[00:02.000]Two\n[00:03.000]Three");
+
+    assert_eq!(timeline.active_index(Duration::from_millis(999), 0), None);
+    assert_eq!(timeline.active_index(Duration::from_secs(1), 0), Some(0));
+    assert_eq!(
+        timeline.active_index(Duration::from_millis(2_500), 0),
+        Some(1)
+    );
+}
