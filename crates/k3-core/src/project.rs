@@ -341,6 +341,21 @@ impl Project {
         self.lyrics.as_ref()
     }
 
+    /// Attaches a synchronized lyric file stored inside the project `lyrics/` directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] when the path is outside `lyrics/`.
+    pub fn set_lyrics(&mut self, lyrics: ProjectPath) -> Result<(), ProjectError> {
+        if !lyrics.as_str().starts_with("lyrics/") {
+            return Err(ProjectError::Invalid(
+                "lyrics must be stored below lyrics/".into(),
+            ));
+        }
+        self.lyrics = Some(lyrics);
+        Ok(())
+    }
+
     #[must_use]
     pub fn separation(&self) -> &SeparationState {
         &self.separation

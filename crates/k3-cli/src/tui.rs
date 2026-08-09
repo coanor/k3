@@ -285,14 +285,14 @@ struct App {
 }
 
 impl App {
-    fn new(project: Project) -> Self {
+    fn new(project: Project, startup_message: Option<String>) -> Self {
         let selected_take = project.takes().len().checked_sub(1);
         let key_shift_semitones = project.key_shift_semitones();
         Self {
             playback: PlaybackState::new(playback_tracks(&project), key_shift_semitones),
             session: RecordingSession::new(project),
             active_recording: None,
-            recording_message: None,
+            recording_message: startup_message,
             project_dirty: false,
             monitoring_enabled: false,
             selected_take,
@@ -653,9 +653,9 @@ impl App {
     }
 }
 
-pub fn open(project: Project) -> Result<(), Box<dyn Error>> {
+pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box<dyn Error>> {
     let lyrics = load_lyrics(&project)?;
-    let mut app = App::new(project);
+    let mut app = App::new(project, startup_message);
     let mut guard = TerminalGuard::enter()?;
 
     loop {

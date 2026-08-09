@@ -225,6 +225,22 @@ takes: 0
 target/release/k3 tui --project ./songs/example
 ```
 
+如果 project 没有本地歌词，K3 会在进入 TUI 和开始录音前自动查询 LRCLIB。
+查询优先使用音频文件内的歌名、歌手和时长标签；没有标签时使用 project 标题。
+只有带 LRC 时间轴、且与音频时长相差不超过 8 秒的结果才会被采用。下载结果保存
+到 project 的 `lyrics/` 目录并写入 `project.json`。网络不可用或没有可靠匹配时，
+启动过程会依次显示本地检查、LRCLIB 搜索、候选命中和保存位置。单次在线请求
+最长等待 15 秒；首次失败会自动重试一次。两次请求都失败或没有可靠匹配时，
+TUI 会显示具体提示，但仍可正常播放和录音。
+
+如需完全离线启动或不希望进行在线查询：
+
+```bash
+target/release/k3 tui --project ./songs/example --no-lyrics-download
+```
+
+K3 不会覆盖同名但无法解析的本地歌词文件；此时应先检查或移走该文件。
+
 如果录下的人声相对伴奏偏后，可用毫秒数将人声提前，并把设置保存到
 `project.json`：
 

@@ -1,5 +1,6 @@
 mod audio;
 mod effects;
+mod lyrics_download;
 mod mix;
 mod pitch;
 mod python_separator;
@@ -14,6 +15,7 @@ use k3_core::{
     SongPreparation,
 };
 
+use crate::lyrics_download::{LyricsDownload, download_missing_lyrics};
 use crate::mix::render_take_preview;
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator};
 
@@ -87,6 +89,9 @@ enum Command {
         /// Shift playback and backing tracks by -6 to +6 semitones without changing speed.
         #[arg(long, allow_hyphen_values = true)]
         key: Option<i8>,
+        /// project 没有本地同步歌词时，不查询 LRCLIB。
+        #[arg(long)]
+        no_lyrics_download: bool,
     },
 }
 
@@ -210,23 +215,49 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             project,
             latency_ms,
             key,
-        } => {
-            let mut project = repository.open(&project)?;
-            if let Some(latency_ms) = latency_ms {
-                if !(-1_000..=1_000).contains(&latency_ms) {
-                    return Err("--latency-ms must be between -1000 and 1000".into());
-                }
-                project.set_latency_compensation_ms(latency_ms);
-                repository.save(&project)?;
-            }
-            if let Some(key) = key {
-                project.set_key_shift_semitones(key)?;
-                repository.save(&project)?;
-            }
-            tui::open(project)?;
-        }
+            no_lyrics_download,
+        } => open_tui(repository, &project, latency_ms, key, no_lyrics_download)?,
     }
     Ok(())
+}
+
+fn open_tui(
+    repository: FileProjectRepository,
+    project_path: &std::path::Path,
+    latency_ms: Option<i32>,
+    key: Option<i8>,
+    no_lyrics_download: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut project = repository.open(project_path)?;
+    if let Some(latency_ms) = latency_ms {
+        if !(-1_000..=1_000).contains(&latency_ms) {
+            return Err("--latency-ms must be between -1000 and 1000".into());
+        }
+        project.set_latency_compensation_ms(latency_ms);
+        repository.save(&project)?;
+    }
+    if let Some(key) = key {
+        project.set_key_shift_semitones(key)?;
+        repository.save(&project)?;
+    }
+    let lyrics_message = if no_lyrics_download {
+        None
+    } else {
+        match download_missing_lyrics(&mut project, &mut |progress| {
+            eprintln!("{progress}");
+        }) {
+            Ok(LyricsDownload::AlreadyPresent) => None,
+            Ok(LyricsDownload::Downloaded { track, artist }) => {
+                repository.save(&project)?;
+                Some(format!("已从 LRCLIB 下载歌词：{artist} - {track}"))
+            }
+            Ok(LyricsDownload::NotFound) => {
+                Some("LRCLIB 未找到时长匹配的同步歌词；录音仍可继续".into())
+            }
+            Err(error) => Some(format!("自动下载歌词失败：{error}；录音仍可继续")),
+        }
+    };
+    tui::open(project, lyrics_message)
 }
 
 fn print_summary(project: &Project) {
