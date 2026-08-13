@@ -88,6 +88,11 @@ impl AudioPlayer {
         Ok(())
     }
 
+    pub fn seek_to(&self, position: Duration) -> Result<(), Box<dyn Error>> {
+        self.player.try_seek(position)?;
+        Ok(())
+    }
+
     pub fn adjust_volume(&self, delta: f32) {
         self.player
             .set_volume((self.player.volume() + delta).clamp(0.0, 2.0));

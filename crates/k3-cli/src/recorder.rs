@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
@@ -28,10 +28,92 @@ enum WriterMessage {
     Finish,
 }
 
+struct CaptureState {
+    sender: SyncSender<WriterMessage>,
+    overrun: Arc<AtomicBool>,
+    captured_samples: Arc<AtomicU64>,
+    stream_error: Arc<Mutex<Option<String>>>,
+}
+
 pub struct RecordingSummary {
     pub device: String,
     pub duration: Duration,
     pub warning: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordingTimelineAnchor {
+    pub capture_frame: u64,
+    pub song_position: Duration,
+}
+
+/// 按录音期间的播放位置锚点，把连续采集的人声放回歌曲时间轴。
+///
+/// 后录制的片段会覆盖相同歌曲位置上的旧片段，用于录音中按歌词回退重唱。
+pub fn place_recording_on_timeline(
+    source: &Path,
+    destination: &Path,
+    anchors: &[RecordingTimelineAnchor],
+) -> Result<(), Box<dyn Error>> {
+    if anchors.is_empty() {
+        return Err("recording timeline has no initial anchor".into());
+    }
+    if anchors.len() == 1 && anchors[0].capture_frame == 0 && anchors[0].song_position.is_zero() {
+        fs::rename(source, destination)?;
+        return Ok(());
+    }
+
+    let mut reader = hound::WavReader::open(source)?;
+    let spec = reader.spec();
+    let channels = usize::from(spec.channels);
+    let input = reader.samples::<f32>().collect::<Result<Vec<_>, _>>()?;
+    drop(reader);
+    let input_frames = input.len() / channels;
+    let mut output = Vec::<f32>::new();
+
+    for (index, anchor) in anchors.iter().enumerate() {
+        let source_start = usize::try_from(anchor.capture_frame)
+            .unwrap_or(usize::MAX)
+            .min(input_frames);
+        let source_end = anchors
+            .get(index + 1)
+            .and_then(|next| usize::try_from(next.capture_frame).ok())
+            .unwrap_or(input_frames)
+            .clamp(source_start, input_frames);
+        let segment_frames = source_end - source_start;
+        let target_start = duration_to_frames(anchor.song_position, spec.sample_rate)?;
+        let target_end = target_start
+            .checked_add(segment_frames)
+            .ok_or("recording timeline is too long")?;
+        let output_samples = target_end
+            .checked_mul(channels)
+            .ok_or("recording timeline is too large")?;
+        output.resize(output.len().max(output_samples), 0.0);
+
+        for frame in 0..segment_frames {
+            let source_offset = (source_start + frame) * channels;
+            let target_offset = (target_start + frame) * channels;
+            output[target_offset..target_offset + channels]
+                .copy_from_slice(&input[source_offset..source_offset + channels]);
+        }
+    }
+
+    let mut writer = hound::WavWriter::create(destination, spec)?;
+    for sample in output {
+        writer.write_sample(sample)?;
+    }
+    writer.finalize()?;
+    fs::remove_file(source)?;
+    Ok(())
+}
+
+fn duration_to_frames(duration: Duration, sample_rate: u32) -> Result<usize, Box<dyn Error>> {
+    let frames = duration
+        .as_nanos()
+        .checked_mul(u128::from(sample_rate))
+        .ok_or("recording position is too large")?
+        / 1_000_000_000;
+    Ok(usize::try_from(frames)?)
 }
 
 /// Captures the default input device while a dedicated thread writes float WAV.
@@ -49,6 +131,7 @@ pub struct AudioRecorder {
     destination: PathBuf,
     monitor_enabled: Option<Arc<AtomicBool>>,
     monitor_closed: Option<Arc<AtomicBool>>,
+    captured_samples: Arc<AtomicU64>,
 }
 
 impl AudioRecorder {
@@ -104,6 +187,7 @@ impl AudioRecorder {
         });
 
         let overrun = Arc::new(AtomicBool::new(false));
+        let captured_samples = Arc::new(AtomicU64::new(0));
         let stream_error = Arc::new(Mutex::new(None));
         let (monitor_tap, monitor_enabled, monitor_closed) =
             monitor_mixer.map_or((None, None, None), |mixer| {
@@ -122,9 +206,12 @@ impl AudioRecorder {
             &device,
             &config,
             sample_format,
-            sender.clone(),
-            Arc::clone(&overrun),
-            &stream_error,
+            CaptureState {
+                sender: sender.clone(),
+                overrun: Arc::clone(&overrun),
+                captured_samples: Arc::clone(&captured_samples),
+                stream_error: Arc::clone(&stream_error),
+            },
             monitor_tap,
         ) {
             Ok(stream) => stream,
@@ -154,6 +241,7 @@ impl AudioRecorder {
             destination: destination.to_path_buf(),
             monitor_enabled,
             monitor_closed,
+            captured_samples,
         })
     }
 
@@ -165,6 +253,10 @@ impl AudioRecorder {
         if let Some(state) = &self.monitor_enabled {
             state.store(enabled, Ordering::Relaxed);
         }
+    }
+
+    pub fn captured_frames(&self) -> u64 {
+        self.captured_samples.load(Ordering::Relaxed) / u64::from(self.channels)
     }
 
     pub fn stop(self) -> Result<RecordingSummary, Box<dyn Error>> {
@@ -219,14 +311,12 @@ fn build_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     format: SampleFormat,
-    sender: SyncSender<WriterMessage>,
-    overrun: Arc<AtomicBool>,
-    stream_error: &Arc<Mutex<Option<String>>>,
+    state: CaptureState,
     monitor: Option<MonitorTap>,
 ) -> Result<cpal::Stream, Box<dyn Error>> {
     macro_rules! stream {
         ($sample:ty) => {
-            build_typed_stream::<$sample>(device, config, sender, overrun, stream_error, monitor)
+            build_typed_stream::<$sample>(device, config, state, monitor)
         };
     }
     match format {
@@ -249,16 +339,19 @@ fn build_stream(
 fn build_typed_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    sender: SyncSender<WriterMessage>,
-    overrun: Arc<AtomicBool>,
-    stream_error: &Arc<Mutex<Option<String>>>,
+    state: CaptureState,
     mut monitor: Option<MonitorTap>,
 ) -> Result<cpal::Stream, Box<dyn Error>>
 where
     T: Sample + SizedSample + Copy,
     f32: FromSample<T>,
 {
-    let error_state = Arc::clone(stream_error);
+    let CaptureState {
+        sender,
+        overrun,
+        captured_samples,
+        stream_error: error_state,
+    } = state;
     Ok(device.build_input_stream(
         config,
         move |data: &[T], _| {
@@ -266,11 +359,13 @@ where
             if let Some(monitor) = &mut monitor {
                 monitor.send(&samples);
             }
-            if let Err(error) = sender.try_send(WriterMessage::Samples(samples)) {
-                match error {
-                    TrySendError::Full(_) => overrun.store(true, Ordering::Relaxed),
-                    TrySendError::Disconnected(_) => {}
+            let sample_count = u64::try_from(samples.len()).unwrap_or(u64::MAX);
+            match sender.try_send(WriterMessage::Samples(samples)) {
+                Ok(()) => {
+                    captured_samples.fetch_add(sample_count, Ordering::Relaxed);
                 }
+                Err(TrySendError::Full(_)) => overrun.store(true, Ordering::Relaxed),
+                Err(TrySendError::Disconnected(_)) => {}
             }
         },
         move |error| {
@@ -414,11 +509,58 @@ fn select_input_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{live_monitor, select_input_config};
+    use super::{
+        RecordingTimelineAnchor, live_monitor, place_recording_on_timeline, select_input_config,
+    };
     use rodio::cpal::{
         SampleFormat, SupportedBufferSize, SupportedStreamConfig, SupportedStreamConfigRange,
     };
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    #[test]
+    fn later_recording_segment_overwrites_the_revisited_song_position() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let raw = sandbox.path().join("raw.wav");
+        let aligned = sandbox.path().join("aligned.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 2,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(&raw, spec).unwrap();
+        for sample in [1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0] {
+            writer.write_sample(sample).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        place_recording_on_timeline(
+            &raw,
+            &aligned,
+            &[
+                RecordingTimelineAnchor {
+                    capture_frame: 0,
+                    song_position: Duration::ZERO,
+                },
+                RecordingTimelineAnchor {
+                    capture_frame: 4,
+                    song_position: Duration::from_secs(1),
+                },
+            ],
+        )
+        .unwrap();
+
+        let mut reader = hound::WavReader::open(aligned).unwrap();
+        assert_eq!(
+            reader
+                .samples::<f32>()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![1.0, 2.0, 5.0, 6.0]
+        );
+        assert!(!raw.exists());
+    }
 
     #[test]
     fn live_monitor_can_be_toggled_and_applies_monitor_gain() {

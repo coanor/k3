@@ -28,7 +28,7 @@ use ratatui::{
 use crate::{
     audio::AudioPlayer,
     mix::{render_take_mix, render_take_preview},
-    recorder::AudioRecorder,
+    recorder::{AudioRecorder, RecordingTimelineAnchor, place_recording_on_timeline},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +46,15 @@ impl TrackKind {
             Self::Accompaniment => "accompaniment",
             Self::Vocals => "vocals",
             Self::Take => "take",
+        }
+    }
+
+    const fn recording_shortcut(key: KeyCode) -> Option<Self> {
+        match key {
+            KeyCode::Char('1') => Some(Self::Original),
+            KeyCode::Char('2') => Some(Self::Accompaniment),
+            KeyCode::Char('3') => Some(Self::Vocals),
+            _ => None,
         }
     }
 }
@@ -129,9 +138,7 @@ impl PlaybackState {
                 });
                 self.update_error(result);
             }
-            KeyCode::Char('1') => self.switch_track(TrackKind::Original),
-            KeyCode::Char('2') => self.switch_track(TrackKind::Accompaniment),
-            KeyCode::Char('3') => self.switch_track(TrackKind::Vocals),
+            key if let Some(kind) = TrackKind::recording_shortcut(key) => self.switch_track(kind),
             KeyCode::Char('-') => {
                 if let Some(player) = &self.audio {
                     player.adjust_volume(-0.1);
@@ -244,6 +251,14 @@ impl PlaybackState {
         }
     }
 
+    fn accompaniment_path(&self) -> Result<PathBuf, Box<dyn Error>> {
+        self.tracks
+            .iter()
+            .find(|track| track.kind == TrackKind::Accompaniment)
+            .map(|track| track.path.clone())
+            .ok_or_else(|| "project accompaniment is unavailable".into())
+    }
+
     fn set_key_shift(&mut self, semitones: i8) -> Result<(), Box<dyn Error>> {
         self.key_shift_semitones = semitones;
         let key_shift = self.selected_key_shift();
@@ -272,6 +287,7 @@ struct ActiveRecording {
     mix_final_path: PathBuf,
     backing_path: PathBuf,
     backing_key_shift_semitones: i8,
+    timeline: Vec<RecordingTimelineAnchor>,
 }
 
 struct App {
@@ -299,7 +315,7 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, key: KeyCode) -> bool {
+    fn handle_key(&mut self, key: KeyCode, lyrics: Option<&LyricsTimeline>) -> bool {
         match (self.session.state(), key) {
             (_, KeyCode::Char('m')) => self.toggle_monitoring(),
             (RecordingState::Idle, KeyCode::Char('a')) => self.arm(),
@@ -321,9 +337,30 @@ impl App {
             (RecordingState::Recording, KeyCode::Char('-' | '+' | '=')) => {
                 self.playback.handle_key(key);
             }
+            (RecordingState::Recording, KeyCode::Left) => {
+                self.seek_recording_by_lyric(lyrics, -1);
+            }
+            (RecordingState::Recording, KeyCode::Right) => {
+                self.seek_recording_by_lyric(lyrics, 1);
+            }
+            (RecordingState::Recording, key)
+                if let Some(kind) = TrackKind::recording_shortcut(key) =>
+            {
+                self.playback.switch_track(kind);
+                self.anchor_recording_at_playback_position();
+                self.recording_message = self.playback.error.as_ref().map_or_else(
+                    || {
+                        Some(format!(
+                            "录音继续 · 当前监听 {} · take 仍只混入 accompaniment",
+                            self.playback.tracks[self.playback.selected].kind.label()
+                        ))
+                    },
+                    |error| Some(format!("切换监听失败: {error}")),
+                );
+            }
             (RecordingState::Recording, _) => {
                 self.recording_message =
-                    Some("press Enter to stop recording before changing playback".into());
+                    Some("录音中可按 1/2/3 切换监听；按 Enter 停止录音".into());
             }
             (RecordingState::Armed, KeyCode::Char('q')) => {
                 self.cancel_arm();
@@ -347,6 +384,43 @@ impl App {
         } else {
             "麦克风监听已关闭".into()
         });
+    }
+
+    fn seek_recording_by_lyric(&mut self, lyrics: Option<&LyricsTimeline>, direction: i8) {
+        let Some(timeline) = lyrics else {
+            self.recording_message = Some("没有同步歌词，录音中无法按歌词跳转".into());
+            return;
+        };
+        let Some(target) = lyric_seek_target(timeline, self.playback.position(), direction) else {
+            self.recording_message = Some("已经到达歌词时间轴边界".into());
+            return;
+        };
+        let Some(player) = &self.playback.audio else {
+            self.recording_message = Some("playback is unavailable; cannot seek recording".into());
+            return;
+        };
+        if let Err(error) = player.seek_to(target) {
+            self.recording_message = Some(format!("按歌词跳转失败: {error}"));
+            return;
+        }
+        self.anchor_recording(target);
+        self.recording_message = Some(format!(
+            "录音继续 · 已按歌词跳转到 {} · 此后重唱将覆盖对应时间段",
+            format_duration(target)
+        ));
+    }
+
+    fn anchor_recording_at_playback_position(&mut self) {
+        self.anchor_recording(self.playback.position());
+    }
+
+    fn anchor_recording(&mut self, song_position: Duration) {
+        if let Some(active) = &mut self.active_recording {
+            active.timeline.push(RecordingTimelineAnchor {
+                capture_frame: active.recorder.captured_frames(),
+                song_position,
+            });
+        }
     }
 
     fn select_take(&mut self, direction: i32) {
@@ -499,6 +573,14 @@ impl App {
                 return;
             }
         };
+        let backing_path = match self.playback.accompaniment_path() {
+            Ok(path) => path,
+            Err(error) => {
+                self.recording_message = Some(error.to_string());
+                return;
+            }
+        };
+        let backing_key_shift_semitones = self.session.project().key_shift_semitones();
         let monitor_mixer = self.playback.audio.as_ref().map(AudioPlayer::mixer);
         let recorder = match AudioRecorder::start(
             &paths.dry_temporary_path,
@@ -533,8 +615,12 @@ impl App {
             mix_relative_path: paths.mix_relative_path,
             mix_temporary_path: paths.mix_temporary_path,
             mix_final_path: paths.mix_final_path,
-            backing_path: self.playback.tracks[self.playback.selected].path.clone(),
-            backing_key_shift_semitones: self.playback.selected_key_shift(),
+            backing_path,
+            backing_key_shift_semitones,
+            timeline: vec![RecordingTimelineAnchor {
+                capture_frame: 0,
+                song_position: Duration::ZERO,
+            }],
         });
         let monitoring = if self.monitoring_enabled {
             "on · use headphones"
@@ -561,10 +647,14 @@ impl App {
                 return false;
             }
         };
-        if let Err(error) = fs::rename(&active.dry_temporary_path, &active.dry_final_path) {
+        if let Err(error) = place_recording_on_timeline(
+            &active.dry_temporary_path,
+            &active.dry_final_path,
+            &active.timeline,
+        ) {
             let _ = self.session.abort();
             self.recording_message = Some(format!(
-                "cannot commit recording {}; audio remains at {}",
+                "cannot place recording on song timeline: {}; raw audio remains at {}",
                 error,
                 active.dry_temporary_path.display()
             ));
@@ -666,7 +756,7 @@ pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
             && should_handle_key(&key)
-            && app.handle_key(key.code)
+            && app.handle_key(key.code, lyrics.as_ref())
         {
             break;
         }
@@ -770,8 +860,8 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
     frame.render_widget(lyric_panel, areas[1]);
 
     let footer = Paragraph::new(vec![
-        Line::from("Space play/pause · ←/→ seek 5s · r restart · -/+ volume · ,/. Key -/+"),
-        Line::from("1 original · 2 accompaniment · 3 vocals · 4 selected take · q quit"),
+        Line::from("Space play/pause · ←/→ seek 5s（录音中按歌词跳转）· r restart · -/+ volume"),
+        Line::from("1 original · 2 accompaniment · 3 vocals（录音中也可切换）· 4 take · q quit"),
         Line::from(
             "[/] select take · e next effect · / reset Key · a arm · Enter start/stop · m monitor",
         ),
@@ -793,6 +883,7 @@ fn lyrics_for_display(
         || (vec![Line::from("未加载歌词")], String::new()),
         |timeline| {
             let window = lyric_window(timeline, position, visible_rows);
+            let countdown = lyric_countdown(timeline, position);
             let lines = window
                 .range
                 .clone()
@@ -808,12 +899,24 @@ fn lyrics_for_display(
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    let marker = if is_current { "▶ " } else { "  " };
+                    let marker = if is_current {
+                        Span::styled("▶   ", style)
+                    } else if countdown.is_some_and(|countdown| countdown.index == index) {
+                        let seconds = countdown.expect("countdown was just matched").seconds;
+                        Span::styled(
+                            format!("  {seconds} "),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::raw("    ")
+                    };
                     let text = &timeline.lines()[index].text;
-                    Line::from(Span::styled(
-                        format!("{marker}{}", if text.is_empty() { "♪" } else { text }),
-                        style,
-                    ))
+                    Line::from(vec![
+                        marker,
+                        Span::styled(if text.is_empty() { "♪" } else { text }.to_owned(), style),
+                    ])
                 })
                 .collect::<Vec<_>>();
             let progress = window.current.map_or_else(String::new, |current| {
@@ -827,6 +930,51 @@ fn lyrics_for_display(
             (lines, progress)
         },
     )
+}
+
+fn lyric_seek_target(
+    timeline: &LyricsTimeline,
+    position: Duration,
+    direction: i8,
+) -> Option<Duration> {
+    let lines = timeline.lines();
+    if direction < 0 {
+        let current = lines.partition_point(|line| line.at <= position);
+        let target = current.checked_sub(2)?;
+        return lines.get(target).map(|line| line.at);
+    }
+    let next = lines.partition_point(|line| line.at <= position);
+    lines.get(next).map(|line| line.at)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LyricCountdown {
+    index: usize,
+    seconds: u8,
+}
+
+/// 返回下一句歌词进入前三秒内的视觉倒计时。
+///
+/// 相邻歌词不足一秒时不提示，避免快速歌词持续闪烁。
+fn lyric_countdown(timeline: &LyricsTimeline, position: Duration) -> Option<LyricCountdown> {
+    let next = timeline.lines().partition_point(|line| line.at <= position);
+    let next_line = timeline.lines().get(next)?;
+    let interval_start = next
+        .checked_sub(1)
+        .map_or(Duration::ZERO, |index| timeline.lines()[index].at);
+    if next_line.at.saturating_sub(interval_start) < Duration::from_secs(1) {
+        return None;
+    }
+
+    let remaining = next_line.at.saturating_sub(position);
+    if remaining.is_zero() || remaining > Duration::from_secs(3) {
+        return None;
+    }
+    let seconds = remaining.as_nanos().div_ceil(1_000_000_000);
+    Some(LyricCountdown {
+        index: next,
+        seconds: u8::try_from(seconds).expect("three-second countdown fits in u8"),
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -970,7 +1118,10 @@ impl Drop for TerminalGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_duration, lyric_window, should_handle_key};
+    use super::{
+        LyricCountdown, PlaybackState, PlaybackTrack, TrackKind, format_duration, lyric_countdown,
+        lyric_seek_target, lyric_window, should_handle_key,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use k3_core::LyricsTimeline;
     use std::time::Duration;
@@ -990,6 +1141,124 @@ mod tests {
 
         assert_eq!(window.range, 2..7);
         assert_eq!(window.current, Some(3));
+    }
+
+    #[test]
+    fn lyric_countdown_shows_at_most_three_seconds_for_the_next_line() {
+        let timeline = LyricsTimeline::parse("[00:02.000]第一句\n[00:07.000]第二句");
+
+        assert_eq!(
+            lyric_countdown(&timeline, Duration::ZERO),
+            Some(LyricCountdown {
+                index: 0,
+                seconds: 2
+            })
+        );
+        assert_eq!(
+            lyric_countdown(&timeline, Duration::from_millis(500)),
+            Some(LyricCountdown {
+                index: 0,
+                seconds: 2
+            })
+        );
+        assert_eq!(
+            lyric_countdown(&timeline, Duration::from_millis(4_001)),
+            Some(LyricCountdown {
+                index: 1,
+                seconds: 3
+            })
+        );
+        assert_eq!(
+            lyric_countdown(&timeline, Duration::from_millis(6_001)),
+            Some(LyricCountdown {
+                index: 1,
+                seconds: 1
+            })
+        );
+        assert_eq!(lyric_countdown(&timeline, Duration::from_secs(7)), None);
+    }
+
+    #[test]
+    fn lyric_countdown_ignores_intervals_shorter_than_one_second() {
+        let timeline = LyricsTimeline::parse("[00:02.000]快\n[00:02.900]歌词");
+
+        assert_eq!(
+            lyric_countdown(&timeline, Duration::from_millis(2_100)),
+            None
+        );
+    }
+
+    #[test]
+    fn recording_arrows_seek_to_previous_and_next_lyric_timestamps() {
+        let timeline =
+            LyricsTimeline::parse("[00:01.000]第一句\n[00:04.000]第二句\n[00:08.000]第三句");
+
+        assert_eq!(
+            lyric_seek_target(&timeline, Duration::from_secs(5), -1),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            lyric_seek_target(&timeline, Duration::from_secs(5), 1),
+            Some(Duration::from_secs(8))
+        );
+        assert_eq!(
+            lyric_seek_target(&timeline, Duration::from_millis(500), 1),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            lyric_seek_target(&timeline, Duration::from_secs(1), -1),
+            None
+        );
+        assert_eq!(
+            lyric_seek_target(&timeline, Duration::from_secs(9), 1),
+            None
+        );
+    }
+
+    #[test]
+    fn recording_shortcuts_allow_switching_between_the_three_source_tracks() {
+        assert_eq!(
+            TrackKind::recording_shortcut(KeyCode::Char('1')),
+            Some(TrackKind::Original)
+        );
+        assert_eq!(
+            TrackKind::recording_shortcut(KeyCode::Char('2')),
+            Some(TrackKind::Accompaniment)
+        );
+        assert_eq!(
+            TrackKind::recording_shortcut(KeyCode::Char('3')),
+            Some(TrackKind::Vocals)
+        );
+        assert_eq!(TrackKind::recording_shortcut(KeyCode::Char('4')), None);
+    }
+
+    #[test]
+    fn take_backing_is_accompaniment_even_when_original_is_selected() {
+        let playback = PlaybackState {
+            tracks: vec![
+                PlaybackTrack {
+                    kind: TrackKind::Original,
+                    path: "original.flac".into(),
+                },
+                PlaybackTrack {
+                    kind: TrackKind::Accompaniment,
+                    path: "stems/accompaniment.wav".into(),
+                },
+                PlaybackTrack {
+                    kind: TrackKind::Vocals,
+                    path: "stems/vocals.wav".into(),
+                },
+            ],
+            selected: 0,
+            audio: None,
+            error: None,
+            key_shift_semitones: 0,
+        };
+
+        assert_eq!(
+            playback.accompaniment_path().unwrap(),
+            std::path::PathBuf::from("stems/accompaniment.wav")
+        );
     }
 
     #[test]

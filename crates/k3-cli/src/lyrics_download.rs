@@ -31,6 +31,9 @@ pub enum LyricsProgress {
         title: String,
         artist: Option<String>,
     },
+    FallingBackToTitle {
+        title: String,
+    },
     RetryingOnline {
         reason: String,
     },
@@ -57,6 +60,9 @@ impl fmt::Display for LyricsProgress {
                 } else {
                     write!(formatter, "本地没有歌词，正在从 LRCLIB 搜索：{title}……")
                 }
+            }
+            Self::FallingBackToTitle { title } => {
+                write!(formatter, "按歌手没有结果，正在只按曲名重试：{title}……")
             }
             Self::RetryingOnline { reason } => {
                 write!(formatter, "LRCLIB 请求失败：{reason}；正在重试（2/2）……")
@@ -122,7 +128,7 @@ fn download_with_catalog(
         title: lookup.title.clone(),
         artist: lookup.artist.clone(),
     });
-    let candidates = search_with_retry(catalog, &lookup, progress)?;
+    let candidates = search_candidates(catalog, &lookup, progress)?;
     let Some(candidate) = select_candidate(candidates, lookup.duration) else {
         return Ok(LyricsDownload::NotFound);
     };
@@ -148,6 +154,27 @@ fn download_with_catalog(
         track: candidate.track_name,
         artist: candidate.artist_name,
     })
+}
+
+fn search_candidates(
+    catalog: &dyn LyricsCatalog,
+    lookup: &LyricsLookup,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+    let candidates = search_with_retry(catalog, lookup, progress)?;
+    if !candidates.is_empty() || lookup.artist.is_none() {
+        return Ok(candidates);
+    }
+
+    progress(&LyricsProgress::FallingBackToTitle {
+        title: lookup.title.clone(),
+    });
+    let title_only = LyricsLookup {
+        title: lookup.title.clone(),
+        artist: None,
+        duration: lookup.duration,
+    };
+    search_with_retry(catalog, &title_only, progress)
 }
 
 #[derive(Debug)]
@@ -320,12 +347,54 @@ fn write_atomically(destination: &Path, lyrics: &str) -> Result<(), Box<dyn Erro
 mod tests {
     use super::{
         LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, download_with_catalog,
+        search_candidates,
     };
     use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
     use std::{cell::Cell, error::Error, fs, io};
 
     struct FakeCatalog {
         candidates: Vec<LyricsCandidate>,
+    }
+
+    struct ArtistFallbackCatalog {
+        calls: Cell<usize>,
+    }
+
+    impl LyricsCatalog for ArtistFallbackCatalog {
+        fn search(&self, lookup: &LyricsLookup) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+            self.calls.set(self.calls.get() + 1);
+            if lookup.artist.is_some() {
+                return Ok(vec![]);
+            }
+            Ok(vec![LyricsCandidate {
+                track_name: "昨夜星辰".into(),
+                artist_name: "高胜美".into(),
+                duration: 199.0,
+                synced_lyrics: Some("[00:01.00]昨夜的昨夜的星辰".into()),
+            }])
+        }
+    }
+
+    #[test]
+    fn retries_by_title_when_the_tagged_artist_has_no_catalog_result() {
+        let catalog = ArtistFallbackCatalog {
+            calls: Cell::new(0),
+        };
+        let lookup = LyricsLookup {
+            title: "昨夜星辰".into(),
+            artist: Some("龙飘飘".into()),
+            duration: Some(std::time::Duration::from_secs_f64(206.43)),
+        };
+        let mut progress = vec![];
+
+        let candidates = search_candidates(&catalog, &lookup, &mut |event| {
+            progress.push(event.to_string());
+        })
+        .unwrap();
+
+        assert_eq!(catalog.calls.get(), 2);
+        assert_eq!(candidates.len(), 1);
+        assert!(progress.iter().any(|line| line.contains("只按曲名重试")));
     }
 
     impl LyricsCatalog for FakeCatalog {
