@@ -4,6 +4,8 @@ use std::{
     io::{self, stdout},
     ops::Range,
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -27,9 +29,106 @@ use ratatui::{
 
 use crate::{
     audio::AudioPlayer,
+    library::{self, LibraryConfig, LibrarySnapshot},
+    lyrics_download::{LyricsDownload, download_missing_lyrics},
     mix::{render_take_mix, render_take_preview},
     recorder::{AudioRecorder, RecordingTimelineAnchor, place_recording_on_timeline},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LibraryFocus {
+    Projects,
+    Project,
+    Sources,
+}
+
+impl LibraryFocus {
+    const fn next(self) -> Self {
+        match self {
+            Self::Projects => Self::Project,
+            Self::Project => Self::Sources,
+            Self::Sources => Self::Projects,
+        }
+    }
+
+    const fn previous(self) -> Self {
+        match self {
+            Self::Projects => Self::Sources,
+            Self::Project => Self::Projects,
+            Self::Sources => Self::Project,
+        }
+    }
+}
+
+struct ImportJob {
+    source: PathBuf,
+    result: Receiver<Result<PathBuf, String>>,
+}
+
+struct MediaLibrary {
+    config: LibraryConfig,
+    snapshot: LibrarySnapshot,
+    focus: LibraryFocus,
+    project_selected: usize,
+    source_selected: usize,
+    job: Option<ImportJob>,
+    message: Option<String>,
+}
+
+impl MediaLibrary {
+    fn new(config: LibraryConfig) -> Result<Self, Box<dyn Error>> {
+        let snapshot = library::scan(&config)?;
+        Ok(Self {
+            config,
+            snapshot,
+            focus: LibraryFocus::Projects,
+            project_selected: 0,
+            source_selected: 0,
+            job: None,
+            message: None,
+        })
+    }
+
+    fn refresh(&mut self) -> Result<(), Box<dyn Error>> {
+        self.snapshot = library::scan(&self.config)?;
+        self.project_selected = self
+            .project_selected
+            .min(self.snapshot.projects.len().saturating_sub(1));
+        self.source_selected = self
+            .source_selected
+            .min(self.snapshot.sources.len().saturating_sub(1));
+        Ok(())
+    }
+
+    fn start_import(&mut self) {
+        if self.job.is_some() {
+            self.message = Some("已有分离任务正在运行，请等待完成".into());
+            return;
+        }
+        let Some(source) = self.snapshot.sources.get(self.source_selected) else {
+            self.message = Some("音乐源目录中没有可导入的音频".into());
+            return;
+        };
+        if source.imported {
+            self.message = Some("该音频已有同名 project；可从左栏打开".into());
+            return;
+        }
+        let path = source.path.clone();
+        let worker_source = path.clone();
+        let config = self.config.clone();
+        let (sender, result) = mpsc::channel();
+        thread::spawn(move || {
+            let outcome = library::import_and_separate(&config, &worker_source)
+                .map_err(|error| error.to_string());
+            let _ = sender.send(outcome);
+        });
+        self.job = Some(ImportJob {
+            source: path.clone(),
+            result,
+        });
+        self.message = Some(format!("正在创建并分离：{}", display_name(&path)));
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrackKind {
@@ -298,10 +397,15 @@ struct App {
     project_dirty: bool,
     monitoring_enabled: bool,
     selected_take: Option<usize>,
+    lyrics: Option<LyricsTimeline>,
 }
 
 impl App {
-    fn new(project: Project, startup_message: Option<String>) -> Self {
+    fn new(
+        project: Project,
+        lyrics: Option<LyricsTimeline>,
+        startup_message: Option<String>,
+    ) -> Self {
         let selected_take = project.takes().len().checked_sub(1);
         let key_shift_semitones = project.key_shift_semitones();
         Self {
@@ -312,10 +416,11 @@ impl App {
             project_dirty: false,
             monitoring_enabled: false,
             selected_take,
+            lyrics,
         }
     }
 
-    fn handle_key(&mut self, key: KeyCode, lyrics: Option<&LyricsTimeline>) -> bool {
+    fn handle_key(&mut self, key: KeyCode) -> bool {
         match (self.session.state(), key) {
             (_, KeyCode::Char('m')) => self.toggle_monitoring(),
             (RecordingState::Idle, KeyCode::Char('a')) => self.arm(),
@@ -338,10 +443,10 @@ impl App {
                 self.playback.handle_key(key);
             }
             (RecordingState::Recording, KeyCode::Left) => {
-                self.seek_recording_by_lyric(lyrics, -1);
+                self.seek_recording_by_lyric(-1);
             }
             (RecordingState::Recording, KeyCode::Right) => {
-                self.seek_recording_by_lyric(lyrics, 1);
+                self.seek_recording_by_lyric(1);
             }
             (RecordingState::Recording, key)
                 if let Some(kind) = TrackKind::recording_shortcut(key) =>
@@ -386,8 +491,8 @@ impl App {
         });
     }
 
-    fn seek_recording_by_lyric(&mut self, lyrics: Option<&LyricsTimeline>, direction: i8) {
-        let Some(timeline) = lyrics else {
+    fn seek_recording_by_lyric(&mut self, direction: i8) {
+        let Some(timeline) = self.lyrics.as_ref() else {
             self.recording_message = Some("没有同步歌词，录音中无法按歌词跳转".into());
             return;
         };
@@ -745,18 +850,16 @@ impl App {
 
 pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box<dyn Error>> {
     let lyrics = load_lyrics(&project)?;
-    let mut app = App::new(project, startup_message);
+    let mut app = App::new(project, lyrics, startup_message);
     let mut guard = TerminalGuard::enter()?;
 
     loop {
         app.playback.refresh_stream_error();
-        guard
-            .terminal
-            .draw(|frame| draw(frame, lyrics.as_ref(), &app))?;
+        guard.terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
             && should_handle_key(&key)
-            && app.handle_key(key.code, lyrics.as_ref())
+            && app.handle_key(key.code)
         {
             break;
         }
@@ -764,11 +867,192 @@ pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box
     Ok(())
 }
 
+pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
+    let mut library = MediaLibrary::new(config)?;
+    let mut current = library
+        .snapshot
+        .projects
+        .first()
+        .map(|entry| open_library_project(&library.config, &entry.path))
+        .transpose()?;
+    let mut guard = TerminalGuard::enter()?;
+
+    loop {
+        if let Some(app) = &mut current {
+            app.playback.refresh_stream_error();
+        }
+        poll_import_job(&mut library, &mut current)?;
+        guard
+            .terminal
+            .draw(|frame| draw_library(frame, &library, current.as_ref()))?;
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+            && should_handle_key(&key)
+            && handle_library_key(&mut library, &mut current, key.code)?
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<dyn Error>> {
+    let repository = FileProjectRepository;
+    let mut project = repository.open(path)?;
+    let message = if config.lyrics.auto_download {
+        match download_missing_lyrics(&mut project, &mut |_| {}) {
+            Ok(LyricsDownload::Downloaded { track, artist }) => {
+                repository.save(&project)?;
+                Some(format!("已从 LRCLIB 下载歌词：{artist} - {track}"))
+            }
+            Ok(LyricsDownload::NotFound) => Some("未找到时长匹配的同步歌词".into()),
+            Ok(LyricsDownload::AlreadyPresent) => None,
+            Err(error) => Some(format!("自动下载歌词失败：{error}")),
+        }
+    } else {
+        None
+    };
+    let lyrics = load_lyrics(&project)?;
+    Ok(App::new(project, lyrics, message))
+}
+
+fn poll_import_job(
+    library: &mut MediaLibrary,
+    current: &mut Option<App>,
+) -> Result<(), Box<dyn Error>> {
+    let outcome = match library.job.as_ref().map(|job| job.result.try_recv()) {
+        Some(Ok(result)) => Some(result),
+        Some(Err(TryRecvError::Disconnected)) => Some(Err("分离任务线程意外退出".to_owned())),
+        Some(Err(TryRecvError::Empty)) | None => None,
+    };
+    let Some(outcome) = outcome else {
+        return Ok(());
+    };
+    library.job = None;
+    library.refresh()?;
+    match outcome {
+        Ok(path) => {
+            if let Some(index) = library
+                .snapshot
+                .projects
+                .iter()
+                .position(|entry| entry.path == path)
+            {
+                library.project_selected = index;
+            }
+            *current = Some(open_library_project(&library.config, &path)?);
+            library.message = Some(format!("分离完成：{}", path.display()));
+        }
+        Err(error) => library.message = Some(format!("分离失败：{error}")),
+    }
+    Ok(())
+}
+
+fn handle_library_key(
+    library: &mut MediaLibrary,
+    current: &mut Option<App>,
+    key: KeyCode,
+) -> Result<bool, Box<dyn Error>> {
+    match key {
+        KeyCode::Tab => library.focus = library.focus.next(),
+        KeyCode::BackTab => library.focus = library.focus.previous(),
+        KeyCode::Char('r') if library.focus != LibraryFocus::Project => {
+            library.refresh()?;
+            library.message = Some("媒体库列表已刷新".into());
+        }
+        KeyCode::Char('q') if library.focus != LibraryFocus::Project => {
+            if let Some(app) = current
+                && !app.save_project()
+            {
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        _ => match library.focus {
+            LibraryFocus::Projects => match key {
+                KeyCode::Up => {
+                    library.project_selected = library.project_selected.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    library.project_selected = (library.project_selected + 1)
+                        .min(library.snapshot.projects.len().saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if current
+                        .as_ref()
+                        .is_some_and(|app| app.session.state() != RecordingState::Idle)
+                    {
+                        library.message = Some("请先结束或取消当前录音，再切换 project".into());
+                    } else if let Some(entry) =
+                        library.snapshot.projects.get(library.project_selected)
+                    {
+                        if let Some(app) = current
+                            && !app.save_project()
+                        {
+                            return Ok(false);
+                        }
+                        *current = Some(open_library_project(&library.config, &entry.path)?);
+                        library.message = Some(format!("已打开：{}", entry.title));
+                    }
+                }
+                _ => {}
+            },
+            LibraryFocus::Sources => match key {
+                KeyCode::Up => {
+                    library.source_selected = library.source_selected.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    library.source_selected = (library.source_selected + 1)
+                        .min(library.snapshot.sources.len().saturating_sub(1));
+                }
+                KeyCode::Enter | KeyCode::Char('s') => {
+                    if let Some(source) = library.snapshot.sources.get(library.source_selected)
+                        && source.imported
+                    {
+                        if current
+                            .as_ref()
+                            .is_some_and(|app| app.session.state() != RecordingState::Idle)
+                        {
+                            library.message = Some("请先结束或取消当前录音，再切换 project".into());
+                        } else {
+                            *current =
+                                Some(open_library_project(&library.config, &source.project_path)?);
+                            if let Some(index) = library
+                                .snapshot
+                                .projects
+                                .iter()
+                                .position(|entry| entry.path == source.project_path)
+                            {
+                                library.project_selected = index;
+                            }
+                            library.message =
+                                Some(format!("已打开：{}", source.project_path.display()));
+                        }
+                    } else {
+                        library.start_import();
+                    }
+                }
+                _ => {}
+            },
+            LibraryFocus::Project => {
+                if let Some(app) = current {
+                    return Ok(app.handle_key(key));
+                }
+            }
+        },
+    }
+    Ok(false)
+}
+
 fn should_handle_key(key: &KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
 }
 
-fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
+fn draw(frame: &mut Frame, app: &App) {
+    draw_project(frame, frame.area(), app);
+}
+
+fn draw_project(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let position = app.playback.position();
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -777,7 +1061,7 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
             Constraint::Min(5),
             Constraint::Length(5),
         ])
-        .split(frame.area());
+        .split(area);
     let project = app.session.project();
     let playback_status = app.playback.audio.as_ref().map_or("unavailable", |player| {
         if player.is_finished() {
@@ -845,7 +1129,8 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
     frame.render_widget(header, areas[0]);
 
     let visible_rows = usize::from(areas[1].height.saturating_sub(2));
-    let (lyric_lines, lyric_progress) = lyrics_for_display(lyrics, position, visible_rows);
+    let (lyric_lines, lyric_progress) =
+        lyrics_for_display(app.lyrics.as_ref(), position, visible_rows);
     let lyric_panel = Paragraph::new(lyric_lines)
         .block(
             Block::default()
@@ -868,6 +1153,132 @@ fn draw(frame: &mut Frame, lyrics: Option<&LyricsTimeline>, app: &App) {
     ])
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, areas[2]);
+}
+
+fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(22),
+            Constraint::Percentage(56),
+            Constraint::Percentage(22),
+        ])
+        .split(frame.area());
+    draw_library_projects(frame, columns[0], library);
+    if let Some(app) = current {
+        draw_project(frame, columns[1], app);
+    } else {
+        frame.render_widget(
+            Paragraph::new("还没有 project\n\nTab 切换到右栏，选择音乐后按 Enter 创建并分离")
+                .block(Block::default().title(" K3 ").borders(Borders::ALL))
+                .wrap(Wrap { trim: false }),
+            columns[1],
+        );
+    }
+    draw_library_sources(frame, columns[2], library);
+}
+
+fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library: &MediaLibrary) {
+    let rows = library
+        .snapshot
+        .projects
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            library_row(
+                &entry.title,
+                index == library.project_selected,
+                library.focus == LibraryFocus::Projects,
+            )
+        })
+        .collect::<Vec<_>>();
+    let title = if library.focus == LibraryFocus::Projects {
+        " Projects · Enter 打开 "
+    } else {
+        " Projects "
+    };
+    frame.render_widget(
+        Paragraph::new(if rows.is_empty() {
+            vec![Line::from("没有 project")]
+        } else {
+            rows
+        })
+        .block(Block::default().title(title).borders(Borders::ALL))
+        .scroll((list_scroll(library.project_selected, area.height), 0)),
+        area,
+    );
+}
+
+fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library: &MediaLibrary) {
+    let mut rows = library
+        .snapshot
+        .sources
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let state = if entry.imported { "✓" } else { "+" };
+            library_row(
+                &format!("{state} {}", display_name(&entry.path)),
+                index == library.source_selected,
+                library.focus == LibraryFocus::Sources,
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(job) = &library.job {
+        rows.push(Line::from(Span::styled(
+            format!("⏳ {}", display_name(&job.source)),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    if let Some(message) = &library.message {
+        rows.push(Line::from(""));
+        rows.push(Line::from(Span::styled(
+            message.clone(),
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+    let title = if library.focus == LibraryFocus::Sources {
+        " Music · Enter 分离 "
+    } else {
+        " Music "
+    };
+    frame.render_widget(
+        Paragraph::new(if rows.is_empty() {
+            vec![Line::from("没有音频文件")]
+        } else {
+            rows
+        })
+        .block(Block::default().title(title).borders(Borders::ALL))
+        .scroll((list_scroll(library.source_selected, area.height), 0))
+        .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
+    let marker = if selected { "▶ " } else { "  " };
+    let style = if selected && focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else if selected {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
+    Line::from(Span::styled(format!("{marker}{text}"), style))
+}
+
+fn list_scroll(selected: usize, height: u16) -> u16 {
+    let visible = usize::from(height.saturating_sub(2)).max(1);
+    u16::try_from(selected.saturating_sub(visible - 1)).unwrap_or(u16::MAX)
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |value| value.to_string_lossy().into_owned(),
+    )
 }
 
 fn format_key(semitones: i8) -> String {

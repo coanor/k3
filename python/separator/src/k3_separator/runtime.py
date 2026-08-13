@@ -45,7 +45,15 @@ class AudioSeparatorRuntime:
         self._configure_ffmpeg()
 
     def status(self) -> dict[str, Any]:
-        audio_separator_installed = importlib.util.find_spec("audio_separator") is not None
+        audio_separator_installed = False
+        audio_separator_error = None
+        if importlib.util.find_spec("audio_separator") is not None:
+            try:
+                from audio_separator.separator import Separator  # noqa: F401
+
+                audio_separator_installed = True
+            except Exception as error:  # health must expose broken transitive installs
+                audio_separator_error = f"{type(error).__name__}: {error}"
         torch_installed = importlib.util.find_spec("torch") is not None
         cuda_available = False
         device = None
@@ -60,6 +68,7 @@ class AudioSeparatorRuntime:
                 pass
         return {
             "audio_separator_installed": audio_separator_installed,
+            "audio_separator_error": audio_separator_error,
             "torch_installed": torch_installed,
             "cuda_available": cuda_available,
             "device": device,

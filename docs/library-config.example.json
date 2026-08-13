@@ -1,0 +1,19 @@
+{
+  "music_root": "/home/tan/Music/original",
+  "projects_root": "/home/tan/Music/k3",
+  "scan": {
+    "recursive": true,
+    "extensions": ["mp3", "flac", "wav", "m4a", "aac", "ogg"]
+  },
+  "separation": {
+    "worker": "/home/tan/k3-separator/.venv-separator/bin/k3-separator",
+    "model_dir": "/home/tan/.cache/k3/models",
+    "profile": "fast",
+    "model": "uvr-mdx-karaoke-2",
+    "segment_size": 128,
+    "autocast": false
+  },
+  "lyrics": {
+    "auto_download": true
+  }
+}

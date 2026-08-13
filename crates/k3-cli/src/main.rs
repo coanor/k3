@@ -1,6 +1,7 @@
 mod audio;
 mod audio_config;
 mod effects;
+mod library;
 mod lyrics_download;
 mod mix;
 mod pitch;
@@ -82,8 +83,12 @@ enum Command {
     },
     /// Open the terminal interface. Press q to exit.
     Tui {
-        #[arg(long)]
-        project: PathBuf,
+        /// Open one project directly (legacy single-project mode).
+        #[arg(long, required_unless_present = "config", conflicts_with = "config")]
+        project: Option<PathBuf>,
+        /// Open the three-panel media library using this JSON configuration.
+        #[arg(long, required_unless_present = "project", conflicts_with = "project")]
+        config: Option<PathBuf>,
         /// Advance recorded vocals by this many milliseconds in generated mixes.
         #[arg(long, allow_hyphen_values = true)]
         latency_ms: Option<i32>,
@@ -214,10 +219,26 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         }
         Command::Tui {
             project,
+            config,
             latency_ms,
             key,
             no_lyrics_download,
-        } => open_tui(repository, &project, latency_ms, key, no_lyrics_download)?,
+        } => {
+            if let Some(config) = config {
+                if latency_ms.is_some() || key.is_some() {
+                    return Err("--latency-ms and --key require --project mode".into());
+                }
+                tui::open_library(library::LibraryConfig::load(&config)?)?;
+            } else {
+                open_tui(
+                    repository,
+                    project.as_deref().expect("clap requires project or config"),
+                    latency_ms,
+                    key,
+                    no_lyrics_download,
+                )?;
+            }
+        }
     }
     Ok(())
 }

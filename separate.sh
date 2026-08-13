@@ -136,6 +136,18 @@ fi
 
 profile="${K3_PROFILE:-quality}"
 model_id="${K3_MODEL:-}"
+case "${K3_AUTOCAST:-true}" in
+    1|true|yes|on)
+        disable_autocast=0
+        ;;
+    0|false|no|off)
+        disable_autocast=1
+        ;;
+    *)
+        echo "k3-separate: K3_AUTOCAST must be true or false" >&2
+        exit 2
+        ;;
+esac
 
 failures=0
 for index in "${!input_paths[@]}"; do
@@ -167,6 +179,9 @@ for index in "${!input_paths[@]}"; do
     fi
     if [[ -n "${K3_SEGMENT_SIZE:-}" ]]; then
         separate_args+=(--segment-size "$K3_SEGMENT_SIZE")
+    fi
+    if [[ $disable_autocast -eq 1 ]]; then
+        separate_args+=(--no-autocast)
     fi
 
     if K3_SEPARATE_WORKER_MODE=1 "$k3_bin" "${separate_args[@]}"; then

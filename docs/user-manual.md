@@ -88,6 +88,58 @@ printf '%s\n' '{"id":"health","method":"health"}' | \
 }
 ```
 
+没有 NVIDIA GPU 的 Linux 机器可安装 CPU worker。第二个参数用于固定 Python
+版本；建议使用 3.13，避免系统滚动升级影响音频依赖：
+
+```bash
+bash python/separator/scripts/install-cpu.sh .venv-separator 3.13
+```
+
+老旧 CPU 建议使用 `fast`、`uvr-mdx-karaoke-2`、`segment_size=64` 或
+`128`，并关闭 autocast。CPU 分离可能明显慢于歌曲时长，不建议运行 quality
+RoFormer。
+
+把 `separate.sh` 和运行包复制到另一台 Linux 机器时，最低要求是 x86-64
+Linux、Bash 4（脚本使用关联数组）、`realpath`、FFmpeg、可执行的 K3 二进制，
+以及已安装依赖的 Python worker。安装 worker 还需要 `uv` 和网络；运行时不需要
+Rust 工具链。当前 Arch 老机器的 i7-2620M（AVX、4 线程、约 10 GiB 内存）已
+通过 PyTorch 2.11 CPU worker 健康检查，可作为目前验证过的硬件下限；这不是
+对更老 CPU 的兼容保证。
+
+## 3.1 三栏媒体库配置
+
+复制示例配置并修改两个根目录与 worker 路径：
+
+```bash
+mkdir -p ~/.config/k3
+cp docs/library-config.example.json ~/.config/k3/config.json
+target/release/k3 tui --config ~/.config/k3/config.json
+```
+
+界面左栏列出 `projects_root` 下的 project，右栏递归扫描 `music_root` 中的音频。
+按 `Tab` 或 `Shift+Tab` 切换焦点；左栏按 `Enter` 打开 project，右栏按
+`Enter` 创建同名 project 并在后台分离。一个 K3 进程同时只运行一个分离任务。
+目录改名不会让右栏重复导入：K3 会用 project 中的源文件名和文件大小识别已导入
+歌曲。配置中的分离参数与 `separate.sh` 对应如下：
+
+| JSON 字段 | `separate.sh` 环境变量 | 作用 |
+|---|---|---|
+| `separation.worker` | `K3_PYTHON`（脚本模式） | worker 可执行文件；脚本模式下为 Python 解释器 |
+| `separation.model_dir` | `K3_MODEL_DIR` | 模型缓存目录 |
+| `separation.profile` | `K3_PROFILE` | `fast` / `balanced` / `quality` / `compatible` |
+| `separation.model` | `K3_MODEL` | 明确指定模型 |
+| `separation.segment_size` | `K3_SEGMENT_SIZE` | 推理分块大小 |
+| `separation.autocast` | `K3_AUTOCAST` | GPU 混合精度开关；CPU 建议设为 `false` |
+
+`scan.recursive` 和 `scan.extensions` 只影响右栏扫描，`lyrics.auto_download`
+控制打开 project 时本地无歌词是否自动联网下载。媒体库直接调用 K3 的 project
+与分离接口，并不启动 `separate.sh`；两者共享相同的 worker 和模型参数。
+原有单 project 模式仍可使用：
+
+```bash
+target/release/k3 tui --project /path/to/project
+```
+
 ## 4. 创建歌曲工程
 
 一个工程只对应一首原始歌曲。创建工程时 K3 会复制歌曲和可选歌词，

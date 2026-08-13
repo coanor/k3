@@ -10,6 +10,15 @@ from k3_separator.runtime import AudioSeparatorRuntime
 
 
 class AudioSeparatorRuntimeTests(unittest.TestCase):
+    def test_status_reports_a_broken_audio_separator_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AudioSeparatorRuntime(Path(directory) / "models")
+            with patch.dict(sys.modules, {"audio_separator.separator": None}):
+                status = runtime.status()
+
+        self.assertFalse(status["audio_separator_installed"])
+        self.assertIn("ModuleNotFoundError", status["audio_separator_error"])
+
     def test_mp3_safe_wav_export_uses_ffmpeg_path(self) -> None:
         observed = {}
 
