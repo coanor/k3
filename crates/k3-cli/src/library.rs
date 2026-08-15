@@ -99,6 +99,8 @@ pub struct SeparationConfig {
 pub struct LyricsConfig {
     #[serde(default = "default_auto_download")]
     pub auto_download: bool,
+    #[serde(default)]
+    pub netease_fallback: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -111,6 +113,7 @@ impl Default for LyricsConfig {
     fn default() -> Self {
         Self {
             auto_download: true,
+            netease_fallback: false,
         }
     }
 }
@@ -371,7 +374,8 @@ mod tests {
             "music_root": music,
             "projects_root": projects,
             "separation": {"worker": "/bin/false", "profile": "fast"},
-            "recording": {"default_effect": "ktv"}
+            "recording": {"default_effect": "ktv"},
+            "lyrics": {"netease_fallback": true}
         }))
         .unwrap();
 
@@ -384,6 +388,7 @@ mod tests {
         assert!(snapshot.sources[0].imported);
         assert_eq!(snapshot.sources[0].project_path, projects.join("existing"));
         assert_eq!(config.recording.default_effect, VocalEffectPreset::Ktv);
+        assert!(config.lyrics.netease_fallback);
     }
 
     #[cfg(unix)]
@@ -434,6 +439,7 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
         .unwrap();
 
         assert_eq!(config.recording.default_effect, VocalEffectPreset::Clean);
+        assert!(!config.lyrics.netease_fallback);
 
         let project_path = import_and_separate(&config, &song).unwrap();
         let project = FileProjectRepository.open(&project_path).unwrap();

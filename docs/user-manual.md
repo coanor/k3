@@ -295,7 +295,9 @@ takes: 0
 target/release/k3 tui --project ./songs/example
 ```
 
-如果 project 没有本地歌词，K3 会在进入 TUI 和开始录音前自动查询 LRCLIB。
+如果 project 没有本地歌词，K3 会在进入 TUI 和开始录音前查询 LRCLIB。可显式
+启用网易云音乐作为备用源；只有 LRCLIB 没有可用同步歌词时才请求网易云，主源返回
+无时间轴候选或时长不匹配也会继续备用源；一个来源出错不会阻止下一个来源继续搜索。
 查询优先使用音频文件内的歌名、歌手和时长标签；没有标签时使用 project 标题。
 只有带 LRC 时间轴、且与音频时长相差不超过 8 秒的结果才会被采用。下载结果保存
 到 project 的 `lyrics/` 目录并写入 `project.json`。网络不可用或没有可靠匹配时，
@@ -309,8 +311,21 @@ TUI 会显示具体提示，但仍可正常播放和录音。
 target/release/k3 tui --project ./songs/example --no-lyrics-download
 ```
 
+单 project 模式使用 `--netease-lyrics` 启用网易云回退；媒体库模式在配置中设置：
+
+```json
+"lyrics": {
+  "auto_download": true,
+  "netease_fallback": true
+}
+```
+
 K3 不会覆盖同名但无法解析的本地歌词文件；此时应先检查或移走该文件。
 TUI 以及进入 TUI 前的歌词检索进度统一使用英文提示；中文只用于本手册。
+网易云回退使用其免登录网页接口，该接口没有面向第三方开发者的稳定性承诺；若服务
+方调整接口，K3 会显示该来源错误并保留 LRCLIB 与本地歌词流程，不会覆盖已有歌词。
+各来源的官方能力、限制与接入判断见
+[歌词来源调研](lyrics-sources-research.md)。
 
 如果录下的人声相对伴奏偏后，可用毫秒数将人声提前，并把设置保存到
 `project.json`：

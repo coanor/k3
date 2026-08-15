@@ -15,6 +15,8 @@ use lofty::{
 use serde::Deserialize;
 
 const LRCLIB_SEARCH_URL: &str = "https://lrclib.net/api/search";
+const NETEASE_SEARCH_URL: &str = "https://music.163.com/api/search/get/web";
+const NETEASE_LYRIC_URL: &str = "https://music.163.com/api/song/lyric";
 const MAX_DURATION_DIFFERENCE_SECONDS: f64 = 8.0;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,16 +30,20 @@ pub enum LyricsDownload {
 pub enum LyricsProgress {
     CheckingLocal,
     SearchingOnline {
+        source: &'static str,
         title: String,
         artist: Option<String>,
     },
     FallingBackToTitle {
+        source: &'static str,
         title: String,
     },
     RetryingOnline {
+        source: &'static str,
         reason: String,
     },
     FoundOnline {
+        source: &'static str,
         track: String,
         artist: String,
         duration_seconds: u64,
@@ -51,35 +57,37 @@ impl fmt::Display for LyricsProgress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CheckingLocal => formatter.write_str("Checking local lyrics..."),
-            Self::SearchingOnline { title, artist } => {
+            Self::SearchingOnline {
+                source,
+                title,
+                artist,
+            } => {
                 if let Some(artist) = artist {
-                    write!(
-                        formatter,
-                        "No local lyrics; searching LRCLIB: {artist} - {title}..."
-                    )
+                    write!(formatter, "Searching {source}: {artist} - {title}...")
                 } else {
-                    write!(formatter, "No local lyrics; searching LRCLIB: {title}...")
+                    write!(formatter, "Searching {source}: {title}...")
                 }
             }
-            Self::FallingBackToTitle { title } => {
+            Self::FallingBackToTitle { source, title } => {
                 write!(
                     formatter,
-                    "No artist match; retrying by title only: {title}..."
+                    "No {source} artist match; retrying by title only: {title}..."
                 )
             }
-            Self::RetryingOnline { reason } => {
+            Self::RetryingOnline { source, reason } => {
                 write!(
                     formatter,
-                    "LRCLIB request failed: {reason}; retrying (2/2)..."
+                    "{source} request failed: {reason}; retrying (2/2)..."
                 )
             }
             Self::FoundOnline {
+                source,
                 track,
                 artist,
                 duration_seconds,
             } => write!(
                 formatter,
-                "Found synced lyrics: {artist} - {track} ({duration_seconds}s)"
+                "Found synced lyrics on {source}: {artist} - {track} ({duration_seconds}s)"
             ),
             Self::Saving { relative_path } => {
                 write!(formatter, "Saving lyrics: {relative_path}")
@@ -95,18 +103,33 @@ impl fmt::Display for LyricsProgress {
 ///
 /// # Errors
 ///
-/// Returns an error when LRCLIB is unavailable or the selected lyrics cannot be persisted.
+/// Returns an error when all configured sources fail or the selected lyrics cannot be persisted.
 pub fn download_missing_lyrics(
     project: &mut Project,
+    netease_fallback: bool,
     progress: &mut dyn FnMut(&LyricsProgress),
 ) -> Result<LyricsDownload, Box<dyn Error>> {
-    let catalog = LrclibCatalog::new();
-    download_with_catalog(project, &catalog, progress)
+    let lrclib = LrclibCatalog::new();
+    if netease_fallback {
+        let netease = NeteaseCatalog::new();
+        download_with_catalogs(project, &[&lrclib, &netease], progress)
+    } else {
+        download_with_catalogs(project, &[&lrclib], progress)
+    }
 }
 
+#[cfg(test)]
 fn download_with_catalog(
     project: &mut Project,
     catalog: &dyn LyricsCatalog,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsDownload, Box<dyn Error>> {
+    download_with_catalogs(project, &[catalog], progress)
+}
+
+fn download_with_catalogs(
+    project: &mut Project,
+    catalogs: &[&dyn LyricsCatalog],
     progress: &mut dyn FnMut(&LyricsProgress),
 ) -> Result<LyricsDownload, Box<dyn Error>> {
     progress(&LyricsProgress::CheckingLocal);
@@ -130,12 +153,31 @@ fn download_with_catalog(
     }
 
     let lookup = lookup_from_audio(project);
-    progress(&LyricsProgress::SearchingOnline {
-        title: lookup.title.clone(),
-        artist: lookup.artist.clone(),
-    });
-    let candidates = search_candidates(catalog, &lookup, progress)?;
-    let Some(candidate) = select_candidate(candidates, lookup.duration) else {
+    let mut selected = None;
+    let mut successful_search = false;
+    let mut failures = Vec::new();
+    for catalog in catalogs {
+        progress(&LyricsProgress::SearchingOnline {
+            source: catalog.name(),
+            title: lookup.title.clone(),
+            artist: lookup.artist.clone(),
+        });
+        match search_candidates(*catalog, &lookup, progress) {
+            Ok(candidates) => {
+                successful_search = true;
+                selected = select_candidate(candidates, lookup.duration)
+                    .map(|candidate| (catalog.name(), candidate));
+                if selected.is_some() {
+                    break;
+                }
+            }
+            Err(error) => failures.push(format!("{}: {error}", catalog.name())),
+        }
+    }
+    let Some((source, candidate)) = selected else {
+        if !successful_search && !failures.is_empty() {
+            return Err(format!("All lyric sources failed: {}", failures.join("; ")).into());
+        }
         return Ok(LyricsDownload::NotFound);
     };
     if LyricsTimeline::parse(&candidate.synced_lyrics)
@@ -146,6 +188,7 @@ fn download_with_catalog(
     }
 
     progress(&LyricsProgress::FoundOnline {
+        source,
         track: candidate.track_name.clone(),
         artist: candidate.artist_name.clone(),
         duration_seconds: Duration::try_from_secs_f64(candidate.duration.max(0.0))
@@ -173,6 +216,7 @@ fn search_candidates(
     }
 
     progress(&LyricsProgress::FallingBackToTitle {
+        source: catalog.name(),
         title: lookup.title.clone(),
     });
     let title_only = LyricsLookup {
@@ -225,6 +269,10 @@ struct LyricsCandidate {
 }
 
 trait LyricsCatalog {
+    fn name(&self) -> &'static str {
+        "test catalog"
+    }
+
     fn search(&self, lookup: &LyricsLookup) -> Result<Vec<LyricsCandidate>, Box<dyn Error>>;
 }
 
@@ -253,17 +301,25 @@ fn search_with_retry(
         Ok(candidates) => Ok(candidates),
         Err(first_error) => {
             progress(&LyricsProgress::RetryingOnline {
+                source: catalog.name(),
                 reason: first_error.to_string(),
             });
             catalog.search(lookup).map_err(|retry_error| {
-                format!("Both LRCLIB requests failed; first: {first_error}; retry: {retry_error}")
-                    .into()
+                format!(
+                    "Both {} requests failed; first: {first_error}; retry: {retry_error}",
+                    catalog.name()
+                )
+                .into()
             })
         }
     }
 }
 
 impl LyricsCatalog for LrclibCatalog {
+    fn name(&self) -> &'static str {
+        "LRCLIB"
+    }
+
     fn search(&self, lookup: &LyricsLookup) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
         let request = self.agent.get(LRCLIB_SEARCH_URL);
         let mut response = if let Some(artist) = &lookup.artist {
@@ -276,6 +332,130 @@ impl LyricsCatalog for LrclibCatalog {
         };
         Ok(response.body_mut().read_json()?)
     }
+}
+
+struct NeteaseCatalog {
+    agent: ureq::Agent,
+}
+
+impl NeteaseCatalog {
+    fn new() -> Self {
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(15)))
+            .user_agent(format!("k3/{}", env!("CARGO_PKG_VERSION")))
+            .build();
+        Self {
+            agent: ureq::Agent::new_with_config(config),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchResponse {
+    result: Option<NeteaseSearchResult>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchResult {
+    #[serde(default)]
+    songs: Vec<NeteaseSong>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSong {
+    id: u64,
+    name: String,
+    duration: f64,
+    #[serde(default)]
+    artists: Vec<NeteaseArtist>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseArtist {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct NeteaseLyricResponse {
+    lrc: Option<NeteaseLyrics>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseLyrics {
+    lyric: String,
+}
+
+impl LyricsCatalog for NeteaseCatalog {
+    fn name(&self) -> &'static str {
+        "NetEase Cloud Music"
+    }
+
+    fn search(&self, lookup: &LyricsLookup) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+        let query = lookup.artist.as_ref().map_or_else(
+            || lookup.title.clone(),
+            |artist| format!("{} {artist}", lookup.title),
+        );
+        let mut response = self
+            .agent
+            .get(NETEASE_SEARCH_URL)
+            .query("s", &query)
+            .query("type", "1")
+            .query("offset", "0")
+            .query("total", "true")
+            .query("limit", "20")
+            .call()?;
+        let search: NeteaseSearchResponse = response.body_mut().read_json()?;
+        let songs = search.result.map_or_else(Vec::new, |result| result.songs);
+        let expected_title = normalize_match_text(&lookup.title);
+        let expected_artist = lookup.artist.as_deref().map(normalize_match_text);
+        let mut candidates = Vec::new();
+        for song in songs.into_iter().filter(|song| {
+            normalize_match_text(&song.name) == expected_title
+                && expected_artist.as_ref().is_none_or(|expected| {
+                    song.artists
+                        .iter()
+                        .any(|artist| normalize_match_text(&artist.name) == *expected)
+                })
+                && lookup.duration.is_none_or(|duration| {
+                    (song.duration / 1_000.0 - duration.as_secs_f64()).abs()
+                        <= MAX_DURATION_DIFFERENCE_SECONDS
+                })
+        }) {
+            let Ok(mut lyric_response) = self
+                .agent
+                .get(NETEASE_LYRIC_URL)
+                .query("id", song.id.to_string())
+                .query("lv", "-1")
+                .query("kv", "-1")
+                .query("tv", "-1")
+                .call()
+            else {
+                continue;
+            };
+            let lyrics: NeteaseLyricResponse = lyric_response.body_mut().read_json()?;
+            let artist_name = song
+                .artists
+                .iter()
+                .map(|artist| artist.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" / ");
+            candidates.push(LyricsCandidate {
+                track_name: song.name,
+                artist_name,
+                duration: song.duration / 1_000.0,
+                synced_lyrics: lyrics.lrc.map(|lyrics| lyrics.lyric),
+            });
+        }
+        Ok(candidates)
+    }
+}
+
+fn normalize_match_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn select_candidate(
@@ -354,7 +534,7 @@ fn write_atomically(destination: &Path, lyrics: &str) -> Result<(), Box<dyn Erro
 mod tests {
     use super::{
         LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, download_with_catalog,
-        search_candidates,
+        download_with_catalogs, search_candidates,
     };
     use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
     use std::{cell::Cell, error::Error, fs, io};
@@ -456,13 +636,50 @@ mod tests {
         assert!(
             progress
                 .iter()
-                .any(|message| message.contains("searching LRCLIB: 歌手 - 歌曲"))
+                .any(|message| message.contains("Searching test catalog: 歌手 - 歌曲"))
         );
         assert!(
             progress
                 .iter()
-                .any(|message| message.contains("Found synced lyrics: 歌手 - 歌曲"))
+                .any(|message| message.contains("Found synced lyrics on test catalog: 歌手 - 歌曲"))
         );
+    }
+
+    #[test]
+    fn falls_back_when_the_first_catalog_has_no_usable_lyrics() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("fallback.mp3");
+        fs::write(&song, b"not real audio").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("Fallback Song".into()),
+            })
+            .unwrap();
+        let primary = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "Fallback Song".into(),
+                artist_name: "Primary Artist".into(),
+                duration: 180.0,
+                synced_lyrics: None,
+            }],
+        };
+        let fallback = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "Fallback Song".into(),
+                artist_name: "Fallback Artist".into(),
+                duration: 180.0,
+                synced_lyrics: Some("[00:01.00]Fallback line".into()),
+            }],
+        };
+
+        let outcome =
+            download_with_catalogs(&mut project, &[&primary, &fallback], &mut |_| {}).unwrap();
+
+        assert!(matches!(outcome, LyricsDownload::Downloaded { .. }));
+        assert!(project.lyrics().is_some());
     }
 
     #[test]

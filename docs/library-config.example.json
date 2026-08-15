@@ -18,6 +18,7 @@
     "default_effect": "clean"
   },
   "lyrics": {
-    "auto_download": true
+    "auto_download": true,
+    "netease_fallback": false
   }
 }

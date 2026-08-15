@@ -98,6 +98,9 @@ enum Command {
         /// Do not query LRCLIB when the project has no local synced lyrics.
         #[arg(long)]
         no_lyrics_download: bool,
+        /// Opt in to the unofficial `NetEase` web endpoint after LRCLIB has no usable match.
+        #[arg(long)]
+        netease_lyrics: bool,
     },
 }
 
@@ -224,12 +227,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             latency_ms,
             key,
             no_lyrics_download,
+            netease_lyrics,
         } => {
             if let Some(config) = config {
                 if latency_ms.is_some() || key.is_some() {
                     return Err("--latency-ms and --key require --project mode".into());
                 }
-                tui::open_library(library::LibraryConfig::load(&config)?)?;
+                open_library_tui(&config, no_lyrics_download, netease_lyrics)?;
             } else {
                 open_tui(
                     repository,
@@ -237,11 +241,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     latency_ms,
                     key,
                     no_lyrics_download,
+                    netease_lyrics,
                 )?;
             }
         }
     }
     Ok(())
+}
+
+fn open_library_tui(
+    config_path: &std::path::Path,
+    no_lyrics_download: bool,
+    netease_lyrics: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut config = library::LibraryConfig::load(config_path)?;
+    if no_lyrics_download {
+        config.lyrics.auto_download = false;
+    }
+    if netease_lyrics {
+        config.lyrics.netease_fallback = true;
+    }
+    tui::open_library(config)
 }
 
 fn open_tui(
@@ -250,6 +270,7 @@ fn open_tui(
     latency_ms: Option<i32>,
     key: Option<i8>,
     no_lyrics_download: bool,
+    netease_lyrics: bool,
 ) -> Result<(), Box<dyn Error>> {
     let mut project = repository.open(project_path)?;
     if let Some(latency_ms) = latency_ms {
@@ -266,7 +287,7 @@ fn open_tui(
     let lyrics_message = if no_lyrics_download {
         None
     } else {
-        match download_missing_lyrics(&mut project, &mut |progress| {
+        match download_missing_lyrics(&mut project, netease_lyrics, &mut |progress| {
             eprintln!("{progress}");
         }) {
             Ok(LyricsDownload::AlreadyPresent) => None,

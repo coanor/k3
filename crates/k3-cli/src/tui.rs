@@ -966,7 +966,7 @@ fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<
     let repository = FileProjectRepository;
     let mut project = repository.open(path)?;
     let message = if config.lyrics.auto_download {
-        match download_missing_lyrics(&mut project, &mut |_| {}) {
+        match download_missing_lyrics(&mut project, config.lyrics.netease_fallback, &mut |_| {}) {
             Ok(LyricsDownload::Downloaded { track, artist }) => {
                 repository.save(&project)?;
                 Some(format!("Downloaded lyrics from LRCLIB: {artist} - {track}"))
