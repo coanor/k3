@@ -133,8 +133,11 @@ fn download_with_catalogs(
     progress: &mut dyn FnMut(&LyricsProgress),
 ) -> Result<LyricsDownload, Box<dyn Error>> {
     progress(&LyricsProgress::CheckingLocal);
-    if project.lyrics().is_some() {
-        return Ok(LyricsDownload::AlreadyPresent);
+    if let Some(relative_path) = project.lyrics() {
+        let configured_path = project.root().join(Path::new(relative_path.as_str()));
+        if configured_path.is_file() {
+            return Ok(LyricsDownload::AlreadyPresent);
+        }
     }
 
     let relative_path = downloaded_lyrics_path(project)?;
@@ -410,16 +413,12 @@ impl LyricsCatalog for NeteaseCatalog {
         let expected_artist = lookup.artist.as_deref().map(normalize_match_text);
         let mut candidates = Vec::new();
         for song in songs.into_iter().filter(|song| {
-            normalize_match_text(&song.name) == expected_title
-                && expected_artist.as_ref().is_none_or(|expected| {
-                    song.artists
-                        .iter()
-                        .any(|artist| normalize_match_text(&artist.name) == *expected)
-                })
-                && lookup.duration.is_none_or(|duration| {
-                    (song.duration / 1_000.0 - duration.as_secs_f64()).abs()
-                        <= MAX_DURATION_DIFFERENCE_SECONDS
-                })
+            netease_song_matches(
+                song,
+                &expected_title,
+                expected_artist.as_deref(),
+                lookup.duration,
+            )
         }) {
             let Ok(mut lyric_response) = self
                 .agent
@@ -448,6 +447,38 @@ impl LyricsCatalog for NeteaseCatalog {
         }
         Ok(candidates)
     }
+}
+
+fn netease_song_matches(
+    song: &NeteaseSong,
+    expected_title: &str,
+    expected_artist: Option<&str>,
+    expected_duration: Option<Duration>,
+) -> bool {
+    let candidate_title = normalize_match_text(&song.name);
+    let text_matches = expected_artist.map_or_else(
+        || {
+            candidate_title == expected_title
+                || (!candidate_title.is_empty()
+                    && expected_title.contains(&candidate_title)
+                    && song.artists.iter().any(|artist| {
+                        let candidate_artist = normalize_match_text(&artist.name);
+                        !candidate_artist.is_empty() && expected_title.contains(&candidate_artist)
+                    }))
+        },
+        |expected| {
+            candidate_title == expected_title
+                && song
+                    .artists
+                    .iter()
+                    .any(|artist| normalize_match_text(&artist.name) == expected)
+        },
+    );
+    text_matches
+        && expected_duration.is_none_or(|duration| {
+            (song.duration / 1_000.0 - duration.as_secs_f64()).abs()
+                <= MAX_DURATION_DIFFERENCE_SECONDS
+        })
 }
 
 fn normalize_match_text(value: &str) -> String {
@@ -533,11 +564,12 @@ fn write_atomically(destination: &Path, lyrics: &str) -> Result<(), Box<dyn Erro
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, download_with_catalog,
-        download_with_catalogs, search_candidates,
+        LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, NeteaseArtist, NeteaseSong,
+        download_with_catalog, download_with_catalogs, netease_song_matches, normalize_match_text,
+        search_candidates,
     };
     use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
-    use std::{cell::Cell, error::Error, fs, io};
+    use std::{cell::Cell, error::Error, fs, io, time::Duration};
 
     struct FakeCatalog {
         candidates: Vec<LyricsCandidate>,
@@ -545,6 +577,57 @@ mod tests {
 
     struct ArtistFallbackCatalog {
         calls: Cell<usize>,
+    }
+
+    #[test]
+    fn metadata_free_query_matches_candidate_title_and_artist_without_splitting() {
+        for (query, title, artist, candidate_ms, local_seconds) in [
+            (
+                "爱得干脆 - 吴倩莲",
+                "爱得干脆",
+                "吴倩莲",
+                257_492.0,
+                257.493,
+            ),
+            (
+                "难舍难分 - 谭咏麟",
+                "难舍难分",
+                "谭咏麟",
+                275_320.0,
+                273.641,
+            ),
+        ] {
+            let song = NeteaseSong {
+                id: 1,
+                name: title.into(),
+                duration: candidate_ms,
+                artists: vec![NeteaseArtist {
+                    name: artist.into(),
+                }],
+            };
+
+            assert!(netease_song_matches(
+                &song,
+                &normalize_match_text(query),
+                None,
+                Some(Duration::from_secs_f64(local_seconds)),
+            ));
+        }
+
+        let wrong_artist = NeteaseSong {
+            id: 2,
+            name: "难舍难分".into(),
+            duration: 275_320.0,
+            artists: vec![NeteaseArtist {
+                name: "其他歌手".into(),
+            }],
+        };
+        assert!(!netease_song_matches(
+            &wrong_artist,
+            &normalize_match_text("难舍难分 - 谭咏麟"),
+            None,
+            None,
+        ));
     }
 
     impl LyricsCatalog for ArtistFallbackCatalog {
@@ -703,6 +786,39 @@ mod tests {
             download_with_catalog(&mut project, &catalog, &mut |_| {}).unwrap(),
             LyricsDownload::AlreadyPresent
         );
+    }
+
+    #[test]
+    fn downloads_when_configured_lyrics_file_is_missing() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("Missing Lyrics Song.mp3");
+        let lyrics = sandbox.path().join("missing.lrc");
+        fs::write(&song, b"audio").unwrap();
+        fs::write(&lyrics, b"[00:01.00]old local lyrics").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: Some(lyrics),
+                title: Some("Missing Lyrics Song".into()),
+            })
+            .unwrap();
+        let configured_lyrics = project.lyrics().unwrap().as_str().to_owned();
+        fs::remove_file(project.root().join(&configured_lyrics)).unwrap();
+        let catalog = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "Missing Lyrics Song".into(),
+                artist_name: "Test Artist".into(),
+                duration: 180.0,
+                synced_lyrics: Some("[00:01.00]downloaded lyrics".into()),
+            }],
+        };
+
+        let outcome = download_with_catalog(&mut project, &catalog, &mut |_| {}).unwrap();
+
+        assert!(matches!(outcome, LyricsDownload::Downloaded { .. }));
+        let downloaded = project.lyrics().unwrap();
+        assert!(project.root().join(downloaded.as_str()).is_file());
     }
 
     struct FlakyCatalog {

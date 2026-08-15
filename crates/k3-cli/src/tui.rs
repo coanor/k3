@@ -1416,6 +1416,7 @@ fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library
             )
         })
         .collect::<Vec<_>>();
+    let scroll = wrapped_list_scroll(&rows, library.project_selected, area.width, area.height);
     let title = if library.focus == LibraryFocus::Projects {
         "▶ Projects · Enter open"
     } else {
@@ -1434,7 +1435,8 @@ fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library
                 .borders(Borders::ALL)
                 .border_style(panel_border_style(Some(focused))),
         )
-        .scroll((list_scroll(library.project_selected, area.height), 0)),
+        .scroll((scroll, 0))
+        .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -1482,6 +1484,12 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             )
         })
         .collect::<Vec<_>>();
+    let scroll = wrapped_list_scroll(
+        &rows,
+        library.source_selected,
+        list_area.width,
+        list_area.height,
+    );
     let title = if library.focus == LibraryFocus::Sources {
         format!("▶ Music · Enter separate · queued {}", library.queue.len())
     } else {
@@ -1500,7 +1508,7 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
                 .borders(Borders::ALL)
                 .border_style(panel_border_style(Some(focused))),
         )
-        .scroll((list_scroll(library.source_selected, list_area.height), 0))
+        .scroll((scroll, 0))
         .wrap(Wrap { trim: false }),
         list_area,
     );
@@ -1545,9 +1553,25 @@ fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
     Line::from(Span::styled(format!("{marker}{text}"), style))
 }
 
-fn list_scroll(selected: usize, height: u16) -> u16 {
+fn wrapped_list_scroll(rows: &[Line<'_>], selected: usize, width: u16, height: u16) -> u16 {
+    let Some(selected_row) = rows.get(selected) else {
+        return 0;
+    };
+    let inner_width = width.saturating_sub(2).max(1);
     let visible = usize::from(height.saturating_sub(2)).max(1);
-    u16::try_from(selected.saturating_sub(visible - 1)).unwrap_or(u16::MAX)
+    let wrap = Wrap { trim: false };
+    let preceding_lines = Paragraph::new(rows[..selected].to_vec())
+        .wrap(wrap)
+        .line_count(inner_width);
+    let selected_lines = Paragraph::new(vec![selected_row.clone()])
+        .wrap(wrap)
+        .line_count(inner_width);
+    u16::try_from(
+        preceding_lines
+            .saturating_add(selected_lines)
+            .saturating_sub(visible),
+    )
+    .unwrap_or(u16::MAX)
 }
 
 fn display_name(path: &Path) -> String {
@@ -1774,13 +1798,14 @@ fn format_duration(duration: Duration) -> String {
 }
 
 fn load_lyrics(project: &Project) -> Result<Option<LyricsTimeline>, io::Error> {
-    project
-        .lyrics()
-        .map(|relative| {
-            fs::read_to_string(project.root().join(Path::new(relative.as_str())))
-                .map(|text| LyricsTimeline::parse(&text))
-        })
-        .transpose()
+    let Some(relative) = project.lyrics() else {
+        return Ok(None);
+    };
+    match fs::read_to_string(project.root().join(Path::new(relative.as_str()))) {
+        Ok(text) => Ok(Some(LyricsTimeline::parse(&text))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 struct TerminalGuard {
@@ -1818,12 +1843,38 @@ impl Drop for TerminalGuard {
 mod tests {
     use super::{
         FooterAction, ImportJob, LyricCountdown, MediaLibrary, PlaybackState, PlaybackTrack,
-        TrackKind, effect_preset_for_key, format_duration, lyric_countdown, lyric_seek_target,
-        lyric_window, mode_allows_footer_action, poll_import_job, should_handle_key,
+        TrackKind, effect_preset_for_key, format_duration, load_lyrics, lyric_countdown,
+        lyric_seek_target, lyric_window, mode_allows_footer_action, poll_import_job,
+        should_handle_key,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-    use k3_core::{LyricsTimeline, RecordingState, VocalEffectPreset};
+    use k3_core::{
+        CreateProject, FileProjectRepository, LyricsTimeline, ProjectRepository, RecordingState,
+        VocalEffectPreset,
+    };
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
     use std::{fs, sync::mpsc, time::Duration};
+
+    #[test]
+    fn missing_configured_lyrics_are_treated_as_not_loaded() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("song.wav");
+        let lyrics = sandbox.path().join("song.lrc");
+        fs::write(&song, b"audio").unwrap();
+        fs::write(&lyrics, b"[00:01.00]line").unwrap();
+        let project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: Some(lyrics),
+                title: None,
+            })
+            .unwrap();
+        let configured_lyrics = project.lyrics().unwrap();
+        fs::remove_file(project.root().join(configured_lyrics.as_str())).unwrap();
+
+        assert!(load_lyrics(&project).unwrap().is_none());
+    }
 
     #[test]
     fn imports_can_be_queued_while_another_source_is_running() {
@@ -1915,6 +1966,57 @@ mod tests {
                 .unwrap()
                 .starts_with("Separation complete")
         );
+    }
+
+    #[test]
+    fn wrapped_source_rows_keep_the_selected_item_visible() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        for name in [
+            "first-very-long-audio-filename.wav",
+            "second-very-long-audio-filename.wav",
+            "selected-item.wav",
+        ] {
+            fs::write(music.join(name), b"audio").unwrap();
+        }
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        library.focus = super::LibraryFocus::Sources;
+        library.source_selected = 2;
+        let backend = TestBackend::new(24, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| super::draw_library_sources(frame, frame.area(), &library))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rendered = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("selected-item"), "{rendered}");
+        let selected_is_highlighted = (1..buffer.area.height.saturating_sub(1)).any(|y| {
+            (1..buffer.area.width.saturating_sub(1)).any(|x| {
+                buffer
+                    .cell((x, y))
+                    .is_some_and(|cell| cell.symbol() == "s" && cell.fg == Color::Yellow)
+            })
+        });
+        assert!(selected_is_highlighted, "{rendered}");
     }
 
     #[test]
