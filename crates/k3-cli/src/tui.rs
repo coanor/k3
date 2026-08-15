@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     error::Error,
     fs,
     io::{self, stdout},
@@ -72,6 +73,7 @@ struct MediaLibrary {
     project_selected: usize,
     source_selected: usize,
     job: Option<ImportJob>,
+    queue: VecDeque<PathBuf>,
     message: Option<String>,
 }
 
@@ -85,6 +87,7 @@ impl MediaLibrary {
             project_selected: 0,
             source_selected: 0,
             job: None,
+            queue: VecDeque::new(),
             message: None,
         })
     }
@@ -101,19 +104,44 @@ impl MediaLibrary {
     }
 
     fn start_import(&mut self) {
-        if self.job.is_some() {
-            self.message = Some("已有分离任务正在运行，请等待完成".into());
-            return;
-        }
         let Some(source) = self.snapshot.sources.get(self.source_selected) else {
-            self.message = Some("音乐源目录中没有可导入的音频".into());
+            self.message = Some("No importable audio files".into());
             return;
         };
         if source.imported {
-            self.message = Some("该音频已有同名 project；可从左栏打开".into());
+            self.message = Some("Project already exists; open it from the left panel".into());
             return;
         }
         let path = source.path.clone();
+        if self.job.as_ref().is_some_and(|job| job.source == path) {
+            self.message = Some(format!("Separating: {}", display_name(&path)));
+            return;
+        }
+        if let Some(position) = self.queue.iter().position(|queued| queued == &path) {
+            self.message = Some(format!(
+                "Already queued at position {}: {}",
+                position + 1,
+                display_name(&path)
+            ));
+            return;
+        }
+        if self.job.is_some() {
+            self.queue.push_back(path.clone());
+            self.message = Some(format!(
+                "Queued at position {}: {}",
+                self.queue.len(),
+                display_name(&path)
+            ));
+            return;
+        }
+        self.launch_import(path.clone());
+        self.message = Some(format!(
+            "Creating project and separating: {}",
+            display_name(&path)
+        ));
+    }
+
+    fn launch_import(&mut self, path: PathBuf) {
         let worker_source = path.clone();
         let config = self.config.clone();
         let (sender, result) = mpsc::channel();
@@ -123,10 +151,24 @@ impl MediaLibrary {
             let _ = sender.send(outcome);
         });
         self.job = Some(ImportJob {
-            source: path.clone(),
+            source: path,
             result,
         });
-        self.message = Some(format!("正在创建并分离：{}", display_name(&path)));
+    }
+
+    fn start_next_queued(&mut self) -> Option<PathBuf> {
+        while let Some(path) = self.queue.pop_front() {
+            let pending = self
+                .snapshot
+                .sources
+                .iter()
+                .any(|source| source.path == path && !source.imported);
+            if pending {
+                self.launch_import(path.clone());
+                return Some(path);
+            }
+        }
+        None
     }
 }
 
@@ -178,7 +220,7 @@ impl PlaybackState {
             .position(|track| track.kind == TrackKind::Accompaniment)
             .unwrap_or(0);
         let mut error = None;
-        let audio = match AudioPlayer::open(&tracks[selected].path, key_shift_semitones) {
+        let audio = match AudioPlayer::open_paused(&tracks[selected].path, key_shift_semitones) {
             Ok(player) => Some(player),
             Err(open_error) => {
                 error = Some(open_error.to_string());
@@ -434,7 +476,7 @@ impl App {
             }
             if matches!(key, KeyCode::Esc | KeyCode::Char('e')) {
                 self.effect_selecting = false;
-                self.recording_message = Some("已取消效果选择".into());
+                self.recording_message = Some("Effect selection cancelled".into());
                 return false;
             }
             self.effect_selecting = false;
@@ -474,16 +516,16 @@ impl App {
                 self.recording_message = self.playback.error.as_ref().map_or_else(
                     || {
                         Some(format!(
-                            "录音继续 · 当前监听 {} · take 仍只混入 accompaniment",
+                            "Recording continues · monitoring {} · take still mixes accompaniment only",
                             self.playback.tracks[self.playback.selected].kind.label()
                         ))
                     },
-                    |error| Some(format!("切换监听失败: {error}")),
+                    |error| Some(format!("Failed to switch monitor track: {error}")),
                 );
             }
             (RecordingState::Recording, _) => {
                 self.recording_message =
-                    Some("录音中可按 1/2/3 切换监听；按 Enter 停止录音".into());
+                    Some("Recording: 1/2/3 switch monitor track · Enter stops".into());
             }
             (RecordingState::Armed, KeyCode::Char('q')) => {
                 self.cancel_arm();
@@ -503,19 +545,19 @@ impl App {
             active.recorder.set_monitoring(self.monitoring_enabled);
         }
         self.recording_message = Some(if self.monitoring_enabled {
-            "麦克风监听已开启 · 请使用耳机，避免回声或啸叫".into()
+            "Microphone monitor enabled · use headphones to avoid feedback".into()
         } else {
-            "麦克风监听已关闭".into()
+            "Microphone monitor disabled".into()
         });
     }
 
     fn seek_recording_by_lyric(&mut self, direction: i8) {
         let Some(timeline) = self.lyrics.as_ref() else {
-            self.recording_message = Some("没有同步歌词，录音中无法按歌词跳转".into());
+            self.recording_message = Some("No synced lyrics; lyric seek is unavailable".into());
             return;
         };
         let Some(target) = lyric_seek_target(timeline, self.playback.position(), direction) else {
-            self.recording_message = Some("已经到达歌词时间轴边界".into());
+            self.recording_message = Some("Reached the lyric timeline boundary".into());
             return;
         };
         let Some(player) = &self.playback.audio else {
@@ -523,12 +565,12 @@ impl App {
             return;
         };
         if let Err(error) = player.seek_to(target) {
-            self.recording_message = Some(format!("按歌词跳转失败: {error}"));
+            self.recording_message = Some(format!("Lyric seek failed: {error}"));
             return;
         }
         self.anchor_recording(target);
         self.recording_message = Some(format!(
-            "录音继续 · 已按歌词跳转到 {} · 此后重唱将覆盖对应时间段",
+            "Recording continues · jumped to {} · rerecording overwrites that range",
             format_duration(target)
         ));
     }
@@ -549,7 +591,7 @@ impl App {
     fn select_take(&mut self, direction: i32) {
         let count = self.session.project().takes().len();
         let Some(current) = self.selected_take else {
-            self.recording_message = Some("当前 project 还没有 take".into());
+            self.recording_message = Some("Current project has no takes".into());
             return;
         };
         let next = if direction.is_negative() {
@@ -570,7 +612,7 @@ impl App {
 
     fn play_selected_take(&mut self) {
         let Some(index) = self.selected_take else {
-            self.recording_message = Some("当前 project 还没有 take".into());
+            self.recording_message = Some("Current project has no takes".into());
             return;
         };
         let take = &self.session.project().takes()[index];
@@ -580,7 +622,7 @@ impl App {
             match self.rerender_take(index, take.effect_preset()) {
                 Ok(path) => path,
                 Err(error) => {
-                    self.recording_message = Some(format!("重建 take mix 失败: {error}"));
+                    self.recording_message = Some(format!("Failed to rebuild take mix: {error}"));
                     return;
                 }
             }
@@ -599,17 +641,18 @@ impl App {
 
     fn begin_effect_selection(&mut self) {
         if self.selected_take.is_none() {
-            self.recording_message = Some("当前 project 还没有 take".into());
+            self.recording_message = Some("Current project has no takes".into());
             return;
         }
         self.effect_selecting = true;
-        self.recording_message =
-            Some("选择效果：1 clean · 2 studio · 3 ktv · 4 theater · 5 church · Esc 取消".into());
+        self.recording_message = Some(
+            "Select effect: 1 clean · 2 studio · 3 ktv · 4 theater · 5 church · Esc cancel".into(),
+        );
     }
 
     fn apply_take_effect(&mut self, preset: VocalEffectPreset) {
         let Some(index) = self.selected_take else {
-            self.recording_message = Some("当前 project 还没有 take".into());
+            self.recording_message = Some("Current project has no takes".into());
             return;
         };
         match self.rerender_take(index, preset) {
@@ -665,7 +708,7 @@ impl App {
         self.recording_message = Some(playback_warning.map_or_else(
             || {
                 format!(
-                    "Key {} · 已保存；旧 take 将在播放时自动重建",
+                    "Key {} · saved; old take will rebuild before playback",
                     format_key(semitones)
                 )
             },
@@ -897,19 +940,14 @@ pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box
 
 pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
     let mut library = MediaLibrary::new(config)?;
-    let mut current = library
-        .snapshot
-        .projects
-        .first()
-        .map(|entry| open_library_project(&library.config, &entry.path))
-        .transpose()?;
+    let mut current: Option<App> = None;
     let mut guard = TerminalGuard::enter()?;
 
     loop {
         if let Some(app) = &mut current {
             app.playback.refresh_stream_error();
         }
-        poll_import_job(&mut library, &mut current)?;
+        poll_import_job(&mut library)?;
         guard
             .terminal
             .draw(|frame| draw_library(frame, &library, current.as_ref()))?;
@@ -931,11 +969,11 @@ fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<
         match download_missing_lyrics(&mut project, &mut |_| {}) {
             Ok(LyricsDownload::Downloaded { track, artist }) => {
                 repository.save(&project)?;
-                Some(format!("已从 LRCLIB 下载歌词：{artist} - {track}"))
+                Some(format!("Downloaded lyrics from LRCLIB: {artist} - {track}"))
             }
-            Ok(LyricsDownload::NotFound) => Some("未找到时长匹配的同步歌词".into()),
+            Ok(LyricsDownload::NotFound) => Some("No duration-matched synced lyrics found".into()),
             Ok(LyricsDownload::AlreadyPresent) => None,
-            Err(error) => Some(format!("自动下载歌词失败：{error}")),
+            Err(error) => Some(format!("Automatic lyric download failed: {error}")),
         }
     } else {
         None
@@ -949,13 +987,12 @@ fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<
     ))
 }
 
-fn poll_import_job(
-    library: &mut MediaLibrary,
-    current: &mut Option<App>,
-) -> Result<(), Box<dyn Error>> {
+fn poll_import_job(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>> {
     let outcome = match library.job.as_ref().map(|job| job.result.try_recv()) {
         Some(Ok(result)) => Some(result),
-        Some(Err(TryRecvError::Disconnected)) => Some(Err("分离任务线程意外退出".to_owned())),
+        Some(Err(TryRecvError::Disconnected)) => {
+            Some(Err("Separation task thread exited unexpectedly".to_owned()))
+        }
         Some(Err(TryRecvError::Empty)) | None => None,
     };
     let Some(outcome) = outcome else {
@@ -963,7 +1000,7 @@ fn poll_import_job(
     };
     library.job = None;
     library.refresh()?;
-    match outcome {
+    let mut message = match outcome {
         Ok(path) => {
             if let Some(index) = library
                 .snapshot
@@ -973,11 +1010,15 @@ fn poll_import_job(
             {
                 library.project_selected = index;
             }
-            *current = Some(open_library_project(&library.config, &path)?);
-            library.message = Some(format!("分离完成：{}", path.display()));
+            format!("Separation complete: {}", path.display())
         }
-        Err(error) => library.message = Some(format!("分离失败：{error}")),
+        Err(error) => format!("Separation failed: {error}"),
+    };
+    if let Some(next) = library.start_next_queued() {
+        message.push_str("\nQueue continues: ");
+        message.push_str(&display_name(&next));
     }
+    library.message = Some(message);
     Ok(())
 }
 
@@ -991,7 +1032,7 @@ fn handle_library_key(
         KeyCode::BackTab => library.focus = library.focus.previous(),
         KeyCode::Char('r') if library.focus != LibraryFocus::Project => {
             library.refresh()?;
-            library.message = Some("媒体库列表已刷新".into());
+            library.message = Some("Media library refreshed".into());
         }
         KeyCode::Char('q') if library.focus != LibraryFocus::Project => {
             if let Some(app) = current
@@ -1015,7 +1056,8 @@ fn handle_library_key(
                         .as_ref()
                         .is_some_and(|app| app.session.state() != RecordingState::Idle)
                     {
-                        library.message = Some("请先结束或取消当前录音，再切换 project".into());
+                        library.message =
+                            Some("Stop or cancel recording before switching projects".into());
                     } else if let Some(entry) =
                         library.snapshot.projects.get(library.project_selected)
                     {
@@ -1025,7 +1067,7 @@ fn handle_library_key(
                             return Ok(false);
                         }
                         *current = Some(open_library_project(&library.config, &entry.path)?);
-                        library.message = Some(format!("已打开：{}", entry.title));
+                        library.message = Some(format!("Opened: {}", entry.title));
                     }
                 }
                 _ => {}
@@ -1046,7 +1088,8 @@ fn handle_library_key(
                             .as_ref()
                             .is_some_and(|app| app.session.state() != RecordingState::Idle)
                         {
-                            library.message = Some("请先结束或取消当前录音，再切换 project".into());
+                            library.message =
+                                Some("Stop or cancel recording before switching projects".into());
                         } else {
                             *current =
                                 Some(open_library_project(&library.config, &source.project_path)?);
@@ -1059,7 +1102,7 @@ fn handle_library_key(
                                 library.project_selected = index;
                             }
                             library.message =
-                                Some(format!("已打开：{}", source.project_path.display()));
+                                Some(format!("Opened: {}", source.project_path.display()));
                         }
                     } else {
                         library.start_import();
@@ -1190,20 +1233,96 @@ fn draw_project(
         .wrap(Wrap { trim: false });
     frame.render_widget(lyric_panel, areas[1]);
 
-    draw_project_footer(frame, areas[2], library_focused);
+    draw_project_footer(frame, areas[2], app, library_focused);
+}
+
+#[derive(Clone, Copy)]
+enum FooterAction {
+    Playback,
+    Seek,
+    Restart,
+    Volume,
+    SourceTrack,
+    Take,
+    SelectTake,
+    Effect,
+    Key,
+    Arm,
+    RecordToggle,
+    Monitor,
+    Quit,
+}
+
+fn mode_allows_footer_action(state: RecordingState, action: FooterAction) -> bool {
+    match action {
+        FooterAction::Playback | FooterAction::Restart => state != RecordingState::Recording,
+        FooterAction::Take
+        | FooterAction::SelectTake
+        | FooterAction::Effect
+        | FooterAction::Key
+        | FooterAction::Arm => state == RecordingState::Idle,
+        FooterAction::RecordToggle => state != RecordingState::Idle,
+        FooterAction::Seek
+        | FooterAction::Volume
+        | FooterAction::SourceTrack
+        | FooterAction::Monitor
+        | FooterAction::Quit => true,
+    }
 }
 
 fn draw_project_footer(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
+    app: &App,
     library_focused: Option<bool>,
 ) {
+    let state = app.session.state();
+    let audio = app.playback.audio.is_some();
+    let has_track = |kind| app.playback.tracks.iter().any(|track| track.kind == kind);
+    let has_take = app.selected_take.is_some();
+    let mode = |action| mode_allows_footer_action(state, action);
     let footer = Paragraph::new(vec![
-        Line::from("Space play/pause · ←/→ seek 5s（录音中按歌词跳转）· r restart · -/+ volume"),
-        Line::from("1 original · 2 accompaniment · 3 vocals（录音中也可切换）· 4 take · q quit"),
-        Line::from(
-            "[/] select take · e+1..5 effect · / reset Key · a arm · Enter start/stop · m monitor",
-        ),
+        footer_line(&[
+            ("Space play/pause", audio && mode(FooterAction::Playback)),
+            (
+                "←/→ seek 5s (by lyrics while recording)",
+                audio
+                    && mode(FooterAction::Seek)
+                    && (state != RecordingState::Recording || app.lyrics.is_some()),
+            ),
+            ("r restart", audio && mode(FooterAction::Restart)),
+            ("-/+ volume", audio && mode(FooterAction::Volume)),
+        ]),
+        footer_line(&[
+            (
+                "1 original",
+                has_track(TrackKind::Original) && mode(FooterAction::SourceTrack),
+            ),
+            (
+                "2 accompaniment",
+                has_track(TrackKind::Accompaniment) && mode(FooterAction::SourceTrack),
+            ),
+            (
+                "3 vocals (switchable while recording)",
+                has_track(TrackKind::Vocals) && mode(FooterAction::SourceTrack),
+            ),
+            ("4 take", has_take && mode(FooterAction::Take)),
+            ("q quit", mode(FooterAction::Quit)),
+        ]),
+        footer_line(&[
+            (
+                "[/] select take",
+                has_take && mode(FooterAction::SelectTake),
+            ),
+            ("e+1..5 effect", has_take && mode(FooterAction::Effect)),
+            ("/ reset Key", mode(FooterAction::Key)),
+            (
+                "a arm",
+                audio && has_track(TrackKind::Accompaniment) && mode(FooterAction::Arm),
+            ),
+            ("Enter start/stop", mode(FooterAction::RecordToggle)),
+            ("m monitor", mode(FooterAction::Monitor)),
+        ]),
     ])
     .block(
         Block::default()
@@ -1211,6 +1330,22 @@ fn draw_project_footer(
             .border_style(panel_border_style(library_focused)),
     );
     frame.render_widget(footer, area);
+}
+
+fn footer_line(items: &[(&'static str, bool)]) -> Line<'static> {
+    let mut spans = Vec::with_capacity(items.len().saturating_mul(2).saturating_sub(1));
+    for (index, (text, enabled)) in items.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" · "));
+        }
+        let style = if *enabled {
+            Style::default()
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(*text, style));
+    }
+    Line::from(spans)
 }
 
 fn panel_border_style(library_focused: Option<bool>) -> Style {
@@ -1251,14 +1386,16 @@ fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>
     } else {
         let focused = library.focus == LibraryFocus::Project;
         frame.render_widget(
-            Paragraph::new("还没有 project\n\nTab 切换到右栏，选择音乐后按 Enter 创建并分离")
-                .block(
-                    Block::default()
-                        .title(panel_title("K3", Some(focused)))
-                        .borders(Borders::ALL)
-                        .border_style(panel_border_style(Some(focused))),
-                )
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(
+                "No project is open\n\nTab to Music, select a file, then press Enter to separate",
+            )
+            .block(
+                Block::default()
+                    .title(panel_title("K3", Some(focused)))
+                    .borders(Borders::ALL)
+                    .border_style(panel_border_style(Some(focused))),
+            )
+            .wrap(Wrap { trim: false }),
             columns[1],
         );
     }
@@ -1280,14 +1417,14 @@ fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library
         })
         .collect::<Vec<_>>();
     let title = if library.focus == LibraryFocus::Projects {
-        "▶ Projects · Enter 打开"
+        "▶ Projects · Enter open"
     } else {
         "Projects"
     };
     let focused = library.focus == LibraryFocus::Projects;
     frame.render_widget(
         Paragraph::new(if rows.is_empty() {
-            vec![Line::from("没有 project")]
+            vec![Line::from("No projects")]
         } else {
             rows
         })
@@ -1303,6 +1440,10 @@ fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library
 }
 
 fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library: &MediaLibrary) {
+    let failed = library
+        .message
+        .as_deref()
+        .is_some_and(|message| message.starts_with("Separation failed"));
     let areas = if library.message.is_some() {
         Layout::default()
             .direction(Direction::Vertical)
@@ -1315,13 +1456,25 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             .split(area)
     };
     let list_area = areas[0];
-    let mut rows = library
+    let rows = library
         .snapshot
         .sources
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let state = if entry.imported { "✓" } else { "+" };
+            let state = if entry.imported {
+                "✓"
+            } else if library
+                .job
+                .as_ref()
+                .is_some_and(|job| job.source == entry.path)
+            {
+                separation_spinner_frame()
+            } else if library.queue.iter().any(|path| path == &entry.path) {
+                "◷"
+            } else {
+                "+"
+            };
             library_row(
                 &format!("{state} {}", display_name(&entry.path)),
                 index == library.source_selected,
@@ -1329,21 +1482,15 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             )
         })
         .collect::<Vec<_>>();
-    if let Some(job) = &library.job {
-        rows.push(Line::from(Span::styled(
-            format!("⏳ {}", display_name(&job.source)),
-            Style::default().fg(Color::Yellow),
-        )));
-    }
     let title = if library.focus == LibraryFocus::Sources {
-        "▶ Music · Enter 分离"
+        format!("▶ Music · Enter separate · queued {}", library.queue.len())
     } else {
-        "Music"
+        format!("Music · queued {}", library.queue.len())
     };
     let focused = library.focus == LibraryFocus::Sources;
     frame.render_widget(
         Paragraph::new(if rows.is_empty() {
-            vec![Line::from("没有音频文件")]
+            vec![Line::from("No audio files")]
         } else {
             rows
         })
@@ -1359,7 +1506,6 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
     );
 
     if let Some(message) = &library.message {
-        let failed = message.starts_with("分离失败");
         let color = if failed { Color::Red } else { Color::Cyan };
         let title = if failed { "Error" } else { "Status" };
         frame.render_widget(
@@ -1375,6 +1521,14 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             areas[1],
         );
     }
+}
+
+fn separation_spinner_frame() -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frame = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() / 100);
+    FRAMES[(frame % FRAMES.len() as u128) as usize]
 }
 
 fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
@@ -1424,7 +1578,7 @@ fn lyrics_for_display(
     visible_rows: usize,
 ) -> (Vec<Line<'static>>, String) {
     lyrics.map_or_else(
-        || (vec![Line::from("未加载歌词")], String::new()),
+        || (vec![Line::from("No lyrics loaded")], String::new()),
         |timeline| {
             let window = lyric_window(timeline, position, visible_rows);
             let countdown = lyric_countdown(timeline, position);
@@ -1467,7 +1621,7 @@ fn lyrics_for_display(
                 format!(" · {}/{}", current + 1, timeline.lines().len())
             });
             let lines = if lines.is_empty() {
-                vec![Line::from("歌词文件中没有时间轴歌词")]
+                vec![Line::from("No timed lyrics in this file")]
             } else {
                 lines
             };
@@ -1663,16 +1817,141 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricCountdown, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
-        format_duration, lyric_countdown, lyric_seek_target, lyric_window, should_handle_key,
+        FooterAction, ImportJob, LyricCountdown, MediaLibrary, PlaybackState, PlaybackTrack,
+        TrackKind, effect_preset_for_key, format_duration, lyric_countdown, lyric_seek_target,
+        lyric_window, mode_allows_footer_action, poll_import_job, should_handle_key,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-    use k3_core::{LyricsTimeline, VocalEffectPreset};
-    use std::time::Duration;
+    use k3_core::{LyricsTimeline, RecordingState, VocalEffectPreset};
+    use std::{fs, sync::mpsc, time::Duration};
+
+    #[test]
+    fn imports_can_be_queued_while_another_source_is_running() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(music.join("a.wav"), b"a").unwrap();
+        fs::write(music.join("b.wav"), b"b").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {
+                "worker": "/bin/false",
+                "log_dir": sandbox.path().join("logs")
+            }
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let active_source = library.snapshot.sources[0].path.clone();
+        let queued_source = library.snapshot.sources[1].path.clone();
+        let (sender, receiver) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source: active_source,
+            result: receiver,
+        });
+
+        library.source_selected = 1;
+        library.start_import();
+
+        assert_eq!(library.queue.iter().collect::<Vec<_>>(), [&queued_source]);
+        assert!(library.message.as_deref().unwrap().contains("Queued at"));
+        library.start_import();
+        assert_eq!(library.queue.len(), 1);
+        assert!(
+            library
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("Already queued")
+        );
+
+        sender.send(Err("simulated failure".into())).unwrap();
+        poll_import_job(&mut library).unwrap();
+
+        assert_eq!(library.job.as_ref().unwrap().source, queued_source);
+        assert!(library.queue.is_empty());
+        assert!(
+            library
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("Queue continues")
+        );
+    }
+
+    #[test]
+    fn completed_import_does_not_open_or_autoplay_the_project() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(music.join("song.wav"), b"song").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {
+                "worker": "/bin/false",
+                "log_dir": sandbox.path().join("logs")
+            }
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let completed = projects.join("song");
+        let (sender, receiver) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source: library.snapshot.sources[0].path.clone(),
+            result: receiver,
+        });
+        sender.send(Ok(completed)).unwrap();
+        poll_import_job(&mut library).unwrap();
+
+        assert!(
+            library
+                .message
+                .as_deref()
+                .unwrap()
+                .starts_with("Separation complete")
+        );
+    }
 
     #[test]
     fn formats_playback_position_as_minutes_and_seconds() {
         assert_eq!(format_duration(Duration::from_secs(125)), "02:05");
+    }
+
+    #[test]
+    fn footer_disables_actions_that_the_recording_mode_rejects() {
+        assert!(mode_allows_footer_action(
+            RecordingState::Idle,
+            FooterAction::Arm
+        ));
+        assert!(!mode_allows_footer_action(
+            RecordingState::Idle,
+            FooterAction::RecordToggle
+        ));
+        assert!(mode_allows_footer_action(
+            RecordingState::Armed,
+            FooterAction::RecordToggle
+        ));
+        assert!(!mode_allows_footer_action(
+            RecordingState::Armed,
+            FooterAction::Effect
+        ));
+        assert!(!mode_allows_footer_action(
+            RecordingState::Recording,
+            FooterAction::Playback
+        ));
+        assert!(mode_allows_footer_action(
+            RecordingState::Recording,
+            FooterAction::Volume
+        ));
+        assert!(mode_allows_footer_action(
+            RecordingState::Recording,
+            FooterAction::SourceTrack
+        ));
     }
 
     #[test]

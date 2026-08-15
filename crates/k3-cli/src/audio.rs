@@ -22,6 +22,18 @@ pub struct AudioPlayer {
 
 impl AudioPlayer {
     pub fn open(path: &Path, key_shift_semitones: i8) -> Result<Self, Box<dyn Error>> {
+        Self::open_with_state(path, key_shift_semitones, true)
+    }
+
+    pub fn open_paused(path: &Path, key_shift_semitones: i8) -> Result<Self, Box<dyn Error>> {
+        Self::open_with_state(path, key_shift_semitones, false)
+    }
+
+    fn open_with_state(
+        path: &Path,
+        key_shift_semitones: i8,
+        should_play: bool,
+    ) -> Result<Self, Box<dyn Error>> {
         let stream_error = Arc::new(Mutex::new(None));
         let callback_state = Arc::clone(&stream_error);
         let mut builder = DeviceSinkBuilder::from_default_device()?;
@@ -39,7 +51,7 @@ impl AudioPlayer {
             duration: None,
             stream_error,
         };
-        this.load(path, Duration::ZERO, true, key_shift_semitones)?;
+        this.load(path, Duration::ZERO, should_play, key_shift_semitones)?;
         Ok(this)
     }
 

@@ -95,7 +95,7 @@ enum Command {
         /// Shift playback and backing tracks by -6 to +6 semitones without changing speed.
         #[arg(long, allow_hyphen_values = true)]
         key: Option<i8>,
-        /// project 没有本地同步歌词时，不查询 LRCLIB。
+        /// Do not query LRCLIB when the project has no local synced lyrics.
         #[arg(long)]
         no_lyrics_download: bool,
     },
@@ -272,12 +272,15 @@ fn open_tui(
             Ok(LyricsDownload::AlreadyPresent) => None,
             Ok(LyricsDownload::Downloaded { track, artist }) => {
                 repository.save(&project)?;
-                Some(format!("已从 LRCLIB 下载歌词：{artist} - {track}"))
+                Some(format!("Downloaded lyrics from LRCLIB: {artist} - {track}"))
             }
-            Ok(LyricsDownload::NotFound) => {
-                Some("LRCLIB 未找到时长匹配的同步歌词；录音仍可继续".into())
-            }
-            Err(error) => Some(format!("自动下载歌词失败：{error}；录音仍可继续")),
+            Ok(LyricsDownload::NotFound) => Some(
+                "LRCLIB found no duration-matched synced lyrics; recording is still available"
+                    .into(),
+            ),
+            Err(error) => Some(format!(
+                "Automatic lyric download failed: {error}; recording is still available"
+            )),
         }
     };
     tui::open(project, lyrics_message)

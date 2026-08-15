@@ -50,22 +50,28 @@ pub enum LyricsProgress {
 impl fmt::Display for LyricsProgress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CheckingLocal => formatter.write_str("正在检查本地歌词……"),
+            Self::CheckingLocal => formatter.write_str("Checking local lyrics..."),
             Self::SearchingOnline { title, artist } => {
                 if let Some(artist) = artist {
                     write!(
                         formatter,
-                        "本地没有歌词，正在从 LRCLIB 搜索：{artist} - {title}……"
+                        "No local lyrics; searching LRCLIB: {artist} - {title}..."
                     )
                 } else {
-                    write!(formatter, "本地没有歌词，正在从 LRCLIB 搜索：{title}……")
+                    write!(formatter, "No local lyrics; searching LRCLIB: {title}...")
                 }
             }
             Self::FallingBackToTitle { title } => {
-                write!(formatter, "按歌手没有结果，正在只按曲名重试：{title}……")
+                write!(
+                    formatter,
+                    "No artist match; retrying by title only: {title}..."
+                )
             }
             Self::RetryingOnline { reason } => {
-                write!(formatter, "LRCLIB 请求失败：{reason}；正在重试（2/2）……")
+                write!(
+                    formatter,
+                    "LRCLIB request failed: {reason}; retrying (2/2)..."
+                )
             }
             Self::FoundOnline {
                 track,
@@ -73,10 +79,10 @@ impl fmt::Display for LyricsProgress {
                 duration_seconds,
             } => write!(
                 formatter,
-                "找到同步歌词：{artist} - {track}（{duration_seconds} 秒）"
+                "Found synced lyrics: {artist} - {track} ({duration_seconds}s)"
             ),
             Self::Saving { relative_path } => {
-                write!(formatter, "正在保存歌词：{relative_path}")
+                write!(formatter, "Saving lyrics: {relative_path}")
             }
         }
     }
@@ -117,7 +123,7 @@ fn download_with_catalog(
             return Ok(LyricsDownload::AlreadyPresent);
         }
         return Err(format!(
-            "本地歌词文件不含可识别的 LRC 时间轴，未覆盖：{}",
+            "Local lyrics contain no recognizable LRC timeline; file not overwritten: {}",
             destination.display()
         )
         .into());
@@ -250,7 +256,8 @@ fn search_with_retry(
                 reason: first_error.to_string(),
             });
             catalog.search(lookup).map_err(|retry_error| {
-                format!("LRCLIB 两次请求均失败；首次：{first_error}；重试：{retry_error}").into()
+                format!("Both LRCLIB requests failed; first: {first_error}; retry: {retry_error}")
+                    .into()
             })
         }
     }
@@ -394,7 +401,7 @@ mod tests {
 
         assert_eq!(catalog.calls.get(), 2);
         assert_eq!(candidates.len(), 1);
-        assert!(progress.iter().any(|line| line.contains("只按曲名重试")));
+        assert!(progress.iter().any(|line| line.contains("by title only")));
     }
 
     impl LyricsCatalog for FakeCatalog {
@@ -449,12 +456,12 @@ mod tests {
         assert!(
             progress
                 .iter()
-                .any(|message| message.contains("正在从 LRCLIB 搜索：歌手 - 歌曲"))
+                .any(|message| message.contains("searching LRCLIB: 歌手 - 歌曲"))
         );
         assert!(
             progress
                 .iter()
-                .any(|message| message.contains("找到同步歌词：歌手 - 歌曲"))
+                .any(|message| message.contains("Found synced lyrics: 歌手 - 歌曲"))
         );
     }
 
@@ -531,7 +538,7 @@ mod tests {
         assert!(
             progress
                 .iter()
-                .any(|message| message.contains("正在重试（2/2）"))
+                .any(|message| message.contains("retrying (2/2)"))
         );
     }
 }

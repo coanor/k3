@@ -117,8 +117,14 @@ target/release/k3 tui --config ~/.config/k3/config.json
 ```
 
 界面左栏列出 `projects_root` 下的 project，右栏递归扫描 `music_root` 中的音频。
+媒体库启动时不会自动打开或播放任何 project；需要在左栏选择后按 `Enter` 打开。
 按 `Tab` 或 `Shift+Tab` 切换焦点；左栏按 `Enter` 打开 project，右栏按
 `Enter` 创建同名 project 并在后台分离。一个 K3 进程同时只运行一个分离任务。
+分离期间可以继续在右栏选择其他歌曲并按 `Enter`，任务会按加入顺序自动排队；重复
+选择同一首不会重复入队。右栏用旋转的 `⠋` 表示正在处理、`◷` 表示排队等待、`+`
+表示尚未加入任务、`✓` 表示已经存在可用 project。当前任务成功或失败后都会继续
+处理下一首。分离完成只刷新并选中左栏中的新 project，不会自动打开或播放，因而
+不会打断当前歌曲的播放或录音。
 分离失败时，右栏底部会持续显示红色错误信息；失败的 project 会移到
 `projects_root/.failed/` 归档，不会加入左栏，对应源文件仍可在右栏按 `Enter`
 重试。启动时扫描到的旧失败 project 也不会显示在左栏，并会在下次重试前归档。
@@ -202,8 +208,8 @@ target/release/k3 separate \
   --segment-size 256
 ```
 
-模型首次使用时会自动下载，后续可以断网运行。分离进度和模型日志输出到
-stderr，成功后 K3 会显示工程摘要。
+模型首次使用时会自动下载，后续可以断网运行。分离进度和模型日志写入 K3 的
+`separate.log`，不会直接覆盖 TUI；成功后 K3 会显示工程摘要。
 
 ### 5.1 Profile 与内置模型
 
@@ -282,7 +288,8 @@ separation: ready
 takes: 0
 ```
 
-打开 TUI。分离完成的工程会默认播放伴奏；否则播放原曲：
+打开 TUI。分离完成的工程默认选择伴奏，否则选择原曲；播放器初始保持暂停，按
+`Space` 后才开始播放：
 
 ```bash
 target/release/k3 tui --project ./songs/example
@@ -303,6 +310,7 @@ target/release/k3 tui --project ./songs/example --no-lyrics-download
 ```
 
 K3 不会覆盖同名但无法解析的本地歌词文件；此时应先检查或移走该文件。
+TUI 以及进入 TUI 前的歌词检索进度统一使用英文提示；中文只用于本手册。
 
 如果录下的人声相对伴奏偏后，可用毫秒数将人声提前，并把设置保存到
 `project.json`：
@@ -327,6 +335,10 @@ target/release/k3 tui --project ./songs/example --key -2
 伴奏，但不会变调麦克风录下的 dry 人声。
 
 播放按键：
+
+底部快捷键仍保留完整文字说明；当前模式或当前 project 下不可用的操作会显示为
+深灰色。例如录音期间，播放暂停、重新开始、take、效果和 Key 操作会变灰，而
+歌词跳转、音量、监听音轨和停止录音仍保持正常颜色。
 
 - `Space`：暂停或继续；
 - `←` / `→`：后退或前进 5 秒；
@@ -397,8 +409,9 @@ target/release/k3 effect \
 - `takes/take-<时间戳>-mix.wav`：当前伴奏轨与增强人声组成的双声道试听混音。
 
 两者都会登记到 `project.json`。保留 dry 文件是为了以后可以重新调整人声、
-伴奏和效果；日常试听应打开 mix 文件。录音过程中不能跳转或切换音轨；按
-`q` 会先停止并保存当前 take。WSLg 使用 Windows 默认麦克风，需在 Windows
+伴奏和效果；日常试听应打开 mix 文件。录音过程中 `←` / `→` 按歌词时间跳转，
+`1` / `2` / `3` 可以切换监听音轨，但 take 始终只混入伴奏；按 `q` 会先停止并
+保存当前 take。WSLg 使用 Windows 默认麦克风，需在 Windows
 的“隐私和安全性 → 麦克风”中允许桌面应用访问。
 
 麦克风监听默认关闭。按 `m` 开启后，录音时可以从输出设备实时听到自己的

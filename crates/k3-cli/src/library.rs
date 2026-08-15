@@ -247,12 +247,12 @@ pub fn import_and_separate(
     if let Err(error) = result {
         return match archive_failed_project(&config.projects_root, &project_root) {
             Ok(archived) => Err(format!(
-                "{error}; 失败 project 已归档到 {}，可修正配置后重试",
+                "{error}; failed project archived at {}; fix the configuration and retry",
                 archived.display()
             )
             .into()),
             Err(archive_error) => Err(format!(
-                "{error}; 归档失败 project {} 时又发生错误: {archive_error}",
+                "{error}; failed to archive project {}: {archive_error}",
                 project_root.display()
             )
             .into()),
@@ -280,7 +280,7 @@ fn archive_failed_project(
         }
     }
     Err(format!(
-        "无法为失败 project {} 生成归档目录",
+        "cannot create an archive directory for failed project {}",
         failed_project.display()
     )
     .into())
