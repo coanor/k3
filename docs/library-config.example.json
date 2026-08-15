@@ -8,10 +8,14 @@
   "separation": {
     "worker": "/home/tan/k3-separator/.venv-separator/bin/k3-separator",
     "model_dir": "/home/tan/.cache/k3/models",
+    "log_dir": "/home/tan/.local/state/k3/logs",
     "profile": "fast",
     "model": "uvr-mdx-karaoke-2",
     "segment_size": 128,
     "autocast": false
+  },
+  "recording": {
+    "default_effect": "clean"
   },
   "lyrics": {
     "auto_download": true

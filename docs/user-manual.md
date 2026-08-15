@@ -119,6 +119,9 @@ target/release/k3 tui --config ~/.config/k3/config.json
 界面左栏列出 `projects_root` 下的 project，右栏递归扫描 `music_root` 中的音频。
 按 `Tab` 或 `Shift+Tab` 切换焦点；左栏按 `Enter` 打开 project，右栏按
 `Enter` 创建同名 project 并在后台分离。一个 K3 进程同时只运行一个分离任务。
+分离失败时，右栏底部会持续显示红色错误信息；失败的 project 会移到
+`projects_root/.failed/` 归档，不会加入左栏，对应源文件仍可在右栏按 `Enter`
+重试。启动时扫描到的旧失败 project 也不会显示在左栏，并会在下次重试前归档。
 目录改名不会让右栏重复导入：K3 会用 project 中的源文件名和文件大小识别已导入
 歌曲。配置中的分离参数与 `separate.sh` 对应如下：
 
@@ -126,6 +129,7 @@ target/release/k3 tui --config ~/.config/k3/config.json
 |---|---|---|
 | `separation.worker` | `K3_PYTHON`（脚本模式） | worker 可执行文件；脚本模式下为 Python 解释器 |
 | `separation.model_dir` | `K3_MODEL_DIR` | 模型缓存目录 |
+| `separation.log_dir` | `K3_LOG_DIR` | 分离日志目录；单个 `separate.log` 每次覆盖 |
 | `separation.profile` | `K3_PROFILE` | `fast` / `balanced` / `quality` / `compatible` |
 | `separation.model` | `K3_MODEL` | 明确指定模型 |
 | `separation.segment_size` | `K3_SEGMENT_SIZE` | 推理分块大小 |
@@ -134,6 +138,13 @@ target/release/k3 tui --config ~/.config/k3/config.json
 `scan.recursive` 和 `scan.extensions` 只影响右栏扫描，`lyrics.auto_download`
 控制打开 project 时本地无歌词是否自动联网下载。媒体库直接调用 K3 的 project
 与分离接口，并不启动 `separate.sh`；两者共享相同的 worker 和模型参数。
+worker 的完整输出不会直接写入 TUI，而是保存到单个 `separate.log`。媒体库优先使用
+`separation.log_dir`；命令行模式可用 `K3_LOG_DIR` 覆盖。Linux 默认路径为
+`$XDG_STATE_HOME/k3/logs/separate.log`，未设置 `XDG_STATE_HOME` 时使用
+`~/.local/state/k3/logs/separate.log`。每次开始分离都会覆盖上一次日志，失败提示中会
+包含日志路径和一小段尾部诊断。
+`recording.default_effect` 设置新 take 的默认录后效果，可选 `clean`、`studio`、
+`ktv`、`theater` 或 `church`。干声不会被覆盖；停止录音后使用该效果生成 mix。
 原有单 project 模式仍可使用：
 
 ```bash
@@ -346,7 +357,8 @@ target/release/k3 tui --project ./songs/example --key -2
 在 TUI 中：
 
 - `[` / `]`：循环选择已有 take；
-- `e`：切换到下一个效果，重新生成 mix 并立即播放；
+- `e` 后按 `1`～`5`：直接选择 `clean`、`studio`、`ktv`、`theater` 或
+  `church`，重新生成 mix 并立即播放；按 `Esc` 取消选择；
 - `4`：播放当前选择的 take mix。
 
 如果修改 Key 后播放旧 take，K3 会使用原始 dry 人声、当前效果和新 Key 的伴奏

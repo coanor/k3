@@ -1,6 +1,6 @@
 use std::{
-    fs,
-    io::Write,
+    env, fs,
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -16,6 +16,7 @@ pub struct PythonSeparatorConfig {
     pub worker: PathBuf,
     pub model_dir: Option<PathBuf>,
     pub project_root: PathBuf,
+    pub log_path: PathBuf,
     pub model_id: Option<String>,
     pub overwrite: bool,
     pub segment_size: Option<u32>,
@@ -39,6 +40,20 @@ impl PythonStemSeparator {
         profile: SeparationProfile,
     ) -> Result<SeparationManifest, String> {
         let output_dir = self.config.project_root.join("stems");
+        if let Some(parent) = self.config.log_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "cannot create K3 log directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        let stderr_log = fs::File::create(&self.config.log_path).map_err(|error| {
+            format!(
+                "cannot create separation log {}: {error}",
+                self.config.log_path.display()
+            )
+        })?;
         let mut command = Command::new(&self.config.worker);
         if let Some(model_dir) = &self.config.model_dir {
             command.arg("--model-dir").arg(model_dir);
@@ -46,7 +61,7 @@ impl PythonStemSeparator {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::from(stderr_log))
             .spawn()
             .map_err(|error| {
                 format!(
@@ -87,20 +102,30 @@ impl PythonStemSeparator {
             .map_err(|error| format!("cannot wait for separation worker: {error}"))?;
         if !output.status.success() {
             return Err(format!(
-                "separation worker exited with status {}",
-                output.status
+                "separation worker exited with status {}{}",
+                output.status,
+                stderr_diagnostics(&self.config.log_path)
             ));
         }
         let stdout = String::from_utf8(output.stdout)
             .map_err(|error| format!("worker response is not UTF-8: {error}"))?;
-        let response: WorkerResponse = serde_json::from_str(stdout.trim())
-            .map_err(|error| format!("invalid worker response: {error}"))?;
+        let response: WorkerResponse = serde_json::from_str(stdout.trim()).map_err(|error| {
+            format!(
+                "invalid worker response: {error}{}",
+                stderr_diagnostics(&self.config.log_path)
+            )
+        })?;
         if !response.ok {
             let error = response.error.unwrap_or(WorkerError {
                 code: "unknown".into(),
                 message: "worker failed without an error body".into(),
             });
-            return Err(format!("{}: {}", error.code, error.message));
+            return Err(format!(
+                "{}: {}{}",
+                error.code,
+                error.message,
+                stderr_diagnostics(&self.config.log_path)
+            ));
         }
         let result = response
             .result
@@ -139,6 +164,73 @@ impl PythonStemSeparator {
                 profile: requested_profile,
             },
         })
+    }
+}
+
+pub fn separation_log_path() -> io::Result<PathBuf> {
+    if let Some(directory) = env::var_os("K3_LOG_DIR").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(directory).join("separate.log"));
+    }
+    if let Some(state_home) = env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(state_home)
+            .join("k3")
+            .join("logs")
+            .join("separate.log"));
+    }
+    #[cfg(windows)]
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(local_app_data)
+            .join("k3")
+            .join("logs")
+            .join("separate.log"));
+    }
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(home)
+            .join(".local")
+            .join("state")
+            .join("k3")
+            .join("logs")
+            .join("separate.log"));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "cannot locate the K3 log directory; set K3_LOG_DIR",
+    ))
+}
+
+fn stderr_diagnostics(log_path: &Path) -> String {
+    const LIMIT: usize = 2_048;
+    let mut file = match fs::File::open(log_path) {
+        Ok(file) => file,
+        Err(error) => return format!("; cannot read worker log {}: {error}", log_path.display()),
+    };
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    let start = length.saturating_sub(LIMIT as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return format!("; full log: {}", log_path.display());
+    }
+    let mut stderr = Vec::with_capacity(LIMIT);
+    if file.read_to_end(&mut stderr).is_err() {
+        return format!("; full log: {}", log_path.display());
+    }
+    let text = String::from_utf8_lossy(&stderr);
+    let sanitized = text
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+        .collect::<String>();
+    let diagnostics = sanitized.trim();
+    if diagnostics.is_empty() {
+        format!("; full log: {}", log_path.display())
+    } else if start == 0_u64 {
+        format!(
+            "; full log: {}; worker stderr: {diagnostics}",
+            log_path.display(),
+        )
+    } else {
+        format!(
+            "; full log: {}; worker stderr (tail): {diagnostics}",
+            log_path.display(),
+        )
     }
 }
 

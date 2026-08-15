@@ -397,6 +397,8 @@ struct App {
     project_dirty: bool,
     monitoring_enabled: bool,
     selected_take: Option<usize>,
+    effect_selecting: bool,
+    default_effect: VocalEffectPreset,
     lyrics: Option<LyricsTimeline>,
 }
 
@@ -405,6 +407,7 @@ impl App {
         project: Project,
         lyrics: Option<LyricsTimeline>,
         startup_message: Option<String>,
+        default_effect: VocalEffectPreset,
     ) -> Self {
         let selected_take = project.takes().len().checked_sub(1);
         let key_shift_semitones = project.key_shift_semitones();
@@ -416,17 +419,32 @@ impl App {
             project_dirty: false,
             monitoring_enabled: false,
             selected_take,
+            effect_selecting: false,
+            default_effect,
             lyrics,
         }
     }
 
     fn handle_key(&mut self, key: KeyCode) -> bool {
+        if self.effect_selecting {
+            if let Some(preset) = effect_preset_for_key(key) {
+                self.effect_selecting = false;
+                self.apply_take_effect(preset);
+                return false;
+            }
+            if matches!(key, KeyCode::Esc | KeyCode::Char('e')) {
+                self.effect_selecting = false;
+                self.recording_message = Some("已取消效果选择".into());
+                return false;
+            }
+            self.effect_selecting = false;
+        }
         match (self.session.state(), key) {
             (_, KeyCode::Char('m')) => self.toggle_monitoring(),
             (RecordingState::Idle, KeyCode::Char('a')) => self.arm(),
             (RecordingState::Idle, KeyCode::Char('[')) => self.select_take(-1),
             (RecordingState::Idle, KeyCode::Char(']')) => self.select_take(1),
-            (RecordingState::Idle, KeyCode::Char('e')) => self.cycle_take_effect(),
+            (RecordingState::Idle, KeyCode::Char('e')) => self.begin_effect_selection(),
             (RecordingState::Idle, KeyCode::Char('4')) => self.play_selected_take(),
             (RecordingState::Idle, KeyCode::Char(',')) => self.adjust_key(-1),
             (RecordingState::Idle, KeyCode::Char('.')) => self.adjust_key(1),
@@ -579,12 +597,21 @@ impl App {
         );
     }
 
-    fn cycle_take_effect(&mut self) {
+    fn begin_effect_selection(&mut self) {
+        if self.selected_take.is_none() {
+            self.recording_message = Some("当前 project 还没有 take".into());
+            return;
+        }
+        self.effect_selecting = true;
+        self.recording_message =
+            Some("选择效果：1 clean · 2 studio · 3 ktv · 4 theater · 5 church · Esc 取消".into());
+    }
+
+    fn apply_take_effect(&mut self, preset: VocalEffectPreset) {
         let Some(index) = self.selected_take else {
             self.recording_message = Some("当前 project 还没有 take".into());
             return;
         };
-        let preset = self.session.project().takes()[index].effect_preset().next();
         match self.rerender_take(index, preset) {
             Ok(path) => {
                 let playback_warning = self.playback.play_take(&path).err();
@@ -779,12 +806,13 @@ impl App {
             &active.mix_temporary_path,
             self.session.project().latency_compensation_ms(),
             active.backing_key_shift_semitones,
-            VocalEffectPreset::Clean,
+            self.default_effect,
         )
         .and_then(|()| {
             fs::rename(&active.mix_temporary_path, &active.mix_final_path).map_err(Into::into)
         });
-        let mut take = Take::new(active.id, dry_project_path);
+        let mut take =
+            Take::new(active.id, dry_project_path).with_effect_preset(self.default_effect);
         let mix_warning = match mix_result {
             Ok(()) => match ProjectPath::new(active.mix_relative_path) {
                 Ok(path) => {
@@ -850,7 +878,7 @@ impl App {
 
 pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box<dyn Error>> {
     let lyrics = load_lyrics(&project)?;
-    let mut app = App::new(project, lyrics, startup_message);
+    let mut app = App::new(project, lyrics, startup_message, VocalEffectPreset::Clean);
     let mut guard = TerminalGuard::enter()?;
 
     loop {
@@ -913,7 +941,12 @@ fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<
         None
     };
     let lyrics = load_lyrics(&project)?;
-    Ok(App::new(project, lyrics, message))
+    Ok(App::new(
+        project,
+        lyrics,
+        message,
+        config.recording.default_effect,
+    ))
 }
 
 fn poll_import_job(
@@ -1049,10 +1082,15 @@ fn should_handle_key(key: &KeyEvent) -> bool {
 }
 
 fn draw(frame: &mut Frame, app: &App) {
-    draw_project(frame, frame.area(), app);
+    draw_project(frame, frame.area(), app, None);
 }
 
-fn draw_project(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+fn draw_project(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    library_focused: Option<bool>,
+) {
     let position = app.playback.position();
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -1075,17 +1113,16 @@ fn draw_project(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let duration = app.playback.audio.as_ref().and_then(AudioPlayer::duration);
     let volume = app.playback.audio.as_ref().map_or(0.0, AudioPlayer::volume);
     let track = app.playback.tracks[app.playback.selected].kind.label();
+    let current_effect = if app.session.state() == RecordingState::Idle {
+        app.selected_take.map_or(app.default_effect, |index| {
+            project.takes()[index].effect_preset()
+        })
+    } else {
+        app.default_effect
+    };
     let take_status = app.selected_take.map_or_else(
         || "selected take: none".to_owned(),
-        |index| {
-            let take = &project.takes()[index];
-            format!(
-                "selected take: {}/{} · effect {}",
-                index + 1,
-                project.takes().len(),
-                take.effect_preset().label()
-            )
-        },
+        |index| format!("selected take: {}/{}", index + 1, project.takes().len()),
     );
     let audio_line = if let Some(error) = &app.playback.error {
         format!("audio: {track} · error: {error}")
@@ -1125,7 +1162,15 @@ fn draw_project(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                 .unwrap_or("recording: press a to arm"),
         ),
     ])
-    .block(Block::default().title(" K3 project ").borders(Borders::ALL));
+    .block(
+        Block::default()
+            .title(panel_title(
+                &format!("K3 · FX: {}", current_effect.label()),
+                library_focused,
+            ))
+            .borders(Borders::ALL)
+            .border_style(panel_border_style(library_focused)),
+    );
     frame.render_widget(header, areas[0]);
 
     let visible_rows = usize::from(areas[1].height.saturating_sub(2));
@@ -1139,20 +1184,51 @@ fn draw_project(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     format_duration(position),
                     lyric_progress
                 ))
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_style(panel_border_style(library_focused)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(lyric_panel, areas[1]);
 
+    draw_project_footer(frame, areas[2], library_focused);
+}
+
+fn draw_project_footer(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    library_focused: Option<bool>,
+) {
     let footer = Paragraph::new(vec![
         Line::from("Space play/pause · ←/→ seek 5s（录音中按歌词跳转）· r restart · -/+ volume"),
         Line::from("1 original · 2 accompaniment · 3 vocals（录音中也可切换）· 4 take · q quit"),
         Line::from(
-            "[/] select take · e next effect · / reset Key · a arm · Enter start/stop · m monitor",
+            "[/] select take · e+1..5 effect · / reset Key · a arm · Enter start/stop · m monitor",
         ),
     ])
-    .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(footer, areas[2]);
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(panel_border_style(library_focused)),
+    );
+    frame.render_widget(footer, area);
+}
+
+fn panel_border_style(library_focused: Option<bool>) -> Style {
+    match library_focused {
+        Some(true) => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        Some(false) => Style::default().fg(Color::DarkGray),
+        None => Style::default(),
+    }
+}
+
+fn panel_title(label: &str, library_focused: Option<bool>) -> String {
+    if library_focused == Some(true) {
+        format!(" ▶ {label} ")
+    } else {
+        format!(" {label} ")
+    }
 }
 
 fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>) {
@@ -1166,11 +1242,22 @@ fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>
         .split(frame.area());
     draw_library_projects(frame, columns[0], library);
     if let Some(app) = current {
-        draw_project(frame, columns[1], app);
+        draw_project(
+            frame,
+            columns[1],
+            app,
+            Some(library.focus == LibraryFocus::Project),
+        );
     } else {
+        let focused = library.focus == LibraryFocus::Project;
         frame.render_widget(
             Paragraph::new("还没有 project\n\nTab 切换到右栏，选择音乐后按 Enter 创建并分离")
-                .block(Block::default().title(" K3 ").borders(Borders::ALL))
+                .block(
+                    Block::default()
+                        .title(panel_title("K3", Some(focused)))
+                        .borders(Borders::ALL)
+                        .border_style(panel_border_style(Some(focused))),
+                )
                 .wrap(Wrap { trim: false }),
             columns[1],
         );
@@ -1193,23 +1280,41 @@ fn draw_library_projects(frame: &mut Frame, area: ratatui::layout::Rect, library
         })
         .collect::<Vec<_>>();
     let title = if library.focus == LibraryFocus::Projects {
-        " Projects · Enter 打开 "
+        "▶ Projects · Enter 打开"
     } else {
-        " Projects "
+        "Projects"
     };
+    let focused = library.focus == LibraryFocus::Projects;
     frame.render_widget(
         Paragraph::new(if rows.is_empty() {
             vec![Line::from("没有 project")]
         } else {
             rows
         })
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(format!(" {title} "))
+                .borders(Borders::ALL)
+                .border_style(panel_border_style(Some(focused))),
+        )
         .scroll((list_scroll(library.project_selected, area.height), 0)),
         area,
     );
 }
 
 fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library: &MediaLibrary) {
+    let areas = if library.message.is_some() {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(6)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(100), Constraint::Length(0)])
+            .split(area)
+    };
+    let list_area = areas[0];
     let mut rows = library
         .snapshot
         .sources
@@ -1230,29 +1335,46 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             Style::default().fg(Color::Yellow),
         )));
     }
-    if let Some(message) = &library.message {
-        rows.push(Line::from(""));
-        rows.push(Line::from(Span::styled(
-            message.clone(),
-            Style::default().fg(Color::Cyan),
-        )));
-    }
     let title = if library.focus == LibraryFocus::Sources {
-        " Music · Enter 分离 "
+        "▶ Music · Enter 分离"
     } else {
-        " Music "
+        "Music"
     };
+    let focused = library.focus == LibraryFocus::Sources;
     frame.render_widget(
         Paragraph::new(if rows.is_empty() {
             vec![Line::from("没有音频文件")]
         } else {
             rows
         })
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .scroll((list_scroll(library.source_selected, area.height), 0))
+        .block(
+            Block::default()
+                .title(format!(" {title} "))
+                .borders(Borders::ALL)
+                .border_style(panel_border_style(Some(focused))),
+        )
+        .scroll((list_scroll(library.source_selected, list_area.height), 0))
         .wrap(Wrap { trim: false }),
-        area,
+        list_area,
     );
+
+    if let Some(message) = &library.message {
+        let failed = message.starts_with("分离失败");
+        let color = if failed { Color::Red } else { Color::Cyan };
+        let title = if failed { "Error" } else { "Status" };
+        frame.render_widget(
+            Paragraph::new(message.as_str())
+                .style(Style::default().fg(color))
+                .block(
+                    Block::default()
+                        .title(format!(" {title} "))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(color)),
+                )
+                .wrap(Wrap { trim: false }),
+            areas[1],
+        );
+    }
 }
 
 fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
@@ -1279,6 +1401,17 @@ fn display_name(path: &Path) -> String {
         || path.display().to_string(),
         |value| value.to_string_lossy().into_owned(),
     )
+}
+
+fn effect_preset_for_key(key: KeyCode) -> Option<VocalEffectPreset> {
+    match key {
+        KeyCode::Char('1') => Some(VocalEffectPreset::Clean),
+        KeyCode::Char('2') => Some(VocalEffectPreset::Studio),
+        KeyCode::Char('3') => Some(VocalEffectPreset::Ktv),
+        KeyCode::Char('4') => Some(VocalEffectPreset::Theater),
+        KeyCode::Char('5') => Some(VocalEffectPreset::Church),
+        _ => None,
+    }
 }
 
 fn format_key(semitones: i8) -> String {
@@ -1530,16 +1663,33 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricCountdown, PlaybackState, PlaybackTrack, TrackKind, format_duration, lyric_countdown,
-        lyric_seek_target, lyric_window, should_handle_key,
+        LyricCountdown, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
+        format_duration, lyric_countdown, lyric_seek_target, lyric_window, should_handle_key,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-    use k3_core::LyricsTimeline;
+    use k3_core::{LyricsTimeline, VocalEffectPreset};
     use std::time::Duration;
 
     #[test]
     fn formats_playback_position_as_minutes_and_seconds() {
         assert_eq!(format_duration(Duration::from_secs(125)), "02:05");
+    }
+
+    #[test]
+    fn effect_chord_selects_a_preset_without_cycling() {
+        assert_eq!(
+            effect_preset_for_key(KeyCode::Char('1')),
+            Some(VocalEffectPreset::Clean)
+        );
+        assert_eq!(
+            effect_preset_for_key(KeyCode::Char('3')),
+            Some(VocalEffectPreset::Ktv)
+        );
+        assert_eq!(
+            effect_preset_for_key(KeyCode::Char('5')),
+            Some(VocalEffectPreset::Church)
+        );
+        assert_eq!(effect_preset_for_key(KeyCode::Char('6')), None);
     }
 
     #[test]

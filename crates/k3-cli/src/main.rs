@@ -19,7 +19,7 @@ use k3_core::{
 
 use crate::lyrics_download::{LyricsDownload, download_missing_lyrics};
 use crate::mix::render_take_preview;
-use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator};
+use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -184,6 +184,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 worker,
                 model_dir,
                 project_root: project.root().to_path_buf(),
+                log_path: separation_log_path()?,
                 model_id: model,
                 overwrite,
                 segment_size,

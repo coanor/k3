@@ -30,6 +30,7 @@ import pathlib
 import sys
 
 request = json.loads(sys.stdin.readline())
+print("MODEL_PROGRESS_MUST_NOT_REACH_TERMINAL", file=sys.stderr)
 output = pathlib.Path(request["params"]["output_dir"])
 output.mkdir(parents=True, exist_ok=True)
 vocals = output / "vocals.wav"
@@ -58,8 +59,12 @@ print(json.dumps({
     let mut permissions = fs::metadata(&worker).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&worker, permissions).unwrap();
+    let log_dir = sandbox.path().join("logs");
+    fs::create_dir_all(&log_dir).unwrap();
+    fs::write(log_dir.join("separate.log"), "旧分离日志").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_k3"))
+        .env("K3_LOG_DIR", &log_dir)
         .args([
             "separate",
             "--project",
@@ -80,6 +85,14 @@ print(json.dumps({
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("MODEL_PROGRESS_MUST_NOT_REACH_TERMINAL"),
+        "worker stderr leaked into the K3 terminal"
+    );
+    assert_eq!(
+        fs::read_to_string(log_dir.join("separate.log")).unwrap(),
+        "MODEL_PROGRESS_MUST_NOT_REACH_TERMINAL\n"
     );
     let project = FileProjectRepository.open(&project_root).unwrap();
     let SeparationState::Ready(manifest) = project.separation() else {
