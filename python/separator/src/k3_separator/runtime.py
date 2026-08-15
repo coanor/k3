@@ -21,6 +21,8 @@ class RuntimeResult:
     vocals: Path
     accompaniment: Path
     checkpoint_sha256: str
+    backing_vocals: Path | None = None
+    backing_vocals_checkpoint_sha256: str | None = None
 
 
 class SeparationRuntime(Protocol):
@@ -32,6 +34,7 @@ class SeparationRuntime(Protocol):
         scratch_dir: Path,
         model: SeparationModel,
         options: dict[str, Any],
+        backing_vocals_model: SeparationModel | None = None,
     ) -> RuntimeResult: ...
 
 
@@ -97,6 +100,42 @@ class AudioSeparatorRuntime:
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
     def separate(
+        self,
+        input_path: Path,
+        scratch_dir: Path,
+        model: SeparationModel,
+        options: dict[str, Any],
+        backing_vocals_model: SeparationModel | None = None,
+    ) -> RuntimeResult:
+        if backing_vocals_model is None:
+            return self._separate_once(input_path, scratch_dir, model, options)
+
+        primary_dir = scratch_dir / "primary"
+        backing_dir = scratch_dir / "backing-vocals"
+        primary_dir.mkdir()
+        backing_dir.mkdir()
+        primary = self._separate_once(input_path, primary_dir, model, options)
+        separated_vocals = self._separate_once(
+            primary.vocals, backing_dir, backing_vocals_model, options
+        )
+        lead_vocals = scratch_dir / "vocals.wav"
+        backing_vocals = scratch_dir / "backing-vocals.wav"
+        accompaniment = scratch_dir / "accompaniment.wav"
+        os.replace(separated_vocals.vocals, lead_vocals)
+        os.replace(separated_vocals.accompaniment, backing_vocals)
+        self._sum_audio((primary.accompaniment, backing_vocals), accompaniment)
+        self._validate_audio(lead_vocals, "lead vocals")
+        self._validate_audio(backing_vocals, "backing vocals")
+        self._validate_audio(accompaniment, "accompaniment with backing vocals")
+        return RuntimeResult(
+            lead_vocals,
+            accompaniment,
+            primary.checkpoint_sha256,
+            backing_vocals,
+            separated_vocals.checkpoint_sha256,
+        )
+
+    def _separate_once(
         self,
         input_path: Path,
         scratch_dir: Path,
@@ -235,6 +274,15 @@ class AudioSeparatorRuntime:
     def _mix_accompaniment(
         scratch_dir: Path, stems: tuple[str, ...], destination: Path
     ) -> None:
+        inputs = tuple(
+            scratch_dir / f"part-{stem.lower()}.wav"
+            for stem in stems
+            if stem != "Vocals"
+        )
+        AudioSeparatorRuntime._sum_audio(inputs, destination)
+
+    @staticmethod
+    def _sum_audio(inputs: tuple[Path, ...], destination: Path) -> None:
         try:
             import numpy as np
             import soundfile as sf
@@ -242,7 +290,6 @@ class AudioSeparatorRuntime:
             raise WorkerError(
                 "runtime_unavailable", "numpy and soundfile are required for multi-stem models"
             ) from error
-        inputs = [scratch_dir / f"part-{stem.lower()}.wav" for stem in stems if stem != "Vocals"]
         if not inputs or any(not path.is_file() for path in inputs):
             raise WorkerError(
                 "separation_failed", "runtime did not produce all accompaniment stems"

@@ -10,6 +10,7 @@ from typing import Any
 from .errors import WorkerError
 
 PROFILES = ("fast", "balanced", "quality", "compatible")
+BACKING_VOCALS_MODEL_ID = "uvr-mdx-karaoke-2"
 
 
 @dataclass(frozen=True)

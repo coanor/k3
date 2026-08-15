@@ -21,6 +21,7 @@ default_output_dir="${K3_OUTPUT_DIR:-/mnt/h/CloudMusic/k3}"
 usage() {
     echo "usage: $0 -f AUDIO_FILE... [-d PROJECTS_DIR]" >&2
     echo "default projects directory: $default_output_dir" >&2
+    echo "set K3_PRESERVE_BACKING_VOCALS=false to disable keeping backing vocals in accompaniment" >&2
 }
 
 input_args=()
@@ -148,6 +149,18 @@ case "${K3_AUTOCAST:-true}" in
         exit 2
         ;;
 esac
+case "${K3_PRESERVE_BACKING_VOCALS:-true}" in
+    1|true|yes|on)
+        preserve_backing_vocals=1
+        ;;
+    0|false|no|off)
+        preserve_backing_vocals=0
+        ;;
+    *)
+        echo "k3-separate: K3_PRESERVE_BACKING_VOCALS must be true or false" >&2
+        exit 2
+        ;;
+esac
 
 failures=0
 for index in "${!input_paths[@]}"; do
@@ -183,10 +196,16 @@ for index in "${!input_paths[@]}"; do
     if [[ $disable_autocast -eq 1 ]]; then
         separate_args+=(--no-autocast)
     fi
+    if [[ $preserve_backing_vocals -eq 0 ]]; then
+        separate_args+=(--no-preserve-backing-vocals)
+    fi
 
     if K3_SEPARATE_WORKER_MODE=1 "$k3_bin" "${separate_args[@]}"; then
         echo "project: $project_dir"
         echo "vocals: $project_dir/stems/vocals.wav"
+        if [[ $preserve_backing_vocals -eq 1 ]]; then
+            echo "backing vocals: $project_dir/stems/backing-vocals.wav"
+        fi
         echo "accompaniment: $project_dir/stems/accompaniment.wav"
     else
         echo "k3-separate: separation failed for project: $project_dir" >&2

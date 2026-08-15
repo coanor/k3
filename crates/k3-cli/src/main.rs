@@ -70,6 +70,9 @@ enum Command {
         /// Disable mixed-precision CUDA inference.
         #[arg(long)]
         no_autocast: bool,
+        /// Disable the default second pass that keeps backing vocals in accompaniment.
+        #[arg(long)]
+        no_preserve_backing_vocals: bool,
     },
     /// Rebuild a recorded take preview with a vocal-effect preset.
     Effect {
@@ -181,6 +184,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             overwrite,
             segment_size,
             no_autocast,
+            no_preserve_backing_vocals,
         } => {
             let mut project = repository.open(&project)?;
             let separator = PythonStemSeparator::new(PythonSeparatorConfig {
@@ -192,6 +196,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 overwrite,
                 segment_size,
                 autocast: !no_autocast,
+                preserve_backing_vocals: !no_preserve_backing_vocals,
             });
             let mut preparation = SongPreparation::new(separator);
             let result = preparation.prepare(&mut project, profile.into());

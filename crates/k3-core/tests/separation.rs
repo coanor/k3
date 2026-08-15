@@ -20,12 +20,14 @@ impl StemSeparator for SuccessfulSeparator {
         Ok(SeparationManifest {
             vocals: ProjectPath::new("stems/vocals.wav").unwrap(),
             accompaniment: ProjectPath::new("stems/accompaniment.wav").unwrap(),
+            backing_vocals: None,
             provenance: ModelProvenance {
                 provider: "local-worker".into(),
                 architecture: "mel-band-roformer".into(),
                 checkpoint_id: "vocals-v1".into(),
                 checkpoint_sha256: CheckpointSha256::new("a".repeat(64)).unwrap(),
                 profile,
+                backing_vocals_model: None,
             },
         })
     }
@@ -54,12 +56,14 @@ impl StemSeparator for InvalidManifestSeparator {
         Ok(SeparationManifest {
             vocals: ProjectPath::new("stems/vocals.wav").unwrap(),
             accompaniment: ProjectPath::new("exports/not-a-stem.wav").unwrap(),
+            backing_vocals: None,
             provenance: ModelProvenance {
                 provider: "broken".into(),
                 architecture: "broken".into(),
                 checkpoint_id: "broken".into(),
                 checkpoint_sha256: CheckpointSha256::new("b".repeat(64)).unwrap(),
                 profile,
+                backing_vocals_model: None,
             },
         })
     }
@@ -131,12 +135,14 @@ fn preparation_rejects_incomplete_model_provenance() {
             Ok(SeparationManifest {
                 vocals: ProjectPath::new("stems/vocals.wav").unwrap(),
                 accompaniment: ProjectPath::new("stems/accompaniment.wav").unwrap(),
+                backing_vocals: None,
                 provenance: ModelProvenance {
                     provider: String::new(),
                     architecture: "model".into(),
                     checkpoint_id: "v1".into(),
                     checkpoint_sha256: CheckpointSha256::new("c".repeat(64)).unwrap(),
                     profile,
+                    backing_vocals_model: None,
                 },
             })
         }

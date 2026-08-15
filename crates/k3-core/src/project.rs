@@ -131,6 +131,17 @@ pub struct ModelProvenance {
     pub checkpoint_id: String,
     pub checkpoint_sha256: CheckpointSha256,
     pub profile: SeparationProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backing_vocals_model: Option<Box<BackingVocalModelProvenance>>,
+}
+
+/// Exact secondary model identity used to split lead and backing vocals.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BackingVocalModelProvenance {
+    pub provider: String,
+    pub architecture: String,
+    pub checkpoint_id: String,
+    pub checkpoint_sha256: CheckpointSha256,
 }
 
 /// Files produced by a two-stem separation run.
@@ -138,12 +149,17 @@ pub struct ModelProvenance {
 pub struct SeparationManifest {
     pub vocals: ProjectPath,
     pub accompaniment: ProjectPath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backing_vocals: Option<ProjectPath>,
     pub provenance: ModelProvenance,
 }
 
 impl SeparationManifest {
     pub(crate) fn validate(&self) -> Result<(), String> {
-        for path in [&self.vocals, &self.accompaniment] {
+        for path in [&self.vocals, &self.accompaniment]
+            .into_iter()
+            .chain(self.backing_vocals.iter())
+        {
             if !path.as_str().starts_with("stems/") {
                 return Err(format!("stem is outside stems/: {}", path.as_str()));
             }
@@ -156,6 +172,20 @@ impl SeparationManifest {
             if value.trim().is_empty() {
                 return Err(format!("model {name} cannot be empty"));
             }
+        }
+        if let Some(model) = &self.provenance.backing_vocals_model {
+            for (name, value) in [
+                ("backing-vocal provider", model.provider.as_str()),
+                ("backing-vocal architecture", model.architecture.as_str()),
+                ("backing-vocal checkpoint ID", model.checkpoint_id.as_str()),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(format!("model {name} cannot be empty"));
+                }
+            }
+        }
+        if self.backing_vocals.is_some() != self.provenance.backing_vocals_model.is_some() {
+            return Err("backing-vocal stem and model provenance must both be present".into());
         }
         Ok(())
     }

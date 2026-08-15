@@ -141,6 +141,7 @@ target/release/k3 tui --config ~/.config/k3/config.json
 | `separation.model` | `K3_MODEL` | 明确指定模型 |
 | `separation.segment_size` | `K3_SEGMENT_SIZE` | 推理分块大小 |
 | `separation.autocast` | `K3_AUTOCAST` | GPU 混合精度开关；CPU 建议设为 `false` |
+| `separation.preserve_backing_vocals` | `K3_PRESERVE_BACKING_VOCALS` | 默认 `true`；设为 `false` 才关闭和声保留 |
 
 `scan.recursive` 和 `scan.extensions` 只影响右栏扫描，`lyrics.auto_download`
 控制打开 project 时本地无歌词是否自动联网下载。媒体库直接调用 K3 的 project
@@ -270,7 +271,28 @@ mel-band-roformer-kim-vocal-2
 - `--no-autocast`：关闭 CUDA 混合精度；
 - `--model-dir <PATH>`：设置模型缓存目录；
 - `--worker <PATH>`：指定 Python worker；
+- `--no-preserve-backing-vocals`：关闭默认的二次分离，不再把和声混回伴奏；
 - `--overwrite`：允许 worker 覆盖已经存在的 stem 文件。
+
+### 5.3 保留和声模式
+
+普通的 vocals/instrumental 模型通常把主唱和和声一起归入人声。K3 默认保留和声，
+worker 在一次原子任务中执行：
+
+```text
+原曲
+  ├─ 主模型 ─→ 全部人声 ── Karaoke 2 ─→ 主唱
+  │                                  └→ 和声
+  └─────────→ 纯伴奏 + 和声 ─────────→ 最终伴奏
+```
+
+第二阶段固定使用 `uvr-mdx-karaoke-2`。调用方无需更改主模型或 profile；例如主模型
+仍可使用 `quality` 下的 `mel-band-roformer-kim-vocal-2`。任一阶段失败、输出缺失或
+provenance 不完整时，worker 都不会提交半套正式 stem。该模式会增加一次 MDX 推理；
+如果 ONNX Runtime 无法加载匹配的 CUDA 库，会回退到 CPU，因此处理时间可能明显增加。
+只有明确不需要该行为时，才使用 `--no-preserve-backing-vocals`；媒体库配置或
+`K3_PRESERVE_BACKING_VOCALS` 环境变量设为 `false` 也可关闭。旧配置缺少该字段时
+同样按 `true` 处理。
 
 当前工程状态只允许：
 
@@ -291,6 +313,14 @@ stems/vocals.wav
 stems/accompaniment.wav
 ```
 
+启用保留和声模式时还会生成：
+
+```text
+stems/vocals.wav          # 主唱
+stems/backing-vocals.wav  # 单独和声
+stems/accompaniment.wav   # 纯伴奏加回和声
+```
+
 `project.json` 会把状态保存为 `ready`，并记录：
 
 - provider；
@@ -298,6 +328,9 @@ stems/accompaniment.wav
 - checkpoint ID；
 - checkpoint SHA-256；
 - 实际使用的 profile。
+
+保留和声模式还会记录第二阶段模型的 provider、架构、checkpoint ID 和
+checkpoint SHA-256。旧 project 没有这些可选字段，仍可直接打开。
 
 Rust adapter 会拒绝以下 worker 结果：
 
@@ -528,7 +561,8 @@ nvidia-smi
 
 ### `output_exists`
 
-worker 默认不会覆盖 `vocals.wav` 或 `accompaniment.wav`。确认文件可替换且
+worker 默认不会覆盖 `vocals.wav`、`backing-vocals.wav` 或
+`accompaniment.wav`。确认文件可替换且
 工程仍为 `not requested` 后使用 `--overwrite`。
 
 ### 工程显示 `failed`

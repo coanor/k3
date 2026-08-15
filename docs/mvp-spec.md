@@ -62,7 +62,7 @@ NotRequested -> Running -> Ready
                         -> Failed
 ```
 
-成功结果至少包含 `vocals` 和 `accompaniment` 两个相对路径，并记录 provider、architecture、checkpoint ID、checkpoint SHA-256 和推理 profile。
+成功结果至少包含 `vocals` 和 `accompaniment` 两个相对路径，并记录 provider、architecture、checkpoint ID、checkpoint SHA-256 和推理 profile。默认开启保留和声模式，并包含 `backing_vocals` 路径与第二阶段模型 provenance；正式伴奏是纯伴奏与和声之和，正式人声是第二阶段主唱。调用方可明确关闭该模式，此时 `backing_vocals` 和第二阶段 provenance 不存在。
 
 ### RecordingSession
 

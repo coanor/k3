@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import WorkerError
-from .models import ModelRegistry
+from .models import BACKING_VOCALS_MODEL_ID, ModelRegistry
 from .runtime import SeparationRuntime
 
 ALLOWED_OPTIONS = {
@@ -59,13 +59,25 @@ class SeparationService:
         overwrite = params.get("overwrite", False)
         if not isinstance(overwrite, bool):
             raise WorkerError("invalid_request", "overwrite must be a boolean")
+        preserve_backing_vocals = params.get("preserve_backing_vocals", True)
+        if not isinstance(preserve_backing_vocals, bool):
+            raise WorkerError(
+                "invalid_request", "preserve_backing_vocals must be a boolean"
+            )
 
         model = self._registry.select(profile, model_id)
+        backing_vocals_model = (
+            self._registry.select("fast", BACKING_VOCALS_MODEL_ID)
+            if preserve_backing_vocals
+            else None
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
         destinations = {
             "vocals": output_dir / "vocals.wav",
             "accompaniment": output_dir / "accompaniment.wav",
         }
+        if preserve_backing_vocals:
+            destinations["backing_vocals"] = output_dir / "backing-vocals.wav"
         existing = [str(path) for path in destinations.values() if path.exists()]
         if existing and not overwrite:
             raise WorkerError("output_exists", f"refusing to overwrite: {', '.join(existing)}")
@@ -73,11 +85,28 @@ class SeparationService:
         scratch = Path(tempfile.mkdtemp(prefix=".k3-separate-", dir=output_dir))
         moved: list[Path] = []
         try:
-            result = self._runtime.separate(input_path, scratch, model, options)
-            for source, destination in (
-                (result.vocals, destinations["vocals"]),
-                (result.accompaniment, destinations["accompaniment"]),
+            result = self._runtime.separate(
+                input_path, scratch, model, options, backing_vocals_model
+            )
+            if (
+                backing_vocals_model is not None
+                and result.backing_vocals_checkpoint_sha256 is None
             ):
+                raise WorkerError(
+                    "separation_failed", "runtime omitted backing-vocal model provenance"
+                )
+            sources = {
+                "vocals": result.vocals,
+                "accompaniment": result.accompaniment,
+            }
+            if preserve_backing_vocals:
+                if result.backing_vocals is None:
+                    raise WorkerError(
+                        "separation_failed", "runtime did not produce backing vocals"
+                    )
+                sources["backing_vocals"] = result.backing_vocals
+            for name, destination in destinations.items():
+                source = sources[name]
                 if not source.is_file() or source.stat().st_size == 0:
                     raise WorkerError("separation_failed", f"missing output: {source}")
                 os.replace(source, destination)
@@ -90,20 +119,37 @@ class SeparationService:
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-        return {
+        provenance = {
+            "provider": model.provider,
+            "architecture": model.architecture,
+            "checkpoint_id": model.id,
+            "checkpoint_sha256": result.checkpoint_sha256,
+            "profile": profile,
+            "license": model.license,
+            "source_url": model.source_url,
+            "runtime_options": {**model.runtime_options, **options},
+        }
+        if backing_vocals_model is not None:
+            provenance["backing_vocals_model"] = {
+                "provider": backing_vocals_model.provider,
+                "architecture": backing_vocals_model.architecture,
+                "checkpoint_id": backing_vocals_model.id,
+                "checkpoint_sha256": result.backing_vocals_checkpoint_sha256,
+                "license": backing_vocals_model.license,
+                "source_url": backing_vocals_model.source_url,
+                "runtime_options": {
+                    **backing_vocals_model.runtime_options,
+                    **options,
+                },
+            }
+        response = {
             "vocals": str(destinations["vocals"]),
             "accompaniment": str(destinations["accompaniment"]),
-            "provenance": {
-                "provider": model.provider,
-                "architecture": model.architecture,
-                "checkpoint_id": model.id,
-                "checkpoint_sha256": result.checkpoint_sha256,
-                "profile": profile,
-                "license": model.license,
-                "source_url": model.source_url,
-                "runtime_options": {**model.runtime_options, **options},
-            },
+            "provenance": provenance,
         }
+        if preserve_backing_vocals:
+            response["backing_vocals"] = str(destinations["backing_vocals"])
+        return response
 
 
 def _required_path(params: dict[str, Any], name: str) -> Path:
@@ -135,4 +181,3 @@ def _validated_options(value: Any) -> dict[str, Any]:
         if name in value and not isinstance(value[name], bool):
             raise WorkerError("invalid_request", f"{name} must be a boolean")
     return dict(value)
-

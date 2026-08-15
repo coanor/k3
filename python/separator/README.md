@@ -49,6 +49,19 @@ Successful separation always writes `vocals.wav` and `accompaniment.wav` and
 returns their absolute paths plus exact model provenance. Existing outputs are
 not overwritten unless `"overwrite": true` is explicitly requested.
 
+## 保留和声模式
+
+`preserve_backing_vocals` 默认为 `true`。worker 会先用选定的主模型分离全部人声，
+再固定使用 `uvr-mdx-karaoke-2` 把人声拆成主唱与和声；只有在请求的 `params` 中
+明确设置 `"preserve_backing_vocals": false` 才会关闭。默认输出为：
+
+- `vocals.wav`：主唱；
+- `backing-vocals.wav`：单独和声；
+- `accompaniment.wav`：主模型伴奏与和声之和。
+
+返回的 provenance 会同时包含主模型和 `backing_vocals_model`。两个阶段、合成、
+文件校验与 provenance 校验属于同一次原子任务；任一步失败都不会提交新 stem。
+
 The built-in profiles are:
 
 - `fast`: UVR MDX karaoke model

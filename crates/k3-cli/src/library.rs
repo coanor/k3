@@ -93,6 +93,8 @@ pub struct SeparationConfig {
     pub segment_size: Option<u32>,
     #[serde(default = "default_autocast")]
     pub autocast: bool,
+    #[serde(default = "default_preserve_backing_vocals")]
+    pub preserve_backing_vocals: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -116,6 +118,10 @@ impl Default for LyricsConfig {
             netease_fallback: false,
         }
     }
+}
+
+fn default_preserve_backing_vocals() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +250,7 @@ pub fn import_and_separate(
         overwrite: false,
         segment_size: config.separation.segment_size,
         autocast: config.separation.autocast,
+        preserve_backing_vocals: config.separation.preserve_backing_vocals,
     });
     let result = SongPreparation::new(separator).prepare(&mut project, config.separation.profile);
     repository.save(&project)?;
@@ -373,7 +380,10 @@ mod tests {
         let config: LibraryConfig = serde_json::from_value(serde_json::json!({
             "music_root": music,
             "projects_root": projects,
-            "separation": {"worker": "/bin/false", "profile": "fast"},
+            "separation": {
+                "worker": "/bin/false",
+                "profile": "fast"
+            },
             "recording": {"default_effect": "ktv"},
             "lyrics": {"netease_fallback": true}
         }))
@@ -389,6 +399,7 @@ mod tests {
         assert_eq!(snapshot.sources[0].project_path, projects.join("existing"));
         assert_eq!(config.recording.default_effect, VocalEffectPreset::Ktv);
         assert!(config.lyrics.netease_fallback);
+        assert!(config.separation.preserve_backing_vocals);
     }
 
     #[cfg(unix)]
@@ -411,14 +422,17 @@ import json, pathlib, sys
 r = json.loads(sys.stdin.readline())
 out = pathlib.Path(r["params"]["output_dir"])
 out.mkdir(parents=True, exist_ok=True)
-v, a = out / "vocals.wav", out / "accompaniment.wav"
+v, b, a = out / "vocals.wav", out / "backing-vocals.wav", out / "accompaniment.wav"
 v.write_bytes(b"voice")
+b.write_bytes(b"backing voice")
 a.write_bytes(b"music")
 print(json.dumps({"id": r["id"], "ok": True, "result": {
-  "vocals": str(v), "accompaniment": str(a), "provenance": {
+  "vocals": str(v), "backing_vocals": str(b), "accompaniment": str(a), "provenance": {
     "provider": "fake", "architecture": "mdx-net",
     "checkpoint_id": "fake-model", "checkpoint_sha256": "a" * 64,
-    "profile": r["params"]["profile"]}}}))
+    "profile": r["params"]["profile"], "backing_vocals_model": {
+      "provider": "fake", "architecture": "mdx-net",
+      "checkpoint_id": "uvr-mdx-karaoke-2", "checkpoint_sha256": "b" * 64}}}}))
 "#,
         )
         .unwrap();
@@ -433,7 +447,8 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
                 "log_dir": sandbox.path().join("logs"),
                 "profile": "fast",
                 "model": "fake-model",
-                "autocast": false
+                "autocast": false,
+                "preserve_backing_vocals": true
             }
         }))
         .unwrap();
@@ -446,6 +461,14 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
 
         assert!(matches!(project.separation(), SeparationState::Ready(_)));
         assert!(project_path.join("stems/vocals.wav").is_file());
+        assert!(project_path.join("stems/backing-vocals.wav").is_file());
+        let SeparationState::Ready(manifest) = project.separation() else {
+            unreachable!()
+        };
+        assert_eq!(
+            manifest.backing_vocals.as_ref().unwrap().as_str(),
+            "stems/backing-vocals.wav"
+        );
         assert!(scan(&config).unwrap().sources[0].imported);
     }
 

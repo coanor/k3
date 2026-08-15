@@ -6,8 +6,8 @@ use std::{
 };
 
 use k3_core::{
-    CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure, SeparationManifest,
-    SeparationProfile, StemSeparator,
+    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure,
+    SeparationManifest, SeparationProfile, StemSeparator,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +21,7 @@ pub struct PythonSeparatorConfig {
     pub overwrite: bool,
     pub segment_size: Option<u32>,
     pub autocast: bool,
+    pub preserve_backing_vocals: bool,
 }
 
 #[derive(Debug)]
@@ -79,6 +80,7 @@ impl PythonStemSeparator {
                 profile,
                 model_id: self.config.model_id.as_deref(),
                 overwrite: self.config.overwrite,
+                preserve_backing_vocals: self.config.preserve_backing_vocals,
                 options: WorkerOptions {
                     autocast: self.config.autocast,
                     segment_size: self.config.segment_size,
@@ -151,10 +153,47 @@ impl PythonStemSeparator {
             &self.config.project_root.join("stems/accompaniment.wav"),
             "accompaniment",
         )?;
+        let backing_vocals = match (
+            self.config.preserve_backing_vocals,
+            result.backing_vocals,
+            result.provenance.backing_vocals_model,
+        ) {
+            (true, Some(path), Some(model)) => {
+                validate_output_path(
+                    &path,
+                    &self.config.project_root.join("stems/backing-vocals.wav"),
+                    "backing vocals",
+                )?;
+                Some((
+                    ProjectPath::new("stems/backing-vocals.wav")
+                        .map_err(|error| error.to_string())?,
+                    Box::new(BackingVocalModelProvenance {
+                        provider: model.provider,
+                        architecture: model.architecture,
+                        checkpoint_id: model.checkpoint_id,
+                        checkpoint_sha256: CheckpointSha256::new(model.checkpoint_sha256)
+                            .map_err(|error| error.to_string())?,
+                    }),
+                ))
+            }
+            (true, _, _) => {
+                return Err(
+                    "worker omitted backing-vocal output or model provenance for preserve mode"
+                        .into(),
+                );
+            }
+            (false, None, None) => None,
+            (false, _, _) => {
+                return Err("worker returned unexpected backing-vocal data".into());
+            }
+        };
+        let (backing_vocals, backing_vocals_model) =
+            backing_vocals.map_or((None, None), |(path, model)| (Some(path), Some(model)));
         Ok(SeparationManifest {
             vocals: ProjectPath::new("stems/vocals.wav").map_err(|error| error.to_string())?,
             accompaniment: ProjectPath::new("stems/accompaniment.wav")
                 .map_err(|error| error.to_string())?,
+            backing_vocals,
             provenance: ModelProvenance {
                 provider: result.provenance.provider,
                 architecture: result.provenance.architecture,
@@ -162,6 +201,7 @@ impl PythonStemSeparator {
                 checkpoint_sha256: CheckpointSha256::new(result.provenance.checkpoint_sha256)
                     .map_err(|error| error.to_string())?,
                 profile: requested_profile,
+                backing_vocals_model,
             },
         })
     }
@@ -281,6 +321,7 @@ struct WorkerParameters<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model_id: Option<&'a str>,
     overwrite: bool,
+    preserve_backing_vocals: bool,
     options: WorkerOptions,
 }
 
@@ -302,6 +343,7 @@ struct WorkerResponse {
 struct WorkerResult {
     vocals: PathBuf,
     accompaniment: PathBuf,
+    backing_vocals: Option<PathBuf>,
     provenance: WorkerProvenance,
 }
 
@@ -312,6 +354,15 @@ struct WorkerProvenance {
     checkpoint_id: String,
     checkpoint_sha256: String,
     profile: SeparationProfile,
+    backing_vocals_model: Option<WorkerBackingVocalProvenance>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerBackingVocalProvenance {
+    provider: String,
+    architecture: String,
+    checkpoint_id: String,
+    checkpoint_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]

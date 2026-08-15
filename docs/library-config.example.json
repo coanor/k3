@@ -12,7 +12,8 @@
     "profile": "fast",
     "model": "uvr-mdx-karaoke-2",
     "segment_size": 128,
-    "autocast": false
+    "autocast": false,
+    "preserve_backing_vocals": true
   },
   "recording": {
     "default_effect": "clean"
