@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import os
 import shutil
+import sys
 import tempfile
 import urllib.request
 from dataclasses import dataclass
@@ -89,7 +90,11 @@ class AudioSeparatorRuntime:
         executable = Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
         bin_dir = self._model_dir.parent / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        link = bin_dir / "ffmpeg"
+        link = bin_dir / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+        if sys.platform == "win32":
+            self._copy_windows_ffmpeg(executable, link)
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            return
         if link.is_symlink() and link.resolve() == executable:
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             return
@@ -98,6 +103,21 @@ class AudioSeparatorRuntime:
         temporary_link.symlink_to(executable)
         os.replace(temporary_link, link)
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    @staticmethod
+    def _copy_windows_ffmpeg(executable: Path, destination: Path) -> None:
+        if (
+            destination.is_file()
+            and destination.stat().st_size == executable.stat().st_size
+        ):
+            return
+        temporary = destination.with_name(f".ffmpeg.{os.getpid()}.exe")
+        temporary.unlink(missing_ok=True)
+        try:
+            shutil.copy2(executable, temporary)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def separate(
         self,

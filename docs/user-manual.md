@@ -3,8 +3,9 @@
 K3 是一个本地优先的终端 K 歌工作区。目前可创建歌曲工程、导入 LRC
 歌词、使用本地 GPU 模型分离人声和伴奏，并在 TUI 中播放和切换音轨。
 
-本文以 Ubuntu 24.04 或 Windows WSL2 为当前支持环境。Windows 原生和
-macOS 的音频、模型安装与打包仍属于后续工作。
+本文以 Ubuntu 24.04、Windows WSL2 和 Windows 11 原生环境为当前支持环境。
+Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离；macOS 的音频、模型安装与
+打包仍属于后续工作。
 
 ## 1. 系统要求
 
@@ -15,6 +16,10 @@ macOS 的音频、模型安装与打包仍属于后续工作。
 - Python 3.10 或更高版本；
 - `uv`；
 - 足够存放模型和 WAV stem 的磁盘空间。
+
+Windows 原生分离需要 64 位 Python 3.11、PowerShell 5.1 或更高版本以及网络。
+GPU 模式还需要 NVIDIA 显卡与支持 CUDA 12.8 的驱动；安装脚本会在发行目录创建
+独立的 `.venv-separator`，无需预先安装 Rust、`uv` 或系统 FFmpeg。
 
 使用 NVIDIA GPU 分离还需要可被 WSL/Linux 识别的 NVIDIA 驱动。RTX
 5070 Ti 16GB 已完成实测，可同时运行最多 4 个 Quality worker；普通单曲
@@ -106,7 +111,52 @@ Rust 工具链。当前 Arch 老机器的 i7-2620M（AVX、4 线程、约 10 GiB
 通过 PyTorch 2.11 CPU worker 健康检查，可作为目前验证过的硬件下限；这不是
 对更老 CPU 的兼容保证。
 
-## 3.1 三栏媒体库配置
+### 3.1 Windows 原生安装
+
+Windows 发行包内包含 `k3.exe`、`install-separator.ps1`、`separate.ps1` 和
+worker 源码。在 PowerShell 中进入解压目录，临时允许本次会话执行本地脚本，再安装
+GPU worker：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install-separator.ps1 -Backend gpu
+```
+
+没有 NVIDIA GPU 时使用 CPU 模式：
+
+```powershell
+.\install-separator.ps1 -Backend cpu
+```
+
+脚本通过 Windows Python Launcher（`py.exe`）寻找 Python 3.11，创建
+`.venv-separator`，安装模型运行环境，并将 worker 和模型目录写入同目录的
+`config.json`。默认模型目录为 `%LOCALAPPDATA%\k3\models`；模型在第一次分离时
+下载。检查 worker：
+
+```powershell
+'{"id":"health","method":"health"}' |
+  .\.venv-separator\Scripts\k3-separator.exe `
+    --model-dir "$env:LOCALAPPDATA\k3\models"
+```
+
+用 `separate.ps1` 创建同名 project 并分离。省略 `-d` 时读取同目录
+`config.json` 的 `projects_root`；多个 `-f` 参数值在 PowerShell 中用逗号分隔：
+
+```powershell
+.\separate.ps1 -f "H:\music\star\Creep.flac"
+
+.\separate.ps1 `
+  -f "H:\music\star\Creep.flac","H:\music\star\难舍难分.mp3" `
+  -d "H:\music\k3"
+```
+
+参数位置不固定。环境变量 `K3_OUTPUT_DIR`、`K3_BIN`、`K3_WORKER`、
+`K3_PROFILE`、`K3_MODEL`、`K3_MODEL_DIR`、`K3_SEGMENT_SIZE`、
+`K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。默认保留和声，
+因此输出包含 `vocals.wav`、`backing-vocals.wav` 和含和声的
+`accompaniment.wav`。
+
+### 3.2 三栏媒体库配置
 
 复制示例配置并修改两个根目录与 worker 路径：
 
@@ -130,9 +180,9 @@ target/release/k3 tui --config ~/.config/k3/config.json
 `projects_root/.failed/` 归档，不会加入左栏，对应源文件仍可在右栏按 `Enter`
 重试。启动时扫描到的旧失败 project 也不会显示在左栏，并会在下次重试前归档。
 目录改名不会让右栏重复导入：K3 会用 project 中的源文件名和文件大小识别已导入
-歌曲。配置中的分离参数与 `separate.sh` 对应如下：
+歌曲。配置中的分离参数与 `separate.sh`、`separate.ps1` 对应如下：
 
-| JSON 字段 | `separate.sh` 环境变量 | 作用 |
+| JSON 字段 | 脚本环境变量 | 作用 |
 |---|---|---|
 | `separation.worker` | `K3_PYTHON`（脚本模式） | worker 可执行文件；脚本模式下为 Python 解释器 |
 | `separation.model_dir` | `K3_MODEL_DIR` | 模型缓存目录 |
@@ -145,7 +195,8 @@ target/release/k3 tui --config ~/.config/k3/config.json
 
 `scan.recursive` 和 `scan.extensions` 只影响右栏扫描，`lyrics.auto_download`
 控制打开 project 时本地无歌词是否自动联网下载。媒体库直接调用 K3 的 project
-与分离接口，并不启动 `separate.sh`；两者共享相同的 worker 和模型参数。
+与分离接口，并不启动 `separate.sh` 或 `separate.ps1`；三者共享相同的 worker
+和模型参数。
 worker 的完整输出不会直接写入 TUI，而是保存到单个 `separate.log`。媒体库优先使用
 `separation.log_dir`；命令行模式可用 `K3_LOG_DIR` 覆盖。Linux 默认路径为
 `$XDG_STATE_HOME/k3/logs/separate.log`，未设置 `XDG_STATE_HOME` 时使用
@@ -159,7 +210,7 @@ worker 的完整输出不会直接写入 TUI，而是保存到单个 `separate.l
 target/release/k3 tui --project /path/to/project
 ```
 
-### 3.2 候选状态图标（待选）
+### 3.3 候选状态图标（待选）
 
 以下图标只是后续 TUI 设计的候选清单，当前版本不会因此改变快捷键或显示方式。
 优先考虑在常见终端中宽度稳定的 Unicode 符号，并与必要的英文文字组合使用：
@@ -579,7 +630,7 @@ worker 默认不会覆盖 `vocals.wav`、`backing-vocals.wav` 或
 - 伴奏变调及人声共振峰变声；
 - 混响、压缩等效果链；
 - 离线最终混音导出；
-- Windows 原生和 macOS 打包。
+- macOS 打包。
 
 这些能力将继续通过音频和模型 seams 接入，不需要让 TUI 直接依赖具体模型
 或音频后端。

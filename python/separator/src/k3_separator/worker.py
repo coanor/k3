@@ -17,6 +17,8 @@ from .service import SeparationService
 
 def serve(service: SeparationService, input_stream: TextIO, output_stream: TextIO) -> None:
     """Process one JSON request per input line and emit exactly one response line."""
+    _force_utf8(input_stream)
+    _force_utf8(output_stream)
     for line in input_stream:
         if not line.strip():
             continue
@@ -51,6 +53,12 @@ def serve(service: SeparationService, input_stream: TextIO, output_stream: TextI
         output_stream.flush()
 
 
+def _force_utf8(stream: TextIO) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="strict")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="K3 local stem-separation worker")
     parser.add_argument("--models", type=Path, help="JSON registry merged over built-ins")
@@ -68,4 +76,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

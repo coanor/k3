@@ -10,6 +10,29 @@ from k3_separator.runtime import AudioSeparatorRuntime
 
 
 class AudioSeparatorRuntimeTests(unittest.TestCase):
+    def test_windows_runtime_materializes_an_executable_ffmpeg_fallback(self) -> None:
+        fake_imageio = types.ModuleType("imageio_ffmpeg")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundled_ffmpeg = root / "imageio-ffmpeg.exe"
+            bundled_ffmpeg.write_bytes(b"windows ffmpeg")
+            destination = root / "bin" / "ffmpeg.exe"
+            fake_imageio.get_ffmpeg_exe = lambda: str(bundled_ffmpeg)
+
+            def find_ffmpeg(_name):
+                return str(destination) if destination.is_file() else None
+
+            with (
+                patch("k3_separator.runtime.sys.platform", "win32"),
+                patch("k3_separator.runtime.shutil.which", side_effect=find_ffmpeg),
+                patch.dict(sys.modules, {"imageio_ffmpeg": fake_imageio}),
+                patch.dict("os.environ", {"PATH": "windows-path"}, clear=False),
+            ):
+                status = AudioSeparatorRuntime(root / "models").status()
+
+            self.assertEqual(b"windows ffmpeg", destination.read_bytes())
+            self.assertEqual(str(destination), status["ffmpeg"])
+
     def test_status_reports_a_broken_audio_separator_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             runtime = AudioSeparatorRuntime(Path(directory) / "models")

@@ -1,25 +1,22 @@
-# K3 separation worker
+# K3 音轨分离 worker
 
-The worker keeps model runtimes outside the Rust process. It reads one JSON
-request per stdin line and writes exactly one JSON response per stdout line;
-dependency logs are redirected to stderr.
+worker 将模型 runtime 隔离在 Rust 进程之外。它从标准输入逐行读取 JSON 请求，
+并为每个请求向标准输出写入且仅写入一行 JSON 响应；依赖库日志重定向到标准错误。
 
-## Install
+## Linux 安装
 
-For the RTX 5070 Ti development machine, use the checked-in installer. It uses
-`uv`, PyTorch 2.11 with CUDA 12.8, and avoids the optional `diffq` extension
-that requires Ubuntu's Python development headers:
+RTX 5070 Ti 开发机可使用仓库内安装脚本。脚本使用 `uv`、PyTorch 2.11 和
+CUDA 12.8，并避开需要 Ubuntu Python 开发头文件的可选 `diffq` 扩展：
 
 ```bash
 bash python/separator/scripts/install-gpu.sh
 source .venv-separator/bin/activate
 ```
 
-When system FFmpeg is unavailable, this path installs a user-space FFmpeg
-binary and exposes it only to the worker process.
+系统无 FFmpeg 时，这种安装方式会提供用户态 FFmpeg，并只将其暴露给 worker
+进程。
 
-On a system with Python development headers, regular pip installation is also
-supported:
+已安装 Python 开发头文件的系统也可使用普通 pip：
 
 ```bash
 python3 -m venv .venv-separator
@@ -27,17 +24,41 @@ source .venv-separator/bin/activate
 python -m pip install -e './python/separator[gpu]'
 ```
 
-For an NVIDIA GPU, install the PyTorch wheel appropriate for the machine before
-the editable package. The worker downloads selected checkpoints into
-`~/.cache/k3/models` on first use.
+使用 NVIDIA GPU 时，应先安装与机器匹配的 PyTorch wheel，再安装 editable
+package。worker 首次使用模型时将 checkpoint 下载到 `~/.cache/k3/models`。
 
-## Run
+## Windows 安装
+
+Windows 发行目录包含仓库根目录下的 `install-separator.ps1`、
+`separate.ps1` 和本目录源码。需要 64 位 Python 3.11；GPU 模式还需要 NVIDIA
+驱动。请在发行目录的 PowerShell 中运行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install-separator.ps1 -Backend gpu
+```
+
+没有 NVIDIA GPU 时使用 `-Backend cpu`。脚本会创建 `.venv-separator`、安装
+PyTorch 与 worker、准备用户态 FFmpeg，并更新同目录 `config.json` 的 worker
+和模型路径。Windows 不需要预装 `uv` 或系统 FFmpeg。
+worker 会将 JSON-lines 协议的标准输入和标准输出强制设为 UTF-8，因此中文歌曲名、
+project 名和路径不依赖 Windows 当前代码页。
+
+验证安装：
+
+```powershell
+'{"id":"health","method":"health"}' |
+  .\.venv-separator\Scripts\k3-separator.exe `
+    --model-dir "$env:LOCALAPPDATA\k3\models"
+```
+
+## 运行
 
 ```bash
 python -m k3_separator --model-dir ~/.cache/k3/models
 ```
 
-Requests:
+请求示例：
 
 ```json
 {"id":1,"method":"health"}
@@ -45,9 +66,8 @@ Requests:
 {"id":3,"method":"separate","params":{"input_path":"/music/song.flac","output_dir":"/project/stems","profile":"quality","model_id":"bs-roformer-viperx-1297","options":{"autocast":true,"segment_size":256}}}
 ```
 
-Successful separation always writes `vocals.wav` and `accompaniment.wav` and
-returns their absolute paths plus exact model provenance. Existing outputs are
-not overwritten unless `"overwrite": true` is explicitly requested.
+成功分离一定会写入 `vocals.wav` 和 `accompaniment.wav`，并返回它们的绝对路径
+及准确的模型 provenance。只有明确请求 `"overwrite": true` 才会覆盖已有输出。
 
 ## 保留和声模式
 
@@ -62,17 +82,17 @@ not overwritten unless `"overwrite": true` is explicitly requested.
 返回的 provenance 会同时包含主模型和 `backing_vocals_model`。两个阶段、合成、
 文件校验与 provenance 校验属于同一次原子任务；任一步失败都不会提交新 stem。
 
-The built-in profiles are:
+内置 profile：
 
-- `fast`: UVR MDX karaoke model
-- `balanced`: UVR MDX instrumental HQ model
-- `quality`: BS-RoFormer (default) or Mel-Band RoFormer
-- `compatible`: HTDemucs fine-tuned ensemble
+- `fast`：UVR MDX karaoke 模型；
+- `balanced`：UVR MDX instrumental HQ 模型；
+- `quality`：BS-RoFormer（默认）或 Mel-Band RoFormer；
+- `compatible`：HTDemucs fine-tuned ensemble。
 
-## Add or override models
+## 新增或覆盖模型
 
-Pass `--models /path/to/models.json`. Entries are merged with the built-ins by
-ID, so the file can add a checkpoint or replace a built-in definition:
+传入 `--models /path/to/models.json`。条目会按 ID 与内置注册表合并，因此既可
+新增 checkpoint，也可替换内置定义：
 
 ```json
 {
@@ -93,15 +113,14 @@ ID, so the file can add a checkpoint or replace a built-in definition:
 }
 ```
 
-Only add trusted checkpoints. PyTorch `.ckpt` files may contain pickle data.
-When both `download_url` and `expected_sha256` are present, the worker downloads
-to a temporary file and verifies it before `audio-separator` can deserialize it.
-Production registries should always pin both fields and retain a license
-snapshot.
+只可添加可信 checkpoint。PyTorch `.ckpt` 可能包含 pickle 数据。当
+`download_url` 和 `expected_sha256` 同时存在时，worker 会先下载到临时文件并
+校验，再允许 `audio-separator` 反序列化。生产注册表应始终固定这两个字段，并
+保留许可证快照。
 
-## Test
+## 测试
 
-Tests use an in-process fake runtime and do not download models:
+测试使用进程内 fake runtime，不会下载模型：
 
 ```bash
 PYTHONPATH=python/separator/src \
