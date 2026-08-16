@@ -19,11 +19,99 @@ const NETEASE_SEARCH_URL: &str = "https://music.163.com/api/search/get/web";
 const NETEASE_LYRIC_URL: &str = "https://music.163.com/api/song/lyric";
 const MAX_DURATION_DIFFERENCE_SECONDS: f64 = 8.0;
 
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum LyricsDownload {
     AlreadyPresent,
     Downloaded { track: String, artist: String },
     NotFound,
+}
+
+pub(crate) struct LyricsSaved {
+    pub(crate) track: String,
+    pub(crate) artist: String,
+    pub(crate) origin: String,
+}
+
+pub(crate) enum LyricsSearch {
+    AlreadyPresent,
+    Candidates(Vec<LyricsChoice>),
+    NotFound,
+}
+
+pub(crate) struct LyricsChoice {
+    origin: LyricsOrigin,
+    lyrics: SelectedLyrics,
+}
+
+impl LyricsChoice {
+    pub(crate) fn label(&self) -> String {
+        format!(
+            "{} - {} · {:.0}s · {}",
+            self.lyrics.artist_name,
+            self.lyrics.track_name,
+            self.lyrics.duration.max(0.0),
+            self.origin.label()
+        )
+    }
+
+    pub(crate) fn origin_label(&self) -> String {
+        self.origin.label()
+    }
+
+    pub(crate) fn preview_lines(&self, maximum: usize) -> Vec<String> {
+        LyricsTimeline::parse(&self.lyrics.synced_lyrics)
+            .lines()
+            .iter()
+            .take(maximum)
+            .map(|line| {
+                let seconds = line.at.as_secs();
+                format!("[{:02}:{:02}] {}", seconds / 60, seconds % 60, line.text)
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        source: &'static str,
+        track: &str,
+        artist: &str,
+        duration: f64,
+        synced_lyrics: &str,
+    ) -> Self {
+        Self {
+            origin: LyricsOrigin {
+                source,
+                manual: false,
+                fallback: false,
+            },
+            lyrics: SelectedLyrics {
+                track_name: track.into(),
+                artist_name: artist.into(),
+                duration,
+                synced_lyrics: synced_lyrics.into(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LyricsOrigin {
+    source: &'static str,
+    manual: bool,
+    fallback: bool,
+}
+
+impl LyricsOrigin {
+    fn label(self) -> String {
+        let route = match (self.manual, self.fallback) {
+            (false, false) => "auto",
+            (false, true) => "fallback",
+            (true, false) => "manual",
+            (true, true) => "manual fallback",
+        };
+        format!("{} · {route}", self.source)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -96,26 +184,44 @@ impl fmt::Display for LyricsProgress {
     }
 }
 
-/// Downloads synchronized lyrics when the project has none and attaches the local LRC file.
-///
-/// Network lookup, metadata extraction, candidate matching and atomic persistence are hidden
-/// behind this interface so recording only needs to handle the observable outcome.
-///
-/// # Errors
-///
-/// Returns an error when all configured sources fail or the selected lyrics cannot be persisted.
-pub fn download_missing_lyrics(
+pub(crate) fn find_missing_lyrics(
     project: &mut Project,
     netease_fallback: bool,
     progress: &mut dyn FnMut(&LyricsProgress),
-) -> Result<LyricsDownload, Box<dyn Error>> {
+) -> Result<LyricsSearch, Box<dyn Error>> {
     let lrclib = LrclibCatalog::new();
     if netease_fallback {
         let netease = NeteaseCatalog::new();
-        download_with_catalogs(project, &[&lrclib, &netease], progress)
+        find_with_catalogs(project, &[&lrclib, &netease], true, progress)
     } else {
-        download_with_catalogs(project, &[&lrclib], progress)
+        find_with_catalogs(project, &[&lrclib], true, progress)
     }
+}
+
+pub(crate) fn find_lyrics_again(
+    project: &Project,
+    query: &str,
+    netease_fallback: bool,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsSearch, Box<dyn Error>> {
+    let mut searchable = project.clone();
+    let lrclib = LrclibCatalog::new();
+    if netease_fallback {
+        let netease = NeteaseCatalog::new();
+        find_with_catalogs_query(
+            &mut searchable,
+            &[&lrclib, &netease],
+            false,
+            Some(query),
+            progress,
+        )
+    } else {
+        find_with_catalogs_query(&mut searchable, &[&lrclib], false, Some(query), progress)
+    }
+}
+
+pub(crate) fn default_lyrics_query(project: &Project) -> String {
+    lookup_from_audio(project).title
 }
 
 #[cfg(test)]
@@ -127,71 +233,118 @@ fn download_with_catalog(
     download_with_catalogs(project, &[catalog], progress)
 }
 
+#[cfg(test)]
 fn download_with_catalogs(
     project: &mut Project,
     catalogs: &[&dyn LyricsCatalog],
     progress: &mut dyn FnMut(&LyricsProgress),
 ) -> Result<LyricsDownload, Box<dyn Error>> {
-    progress(&LyricsProgress::CheckingLocal);
-    if let Some(relative_path) = project.lyrics() {
-        let configured_path = project.root().join(Path::new(relative_path.as_str()));
-        if configured_path.is_file() {
-            return Ok(LyricsDownload::AlreadyPresent);
-        }
-    }
-
-    let relative_path = downloaded_lyrics_path(project)?;
-    let destination = project.root().join(Path::new(relative_path.as_str()));
-    if destination.is_file() {
-        let contents = fs::read_to_string(&destination)?;
-        if !LyricsTimeline::parse(&contents).lines().is_empty() {
+    match find_with_catalogs(project, catalogs, true, progress)? {
+        LyricsSearch::AlreadyPresent => Ok(LyricsDownload::AlreadyPresent),
+        LyricsSearch::Candidates(mut choices) => {
+            let (saved, relative_path) = save_lyrics_choice(project, choices.remove(0), progress)?;
             project.set_lyrics(relative_path)?;
-            return Ok(LyricsDownload::AlreadyPresent);
+            Ok(LyricsDownload::Downloaded {
+                track: saved.track,
+                artist: saved.artist,
+            })
         }
-        return Err(format!(
-            "Local lyrics contain no recognizable LRC timeline; file not overwritten: {}",
-            destination.display()
-        )
-        .into());
+        LyricsSearch::NotFound => Ok(LyricsDownload::NotFound),
+    }
+}
+
+fn find_with_catalogs(
+    project: &mut Project,
+    catalogs: &[&dyn LyricsCatalog],
+    check_local: bool,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsSearch, Box<dyn Error>> {
+    find_with_catalogs_query(project, catalogs, check_local, None, progress)
+}
+
+fn find_with_catalogs_query(
+    project: &mut Project,
+    catalogs: &[&dyn LyricsCatalog],
+    check_local: bool,
+    manual_query: Option<&str>,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsSearch, Box<dyn Error>> {
+    progress(&LyricsProgress::CheckingLocal);
+    if check_local {
+        if let Some(relative_path) = project.lyrics() {
+            let configured_path = project.root().join(Path::new(relative_path.as_str()));
+            if configured_path.is_file() {
+                return Ok(LyricsSearch::AlreadyPresent);
+            }
+        }
+
+        let relative_path = primary_downloaded_lyrics_path(project)?;
+        let destination = project.root().join(Path::new(relative_path.as_str()));
+        if destination.is_file() {
+            let contents = fs::read_to_string(&destination)?;
+            if !LyricsTimeline::parse(&contents).lines().is_empty() {
+                project.set_lyrics(relative_path)?;
+                return Ok(LyricsSearch::AlreadyPresent);
+            }
+            return Err(format!(
+                "Local lyrics contain no recognizable LRC timeline; file not overwritten: {}",
+                destination.display()
+            )
+            .into());
+        }
     }
 
-    let lookup = lookup_from_audio(project);
-    let mut selected = None;
+    let automatic_lookup = lookup_from_audio(project);
+    let lookup = manual_query.map_or(automatic_lookup.clone(), |query| LyricsLookup {
+        title: query.trim().to_owned(),
+        artist: None,
+        duration: automatic_lookup.duration,
+    });
     let mut successful_search = false;
     let mut failures = Vec::new();
-    for catalog in catalogs {
+    let mut all_choices = Vec::new();
+    for (catalog_index, catalog) in catalogs.iter().enumerate() {
         progress(&LyricsProgress::SearchingOnline {
             source: catalog.name(),
             title: lookup.title.clone(),
             artist: lookup.artist.clone(),
         });
-        match search_candidates(*catalog, &lookup, progress) {
-            Ok(candidates) => {
+        match search_candidates_with_route(*catalog, &lookup, progress) {
+            Ok(search) => {
                 successful_search = true;
-                selected = select_candidate(candidates, lookup.duration)
-                    .map(|candidate| (catalog.name(), candidate));
-                if selected.is_some() {
-                    break;
-                }
+                let origin = LyricsOrigin {
+                    source: catalog.name(),
+                    manual: manual_query.is_some(),
+                    fallback: catalog_index > 0 || search.title_fallback,
+                };
+                let choices = select_candidates(search.candidates, lookup.duration)
+                    .into_iter()
+                    .map(|lyrics| LyricsChoice { origin, lyrics })
+                    .collect::<Vec<_>>();
+                all_choices.extend(choices);
             }
             Err(error) => failures.push(format!("{}: {error}", catalog.name())),
         }
     }
-    let Some((source, candidate)) = selected else {
-        if !successful_search && !failures.is_empty() {
-            return Err(format!("All lyric sources failed: {}", failures.join("; ")).into());
-        }
-        return Ok(LyricsDownload::NotFound);
-    };
-    if LyricsTimeline::parse(&candidate.synced_lyrics)
-        .lines()
-        .is_empty()
-    {
-        return Ok(LyricsDownload::NotFound);
+    if !all_choices.is_empty() {
+        return Ok(LyricsSearch::Candidates(all_choices));
     }
+    if !successful_search && !failures.is_empty() {
+        return Err(format!("All lyric sources failed: {}", failures.join("; ")).into());
+    }
+    Ok(LyricsSearch::NotFound)
+}
 
+pub(crate) fn save_lyrics_choice(
+    project: &Project,
+    choice: LyricsChoice,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<(LyricsSaved, ProjectPath), Box<dyn Error>> {
+    let relative_path = available_downloaded_lyrics_path(project)?;
+    let destination = project.root().join(Path::new(relative_path.as_str()));
+    let candidate = choice.lyrics;
     progress(&LyricsProgress::FoundOnline {
-        source,
+        source: choice.origin.source,
         track: candidate.track_name.clone(),
         artist: candidate.artist_name.clone(),
         duration_seconds: Duration::try_from_secs_f64(candidate.duration.max(0.0))
@@ -201,21 +354,32 @@ fn download_with_catalogs(
         relative_path: relative_path.as_str().to_owned(),
     });
     write_atomically(&destination, &candidate.synced_lyrics)?;
-    project.set_lyrics(relative_path)?;
-    Ok(LyricsDownload::Downloaded {
-        track: candidate.track_name,
-        artist: candidate.artist_name,
-    })
+    Ok((
+        LyricsSaved {
+            track: candidate.track_name,
+            artist: candidate.artist_name,
+            origin: choice.origin.label(),
+        },
+        relative_path,
+    ))
 }
 
-fn search_candidates(
+struct CatalogSearch {
+    candidates: Vec<LyricsCandidate>,
+    title_fallback: bool,
+}
+
+fn search_candidates_with_route(
     catalog: &dyn LyricsCatalog,
     lookup: &LyricsLookup,
     progress: &mut dyn FnMut(&LyricsProgress),
-) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+) -> Result<CatalogSearch, Box<dyn Error>> {
     let candidates = search_with_retry(catalog, lookup, progress)?;
     if !candidates.is_empty() || lookup.artist.is_none() {
-        return Ok(candidates);
+        return Ok(CatalogSearch {
+            candidates,
+            title_fallback: false,
+        });
     }
 
     progress(&LyricsProgress::FallingBackToTitle {
@@ -227,10 +391,22 @@ fn search_candidates(
         artist: None,
         duration: lookup.duration,
     };
-    search_with_retry(catalog, &title_only, progress)
+    Ok(CatalogSearch {
+        candidates: search_with_retry(catalog, &title_only, progress)?,
+        title_fallback: true,
+    })
 }
 
-#[derive(Debug)]
+#[cfg(test)]
+fn search_candidates(
+    catalog: &dyn LyricsCatalog,
+    lookup: &LyricsLookup,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+    Ok(search_candidates_with_route(catalog, lookup, progress)?.candidates)
+}
+
+#[derive(Clone, Debug)]
 struct LyricsLookup {
     title: String,
     artist: Option<String>,
@@ -489,11 +665,11 @@ fn normalize_match_text(value: &str) -> String {
         .collect()
 }
 
-fn select_candidate(
+fn select_candidates(
     candidates: Vec<LyricsCandidate>,
     expected_duration: Option<Duration>,
-) -> Option<SelectedLyrics> {
-    candidates
+) -> Vec<SelectedLyrics> {
+    let mut selected = candidates
         .into_iter()
         .filter_map(|candidate| {
             let duration_difference = expected_duration.map_or(0.0, |expected| {
@@ -502,19 +678,28 @@ fn select_candidate(
             let synced_lyrics = candidate
                 .synced_lyrics
                 .filter(|lyrics| !lyrics.trim().is_empty())?;
-            (expected_duration.is_none() || duration_difference <= MAX_DURATION_DIFFERENCE_SECONDS)
-                .then_some((
-                    duration_difference,
-                    SelectedLyrics {
-                        track_name: candidate.track_name,
-                        artist_name: candidate.artist_name,
-                        duration: candidate.duration,
-                        synced_lyrics,
-                    },
-                ))
+            let parsed = LyricsTimeline::parse(&synced_lyrics);
+            if expected_duration.is_some() && duration_difference > MAX_DURATION_DIFFERENCE_SECONDS
+                || parsed.lines().is_empty()
+            {
+                return None;
+            }
+            Some((
+                duration_difference,
+                SelectedLyrics {
+                    track_name: candidate.track_name,
+                    artist_name: candidate.artist_name,
+                    duration: candidate.duration,
+                    synced_lyrics,
+                },
+            ))
         })
-        .min_by(|left, right| left.0.total_cmp(&right.0))
-        .map(|(_, selected)| selected)
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| left.0.total_cmp(&right.0));
+    selected
+        .into_iter()
+        .map(|(_, candidate)| candidate)
+        .collect()
 }
 
 struct SelectedLyrics {
@@ -524,7 +709,7 @@ struct SelectedLyrics {
     synced_lyrics: String,
 }
 
-fn downloaded_lyrics_path(project: &Project) -> Result<ProjectPath, Box<dyn Error>> {
+fn primary_downloaded_lyrics_path(project: &Project) -> Result<ProjectPath, Box<dyn Error>> {
     let source_path = project.source_path();
     let stem = source_path
         .file_stem()
@@ -532,6 +717,26 @@ fn downloaded_lyrics_path(project: &Project) -> Result<ProjectPath, Box<dyn Erro
         .filter(|stem| !stem.is_empty())
         .unwrap_or("downloaded");
     Ok(ProjectPath::new(format!("lyrics/{stem}.lrc"))?)
+}
+
+fn available_downloaded_lyrics_path(project: &Project) -> Result<ProjectPath, Box<dyn Error>> {
+    let primary = primary_downloaded_lyrics_path(project)?;
+    if !project.root().join(primary.as_str()).exists() {
+        return Ok(primary);
+    }
+    let source_path = project.source_path();
+    let stem = source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("downloaded");
+    for version in 2..=10_000 {
+        let candidate = ProjectPath::new(format!("lyrics/{stem}-{version}.lrc"))?;
+        if !project.root().join(candidate.as_str()).exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("too many downloaded lyric versions in this project".into())
 }
 
 fn write_atomically(destination: &Path, lyrics: &str) -> Result<(), Box<dyn Error>> {
@@ -564,12 +769,18 @@ fn write_atomically(destination: &Path, lyrics: &str) -> Result<(), Box<dyn Erro
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, NeteaseArtist, NeteaseSong,
-        download_with_catalog, download_with_catalogs, netease_song_matches, normalize_match_text,
+        LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, LyricsSearch, NeteaseArtist,
+        NeteaseSong, download_with_catalog, download_with_catalogs, find_with_catalogs,
+        find_with_catalogs_query, netease_song_matches, normalize_match_text, save_lyrics_choice,
         search_candidates,
     };
-    use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
-    use std::{cell::Cell, error::Error, fs, io, time::Duration};
+    use k3_core::{CreateProject, FileProjectRepository, ProjectPath, ProjectRepository};
+    use std::{
+        cell::{Cell, RefCell},
+        error::Error,
+        fs, io,
+        time::Duration,
+    };
 
     struct FakeCatalog {
         candidates: Vec<LyricsCandidate>,
@@ -577,6 +788,149 @@ mod tests {
 
     struct ArtistFallbackCatalog {
         calls: Cell<usize>,
+    }
+
+    struct CapturingCatalog {
+        lookup: RefCell<Option<(String, Option<String>)>>,
+        candidates: Vec<LyricsCandidate>,
+    }
+
+    impl LyricsCatalog for CapturingCatalog {
+        fn search(&self, lookup: &LyricsLookup) -> Result<Vec<LyricsCandidate>, Box<dyn Error>> {
+            self.lookup
+                .replace(Some((lookup.title.clone(), lookup.artist.clone())));
+            Ok(self.candidates.clone())
+        }
+    }
+
+    #[test]
+    fn manual_query_is_not_split_and_is_labeled() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("old-name.flac");
+        fs::write(&song, b"audio").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("old-name".into()),
+            })
+            .unwrap();
+        let catalog = CapturingCatalog {
+            lookup: RefCell::new(None),
+            candidates: vec![LyricsCandidate {
+                track_name: "难舍难分".into(),
+                artist_name: "谭咏麟".into(),
+                duration: 275.0,
+                synced_lyrics: Some("[00:01.00]忘不了你眼中那闪烁的泪光".into()),
+            }],
+        };
+
+        let result = find_with_catalogs_query(
+            &mut project,
+            &[&catalog],
+            false,
+            Some("难舍难分 - 谭咏麟"),
+            &mut |_| {},
+        )
+        .unwrap();
+        let LyricsSearch::Candidates(choices) = result else {
+            panic!("expected candidates")
+        };
+
+        assert_eq!(
+            catalog.lookup.borrow().clone(),
+            Some(("难舍难分 - 谭咏麟".into(), None))
+        );
+        assert_eq!(choices[0].origin_label(), "test catalog · manual");
+        assert!(choices[0].preview_lines(3)[0].contains("忘不了你"));
+    }
+
+    #[test]
+    fn keeps_all_duration_matched_lyrics_for_user_selection() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("同名歌曲.flac");
+        fs::write(&song, b"audio").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("同名歌曲".into()),
+            })
+            .unwrap();
+        let catalog = FakeCatalog {
+            candidates: vec![
+                LyricsCandidate {
+                    track_name: "同名歌曲".into(),
+                    artist_name: "歌手甲".into(),
+                    duration: 180.0,
+                    synced_lyrics: Some("[00:01.00]版本甲".into()),
+                },
+                LyricsCandidate {
+                    track_name: "同名歌曲".into(),
+                    artist_name: "歌手乙".into(),
+                    duration: 184.0,
+                    synced_lyrics: Some("[00:01.00]版本乙".into()),
+                },
+            ],
+        };
+
+        let result = find_with_catalogs(&mut project, &[&catalog], true, &mut |_| {}).unwrap();
+        let LyricsSearch::Candidates(candidates) = result else {
+            panic!("expected candidates")
+        };
+
+        assert_eq!(candidates.len(), 2);
+        assert!(project.lyrics().is_none());
+        assert_eq!(
+            fs::read_dir(project.root().join("lyrics")).unwrap().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn re_search_ignores_existing_lyrics_and_keeps_them_until_a_choice_is_saved() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("同名歌曲.flac");
+        fs::write(&song, b"audio").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("同名歌曲".into()),
+            })
+            .unwrap();
+        let old_relative = ProjectPath::new("lyrics/同名歌曲.lrc").unwrap();
+        let old_path = project.root().join(old_relative.as_str());
+        fs::write(&old_path, "[00:01.00]旧歌词").unwrap();
+        project.set_lyrics(old_relative.clone()).unwrap();
+        let catalog = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "同名歌曲".into(),
+                artist_name: "正确歌手".into(),
+                duration: 182.0,
+                synced_lyrics: Some("[00:01.00]新歌词".into()),
+            }],
+        };
+
+        let result = find_with_catalogs(&mut project, &[&catalog], false, &mut |_| {}).unwrap();
+        let LyricsSearch::Candidates(mut choices) = result else {
+            panic!("expected replacement candidates")
+        };
+        assert_eq!(fs::read_to_string(&old_path).unwrap(), "[00:01.00]旧歌词");
+        assert_eq!(project.lyrics(), Some(&old_relative));
+
+        let (_, replacement) =
+            save_lyrics_choice(&project, choices.remove(0), &mut |_| {}).unwrap();
+        assert_eq!(replacement.as_str(), "lyrics/同名歌曲-2.lrc");
+        assert_eq!(fs::read_to_string(&old_path).unwrap(), "[00:01.00]旧歌词");
+        assert!(
+            fs::read_to_string(project.root().join(replacement.as_str()))
+                .unwrap()
+                .contains("新歌词")
+        );
     }
 
     #[test]
@@ -758,11 +1112,60 @@ mod tests {
             }],
         };
 
+        let search =
+            find_with_catalogs(&mut project, &[&primary, &fallback], true, &mut |_| {}).unwrap();
+        let LyricsSearch::Candidates(choices) = search else {
+            panic!("expected fallback candidates")
+        };
+        assert_eq!(choices[0].origin_label(), "test catalog · fallback");
+
         let outcome =
             download_with_catalogs(&mut project, &[&primary, &fallback], &mut |_| {}).unwrap();
 
         assert!(matches!(outcome, LyricsDownload::Downloaded { .. }));
         assert!(project.lyrics().is_some());
+    }
+
+    #[test]
+    fn includes_fallback_candidates_when_primary_already_has_a_result() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("song.mp3");
+        fs::write(&song, b"audio").unwrap();
+        let mut project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("Song".into()),
+            })
+            .unwrap();
+        let primary = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "Unexpected version".into(),
+                artist_name: "Primary artist".into(),
+                duration: 180.0,
+                synced_lyrics: Some("[00:01.00]primary lyrics".into()),
+            }],
+        };
+        let fallback = FakeCatalog {
+            candidates: vec![LyricsCandidate {
+                track_name: "Expected version".into(),
+                artist_name: "Fallback artist".into(),
+                duration: 180.0,
+                synced_lyrics: Some("[00:01.00]fallback lyrics".into()),
+            }],
+        };
+
+        let result =
+            find_with_catalogs(&mut project, &[&primary, &fallback], false, &mut |_| {}).unwrap();
+        let LyricsSearch::Candidates(choices) = result else {
+            panic!("expected candidates")
+        };
+
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].origin_label(), "test catalog · auto");
+        assert_eq!(choices[1].origin_label(), "test catalog · fallback");
+        assert!(choices[1].preview_lines(1)[0].contains("fallback lyrics"));
     }
 
     #[test]

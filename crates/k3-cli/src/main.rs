@@ -17,7 +17,6 @@ use k3_core::{
     SeparationProfile, SongPreparation,
 };
 
-use crate::lyrics_download::{LyricsDownload, download_missing_lyrics};
 use crate::mix::render_take_preview;
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
 
@@ -302,27 +301,7 @@ fn open_tui(
         project.set_key_shift_semitones(key)?;
         repository.save(&project)?;
     }
-    let lyrics_message = if no_lyrics_download {
-        None
-    } else {
-        match download_missing_lyrics(&mut project, netease_lyrics, &mut |progress| {
-            eprintln!("{progress}");
-        }) {
-            Ok(LyricsDownload::AlreadyPresent) => None,
-            Ok(LyricsDownload::Downloaded { track, artist }) => {
-                repository.save(&project)?;
-                Some(format!("Downloaded lyrics from LRCLIB: {artist} - {track}"))
-            }
-            Ok(LyricsDownload::NotFound) => Some(
-                "LRCLIB found no duration-matched synced lyrics; recording is still available"
-                    .into(),
-            ),
-            Err(error) => Some(format!(
-                "Automatic lyric download failed: {error}; recording is still available"
-            )),
-        }
-    };
-    tui::open(project, lyrics_message)
+    tui::open(project, None, !no_lyrics_download, netease_lyrics)
 }
 
 fn print_summary(project: &Project) {

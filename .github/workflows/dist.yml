@@ -1,0 +1,179 @@
+name: Build distributions
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  verify:
+    name: Verify workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Linux audio headers
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+
+      - name: Select stable Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add clippy
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  build:
+    name: Build ${{ matrix.package }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: k3-linux-x86_64
+            archive: k3-linux-x86_64.tar.gz
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            executable: k3
+            rustflags: ""
+          - package: k3-windows-x86_64
+            archive: k3-windows-x86_64.zip
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            executable: k3.exe
+            rustflags: -C target-feature=+crt-static
+          - package: k3-macos-x86_64
+            archive: k3-macos-x86_64.tar.gz
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: k3
+            rustflags: ""
+          - package: k3-macos-aarch64
+            archive: k3-macos-aarch64.tar.gz
+            os: macos-15
+            target: aarch64-apple-darwin
+            executable: k3
+            rustflags: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      PACKAGE_NAME: ${{ matrix.package }}
+      ARCHIVE_NAME: ${{ matrix.archive }}
+      BUILD_TARGET: ${{ matrix.target }}
+      EXECUTABLE_NAME: ${{ matrix.executable }}
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Linux audio headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+
+      - name: Select stable Rust target
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add "$BUILD_TARGET"
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package Linux or macOS distribution
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform=macos
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            platform=linux
+          fi
+          scripts/package-dist.sh \
+            "$platform" \
+            "$PACKAGE_NAME" \
+            "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+
+      - name: Package Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path "dist" $env:PACKAGE_NAME
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          $binary = "target/$env:BUILD_TARGET/release/$env:EXECUTABLE_NAME"
+          Copy-Item -LiteralPath $binary -Destination (Join-Path $packageDir "k3.exe")
+          Copy-Item "README.md" $packageDir
+          Copy-Item "docs" $packageDir -Recurse
+          $separatorDir = Join-Path $packageDir "python/separator"
+          New-Item -ItemType Directory -Force -Path $separatorDir | Out-Null
+          Copy-Item "python/separator/README.md" $separatorDir
+          Copy-Item "python/separator/pyproject.toml" $separatorDir
+          Copy-Item "python/separator/requirements-runtime.txt" $separatorDir
+          $separatorScripts = Join-Path $separatorDir "scripts"
+          $separatorPackage = Join-Path $separatorDir "src/k3_separator"
+          New-Item -ItemType Directory -Force -Path $separatorScripts | Out-Null
+          New-Item -ItemType Directory -Force -Path $separatorPackage | Out-Null
+          Copy-Item "python/separator/scripts/*.sh" $separatorScripts
+          Copy-Item "python/separator/src/k3_separator/*.py" $separatorPackage
+          Copy-Item "separate.ps1","install-separator.ps1" $packageDir
+          $archive = Join-Path "dist" $env:ARCHIVE_NAME
+          Compress-Archive -Path $packageDir -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          $checksum = Join-Path "dist" "$($env:ARCHIVE_NAME).sha256"
+          "$hash  $($env:ARCHIVE_NAME)" | Set-Content -LiteralPath $checksum -Encoding ascii
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.package }}
+          path: dist/${{ matrix.archive }}*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all distributions
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create combined checksums
+        shell: bash
+        run: cat dist/*.sha256 | sort -k2 > dist/SHA256SUMS
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TAG"
+          fi

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{Project, ProjectError, Take, VocalEffectPreset};
+use crate::{Project, ProjectError, ProjectPath, Take, VocalEffectPreset};
 
 /// Observable state of a dry-vocal recording session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +122,15 @@ impl RecordingSession {
     /// Returns [`ProjectError::Invalid`] when the shift is outside -6 through +6 semitones.
     pub fn set_key_shift_semitones(&mut self, semitones: i8) -> Result<(), ProjectError> {
         self.project.set_key_shift_semitones(semitones)
+    }
+
+    /// Attaches synchronized lyrics selected while the project is open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] when the path is not a valid project-relative path.
+    pub fn set_lyrics(&mut self, lyrics: ProjectPath) -> Result<(), ProjectError> {
+        self.project.set_lyrics(lyrics)
     }
 
     fn transition(

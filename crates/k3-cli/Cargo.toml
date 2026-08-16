@@ -17,6 +17,7 @@ rtrb = "0.3.4"
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }
+unicode-width = "0.2.1"
 
 [dev-dependencies]
 tempfile.workspace = true

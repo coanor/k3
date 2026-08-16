@@ -22,16 +22,20 @@ use k3_core::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     audio::AudioPlayer,
     library::{self, LibraryConfig, LibrarySnapshot, SourceEntry},
-    lyrics_download::{LyricsDownload, download_missing_lyrics},
+    lyrics_download::{
+        LyricsChoice, LyricsProgress, LyricsSearch, default_lyrics_query, find_lyrics_again,
+        find_missing_lyrics, save_lyrics_choice,
+    },
     mix::{render_take_mix, render_take_preview},
     recorder::{AudioRecorder, RecordingTimelineAnchor, place_recording_on_timeline},
 };
@@ -439,6 +443,64 @@ struct ActiveRecording {
     timeline: Vec<RecordingTimelineAnchor>,
 }
 
+struct LyricsPicker {
+    choices: Vec<LyricsChoice>,
+    selected: usize,
+}
+
+struct LyricsQueryEditor {
+    query: String,
+    cursor: usize,
+}
+
+impl LyricsQueryEditor {
+    fn new(query: String) -> Self {
+        let cursor = query.chars().count();
+        Self { query, cursor }
+    }
+
+    fn insert(&mut self, character: char) {
+        let byte = char_index_to_byte(&self.query, self.cursor);
+        self.query.insert(byte, character);
+        self.cursor += 1;
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = char_index_to_byte(&self.query, self.cursor - 1);
+        let end = char_index_to_byte(&self.query, self.cursor);
+        self.query.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete(&mut self) {
+        if self.cursor >= self.query.chars().count() {
+            return;
+        }
+        let start = char_index_to_byte(&self.query, self.cursor);
+        let end = char_index_to_byte(&self.query, self.cursor + 1);
+        self.query.replace_range(start..end, "");
+    }
+}
+
+struct LyricsSearchJob {
+    result: Receiver<Result<LyricsSearch, String>>,
+}
+
+#[derive(Clone, Copy)]
+enum LyricsSources {
+    Lrclib,
+    LrclibWithNetease,
+}
+
+impl LyricsSources {
+    const fn netease_fallback(self) -> bool {
+        matches!(self, Self::LrclibWithNetease)
+    }
+}
+
 struct App {
     playback: PlaybackState,
     session: RecordingSession,
@@ -450,6 +512,11 @@ struct App {
     effect_selecting: bool,
     default_effect: VocalEffectPreset,
     lyrics: Option<LyricsTimeline>,
+    lyrics_origin: Option<String>,
+    lyrics_picker: Option<LyricsPicker>,
+    lyrics_query_editor: Option<LyricsQueryEditor>,
+    lyrics_search_job: Option<LyricsSearchJob>,
+    lyrics_sources: LyricsSources,
 }
 
 impl App {
@@ -472,10 +539,27 @@ impl App {
             effect_selecting: false,
             default_effect,
             lyrics,
+            lyrics_origin: None,
+            lyrics_picker: None,
+            lyrics_query_editor: None,
+            lyrics_search_job: None,
+            lyrics_sources: LyricsSources::Lrclib,
         }
     }
 
     fn handle_key(&mut self, key: KeyCode) -> bool {
+        if self.lyrics_query_editor.is_some() {
+            self.handle_lyrics_query_key(key);
+            return false;
+        }
+        if self.lyrics_picker.is_some() {
+            self.handle_lyrics_picker_key(key);
+            return false;
+        }
+        if self.lyrics_search_job.is_some() && key == KeyCode::Char('a') {
+            self.recording_message = Some("Wait for the lyrics search before recording".into());
+            return false;
+        }
         if self.effect_selecting {
             if let Some(preset) = effect_preset_for_key(key) {
                 self.effect_selecting = false;
@@ -499,6 +583,7 @@ impl App {
             (RecordingState::Idle, KeyCode::Char(',')) => self.adjust_key(-1),
             (RecordingState::Idle, KeyCode::Char('.')) => self.adjust_key(1),
             (RecordingState::Idle, KeyCode::Char('/')) => self.reset_key(),
+            (RecordingState::Idle, KeyCode::Char('l')) => self.begin_lyrics_search(),
             (RecordingState::Armed, KeyCode::Enter) => self.start_recording(),
             (RecordingState::Armed, KeyCode::Esc) => self.cancel_arm(),
             (RecordingState::Recording, KeyCode::Enter) => {
@@ -545,6 +630,186 @@ impl App {
             _ => return self.playback.handle_key(key),
         }
         false
+    }
+
+    fn handle_lyrics_picker_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up => {
+                if let Some(picker) = &mut self.lyrics_picker {
+                    picker.selected = picker.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Some(picker) = &mut self.lyrics_picker {
+                    picker.selected = (picker.selected + 1).min(picker.choices.len() - 1);
+                }
+            }
+            KeyCode::Esc => {
+                self.lyrics_picker = None;
+                self.recording_message = Some("Lyrics download skipped".into());
+            }
+            KeyCode::Enter => self.save_selected_lyrics(),
+            _ => {}
+        }
+    }
+
+    fn save_selected_lyrics(&mut self) {
+        let Some(mut picker) = self.lyrics_picker.take() else {
+            return;
+        };
+        let choice = picker.choices.remove(picker.selected);
+        match save_lyrics_choice(self.session.project(), choice, &mut |_| {}) {
+            Ok((saved, relative_path)) => {
+                if let Err(error) = self.session.set_lyrics(relative_path) {
+                    self.recording_message = Some(format!("Cannot attach lyrics: {error}"));
+                    return;
+                }
+                self.project_dirty = true;
+                if !self.save_project() {
+                    return;
+                }
+                match load_lyrics(self.session.project()) {
+                    Ok(lyrics) => {
+                        self.lyrics = lyrics;
+                        self.lyrics_origin = Some(saved.origin.clone());
+                        self.recording_message = Some(format!(
+                            "Downloaded lyrics: {} - {} · {}",
+                            saved.artist, saved.track, saved.origin
+                        ));
+                    }
+                    Err(error) => {
+                        self.recording_message = Some(format!("Cannot load lyrics: {error}"));
+                    }
+                }
+            }
+            Err(error) => {
+                self.recording_message = Some(format!("Lyrics download failed: {error}"));
+            }
+        }
+    }
+
+    fn begin_lyrics_search(&mut self) {
+        if self.lyrics_search_job.is_some() {
+            self.recording_message = Some("Lyrics search is already running".into());
+            return;
+        }
+        let query = default_lyrics_query(self.session.project());
+        self.lyrics_query_editor = Some(LyricsQueryEditor::new(query));
+        self.recording_message = Some("Edit the lyrics search query, then press Enter".into());
+    }
+
+    fn handle_lyrics_query_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Esc => {
+                self.lyrics_query_editor = None;
+                self.recording_message = Some("Lyrics search cancelled".into());
+            }
+            KeyCode::Enter => {
+                let query = self
+                    .lyrics_query_editor
+                    .as_ref()
+                    .map(|editor| editor.query.trim().to_owned())
+                    .unwrap_or_default();
+                if query.is_empty() {
+                    self.recording_message = Some("Lyrics search query cannot be empty".into());
+                } else {
+                    self.lyrics_query_editor = None;
+                    self.start_lyrics_search(query);
+                }
+            }
+            KeyCode::Left => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.cursor = editor.cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Right => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.cursor = (editor.cursor + 1).min(editor.query.chars().count());
+                }
+            }
+            KeyCode::Home => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.cursor = editor.query.chars().count();
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.backspace();
+                }
+            }
+            KeyCode::Delete => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.delete();
+                }
+            }
+            KeyCode::Char(character) if !character.is_control() => {
+                if let Some(editor) = &mut self.lyrics_query_editor {
+                    editor.insert(character);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn start_lyrics_search(&mut self, query: String) {
+        let project = self.session.project().clone();
+        let netease_fallback = self.lyrics_sources.netease_fallback();
+        let status_query = query.clone();
+        let (sender, result) = mpsc::channel();
+        thread::spawn(move || {
+            let outcome = find_lyrics_again(&project, &query, netease_fallback, &mut |_| {})
+                .map_err(|error| error.to_string());
+            let _ = sender.send(outcome);
+        });
+        self.lyrics_search_job = Some(LyricsSearchJob { result });
+        self.recording_message = Some(format!("Searching online lyrics: {status_query}"));
+    }
+
+    fn poll_lyrics_search(&mut self) {
+        let outcome = match self
+            .lyrics_search_job
+            .as_ref()
+            .map(|job| job.result.try_recv())
+        {
+            Some(Ok(result)) => Some(result),
+            Some(Err(TryRecvError::Disconnected)) => {
+                Some(Err("Lyrics search task exited unexpectedly".into()))
+            }
+            Some(Err(TryRecvError::Empty)) | None => None,
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        self.lyrics_search_job = None;
+        match outcome {
+            Ok(LyricsSearch::Candidates(choices)) => {
+                let count = choices.len();
+                self.lyrics_picker = Some(LyricsPicker {
+                    choices,
+                    selected: 0,
+                });
+                self.recording_message = Some(format!(
+                    "Found {count} lyric matches · choose one before downloading"
+                ));
+            }
+            Ok(LyricsSearch::NotFound) => {
+                self.recording_message =
+                    Some("No duration-matched synced lyrics found · current lyrics kept".into());
+            }
+            Ok(LyricsSearch::AlreadyPresent) => {
+                self.recording_message = Some("Current lyrics are already available".into());
+            }
+            Err(error) => {
+                self.recording_message = Some(format!(
+                    "Lyrics search failed: {error} · current lyrics kept"
+                ));
+            }
+        }
     }
 
     fn toggle_monitoring(&mut self) {
@@ -927,12 +1192,24 @@ impl App {
     }
 }
 
-pub fn open(project: Project, startup_message: Option<String>) -> Result<(), Box<dyn Error>> {
-    let lyrics = load_lyrics(&project)?;
-    let mut app = App::new(project, lyrics, startup_message, VocalEffectPreset::Clean);
+pub fn open(
+    project: Project,
+    startup_message: Option<String>,
+    auto_download_lyrics: bool,
+    netease_fallback: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut app = app_for_project(
+        project,
+        startup_message,
+        VocalEffectPreset::Clean,
+        auto_download_lyrics,
+        netease_fallback,
+        &mut |progress| eprintln!("{progress}"),
+    )?;
     let mut guard = TerminalGuard::enter()?;
 
     loop {
+        app.poll_lyrics_search();
         app.playback.refresh_stream_error();
         guard.terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(100))?
@@ -953,6 +1230,7 @@ pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
 
     loop {
         if let Some(app) = &mut current {
+            app.poll_lyrics_search();
             app.playback.refresh_stream_error();
         }
         poll_import_job(&mut library)?;
@@ -972,27 +1250,75 @@ pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
 
 fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<dyn Error>> {
     let repository = FileProjectRepository;
-    let mut project = repository.open(path)?;
-    let message = if config.lyrics.auto_download {
-        match download_missing_lyrics(&mut project, config.lyrics.netease_fallback, &mut |_| {}) {
-            Ok(LyricsDownload::Downloaded { track, artist }) => {
-                repository.save(&project)?;
-                Some(format!("Downloaded lyrics from LRCLIB: {artist} - {track}"))
+    let project = repository.open(path)?;
+    app_for_project(
+        project,
+        None,
+        config.recording.default_effect,
+        config.lyrics.auto_download,
+        config.lyrics.netease_fallback,
+        &mut |_| {},
+    )
+}
+
+fn app_for_project(
+    mut project: Project,
+    startup_message: Option<String>,
+    default_effect: VocalEffectPreset,
+    auto_download_lyrics: bool,
+    netease_fallback: bool,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<App, Box<dyn Error>> {
+    let mut picker = None;
+    let mut lyrics_origin = None;
+    let lyrics_message = if auto_download_lyrics {
+        match find_missing_lyrics(&mut project, netease_fallback, progress) {
+            Ok(LyricsSearch::AlreadyPresent) => {
+                FileProjectRepository.save(&project)?;
+                None
             }
-            Ok(LyricsDownload::NotFound) => Some("No duration-matched synced lyrics found".into()),
-            Ok(LyricsDownload::AlreadyPresent) => None,
-            Err(error) => Some(format!("Automatic lyric download failed: {error}")),
+            Ok(LyricsSearch::Candidates(mut choices)) if choices.len() == 1 => {
+                let (saved, relative_path) =
+                    save_lyrics_choice(&project, choices.remove(0), progress)?;
+                project.set_lyrics(relative_path)?;
+                FileProjectRepository.save(&project)?;
+                lyrics_origin = Some(saved.origin.clone());
+                Some(format!(
+                    "Downloaded lyrics: {} - {} · {}",
+                    saved.artist, saved.track, saved.origin
+                ))
+            }
+            Ok(LyricsSearch::Candidates(choices)) => {
+                let count = choices.len();
+                picker = Some(LyricsPicker {
+                    choices,
+                    selected: 0,
+                });
+                Some(format!(
+                    "Found {count} lyric matches · choose one before downloading"
+                ))
+            }
+            Ok(LyricsSearch::NotFound) => Some("No duration-matched synced lyrics found".into()),
+            Err(error) => Some(format!("Automatic lyric search failed: {error}")),
         }
     } else {
         None
     };
     let lyrics = load_lyrics(&project)?;
-    Ok(App::new(
+    let mut app = App::new(
         project,
         lyrics,
-        message,
-        config.recording.default_effect,
-    ))
+        lyrics_message.or(startup_message),
+        default_effect,
+    );
+    app.lyrics_origin = lyrics_origin;
+    app.lyrics_picker = picker;
+    app.lyrics_sources = if netease_fallback {
+        LyricsSources::LrclibWithNetease
+    } else {
+        LyricsSources::Lrclib
+    };
+    Ok(app)
 }
 
 fn poll_import_job(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>> {
@@ -1035,6 +1361,12 @@ fn handle_library_key(
     current: &mut Option<App>,
     key: KeyCode,
 ) -> Result<bool, Box<dyn Error>> {
+    if let Some(app) = current
+        && (app.lyrics_picker.is_some() || app.lyrics_query_editor.is_some())
+    {
+        app.handle_key(key);
+        return Ok(false);
+    }
     match key {
         KeyCode::Tab => library.focus = library.focus.next(),
         KeyCode::BackTab => library.focus = library.focus.previous(),
@@ -1173,6 +1505,11 @@ fn should_handle_key(key: &KeyEvent) -> bool {
 
 fn draw(frame: &mut Frame, app: &App) {
     draw_project(frame, frame.area(), app, None);
+    if let Some(editor) = &app.lyrics_query_editor {
+        draw_lyrics_query_editor(frame, frame.area(), editor);
+    } else if let Some(picker) = &app.lyrics_picker {
+        draw_lyrics_picker(frame, frame.area(), picker);
+    }
 }
 
 fn draw_project(
@@ -1266,14 +1603,11 @@ fn draw_project(
     let visible_rows = usize::from(areas[1].height.saturating_sub(2));
     let (lyric_lines, lyric_progress) =
         lyrics_for_display(app.lyrics.as_ref(), position, visible_rows);
+    let lyric_title = lyrics_panel_title(app, position, &lyric_progress);
     let lyric_panel = Paragraph::new(lyric_lines)
         .block(
             Block::default()
-                .title(format!(
-                    " Lyrics · {}{} ",
-                    format_duration(position),
-                    lyric_progress
-                ))
+                .title(lyric_title)
                 .borders(Borders::ALL)
                 .border_style(panel_border_style(library_focused)),
         )
@@ -1281,6 +1615,129 @@ fn draw_project(
     frame.render_widget(lyric_panel, areas[1]);
 
     draw_project_footer(frame, areas[2], app, library_focused);
+}
+
+fn lyrics_panel_title(app: &App, position: Duration, progress: &str) -> String {
+    let origin = app
+        .lyrics_origin
+        .as_deref()
+        .map_or_else(String::new, |origin| format!(" · {origin}"));
+    format!(" Lyrics{origin} · {}{progress} ", format_duration(position))
+}
+
+fn draw_lyrics_picker(frame: &mut Frame, area: Rect, picker: &LyricsPicker) {
+    let width = area.width.saturating_sub(2).clamp(1, 100);
+    let height = area.height.saturating_sub(2).clamp(1, 24);
+    let popup = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height.min(area.height),
+    );
+    let maximum_choice_rows = usize::from(popup.height.saturating_sub(5).clamp(1, 6));
+    let visible_rows = picker.choices.len().min(maximum_choice_rows);
+    let choice_height = (u16::try_from(visible_rows).unwrap_or(u16::MAX) + 2)
+        .min(popup.height.saturating_sub(3).max(1));
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(choice_height), Constraint::Min(3)])
+        .split(popup);
+    let start = picker
+        .selected
+        .saturating_add(1)
+        .saturating_sub(visible_rows);
+    let lines = picker
+        .choices
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+        .map(|(index, choice)| {
+            let selected = index == picker.selected;
+            let marker = if selected { "▶ " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let label_width = usize::from(sections[0].width.saturating_sub(4));
+            let label = fit_text_end(&choice.label(), label_width);
+            Line::from(Span::styled(format!("{marker}{label}"), style))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Results · ↑/↓ choose · Enter download · Esc skip ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        sections[0],
+    );
+
+    let preview_rows = usize::from(sections[1].height.saturating_sub(2));
+    let (preview_title, preview) = picker.choices.get(picker.selected).map_or_else(
+        || {
+            (
+                "Preview".to_owned(),
+                vec![Line::from("No preview available")],
+            )
+        },
+        |choice| {
+            let title = format!("Preview · {}", choice.origin_label());
+            let lines = choice
+                .preview_lines(preview_rows)
+                .into_iter()
+                .map(Line::from)
+                .collect::<Vec<_>>();
+            (title, lines)
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(preview)
+            .block(
+                Block::default()
+                    .title(format!(" {preview_title} "))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: false }),
+        sections[1],
+    );
+}
+
+fn draw_lyrics_query_editor(frame: &mut Frame, area: Rect, editor: &LyricsQueryEditor) {
+    let width = area.width.saturating_sub(2).clamp(1, 80);
+    let height = 3.min(area.height);
+    let popup = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let inner_width = usize::from(popup.width.saturating_sub(2).max(1));
+    let cursor_byte = char_index_to_byte(&editor.query, editor.cursor);
+    let cursor_width = UnicodeWidthStr::width(&editor.query[..cursor_byte]);
+    let scroll = cursor_width.saturating_sub(inner_width.saturating_sub(1));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(editor.query.as_str())
+            .block(
+                Block::default()
+                    .title(" Search lyrics · Enter search · Esc cancel ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .scroll((0, u16::try_from(scroll).unwrap_or(u16::MAX))),
+        popup,
+    );
+    frame.set_cursor_position((
+        popup.x + 1 + u16::try_from(cursor_width.saturating_sub(scroll)).unwrap_or(u16::MAX),
+        popup.y + 1,
+    ));
 }
 
 #[derive(Clone, Copy)]
@@ -1294,6 +1751,7 @@ enum FooterAction {
     SelectTake,
     Effect,
     Key,
+    Lyrics,
     Arm,
     RecordToggle,
     Monitor,
@@ -1307,6 +1765,7 @@ fn mode_allows_footer_action(state: RecordingState, action: FooterAction) -> boo
         | FooterAction::SelectTake
         | FooterAction::Effect
         | FooterAction::Key
+        | FooterAction::Lyrics
         | FooterAction::Arm => state == RecordingState::Idle,
         FooterAction::RecordToggle => state != RecordingState::Idle,
         FooterAction::Seek
@@ -1327,6 +1786,7 @@ fn draw_project_footer(
     let audio = app.playback.audio.is_some();
     let has_track = |kind| app.playback.tracks.iter().any(|track| track.kind == kind);
     let has_take = app.selected_take.is_some();
+    let lyrics_searching = app.lyrics_search_job.is_some() || app.lyrics_query_editor.is_some();
     let mode = |action| mode_allows_footer_action(state, action);
     let footer = Paragraph::new(vec![
         footer_line(&[
@@ -1363,9 +1823,13 @@ fn draw_project_footer(
             ),
             ("e+1..5 effect", has_take && mode(FooterAction::Effect)),
             ("/ reset Key", mode(FooterAction::Key)),
+            ("l lyrics", mode(FooterAction::Lyrics) && !lyrics_searching),
             (
                 "a arm",
-                audio && has_track(TrackKind::Accompaniment) && mode(FooterAction::Arm),
+                audio
+                    && has_track(TrackKind::Accompaniment)
+                    && mode(FooterAction::Arm)
+                    && !lyrics_searching,
             ),
             ("Enter start/stop", mode(FooterAction::RecordToggle)),
             ("m monitor", mode(FooterAction::Monitor)),
@@ -1430,6 +1894,11 @@ fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>
             app,
             Some(library.focus == LibraryFocus::Project),
         );
+        if let Some(editor) = &app.lyrics_query_editor {
+            draw_lyrics_query_editor(frame, columns[1], editor);
+        } else if let Some(picker) = &app.lyrics_picker {
+            draw_lyrics_picker(frame, columns[1], picker);
+        }
     } else {
         let focused = library.focus == LibraryFocus::Project;
         frame.render_widget(
@@ -1493,18 +1962,14 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
         .message
         .as_deref()
         .is_some_and(|message| message.starts_with("Separation failed"));
-    let areas = if library.message.is_some() {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(6)])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100), Constraint::Length(0)])
-            .split(area)
-    };
+    let status_height = if library.message.is_some() { 6 } else { 0 };
+    let areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(status_height)])
+        .split(area);
     let list_area = areas[0];
+    let inner_width = usize::from(list_area.width.saturating_sub(2));
+    let name_width = inner_width.saturating_sub(4);
     let rows = library
         .snapshot
         .sources
@@ -1528,9 +1993,16 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
             } else {
                 "+"
             };
+            let selected = index == library.source_selected;
+            let full_name = display_name(&entry.path);
+            let name = if selected {
+                full_name
+            } else {
+                fit_source_name(&full_name, name_width)
+            };
             library_row(
-                &format!("{state} {}", display_name(&entry.path)),
-                index == library.source_selected,
+                &format!("{state} {name}"),
+                selected,
                 library.focus == LibraryFocus::Sources,
             )
         })
@@ -1568,21 +2040,25 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
     );
 
     if let Some(message) = &library.message {
-        let color = if failed { Color::Red } else { Color::Cyan };
-        let title = if failed { "Error" } else { "Status" };
-        frame.render_widget(
-            Paragraph::new(message.as_str())
-                .style(Style::default().fg(color))
-                .block(
-                    Block::default()
-                        .title(format!(" {title} "))
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(color)),
-                )
-                .wrap(Wrap { trim: false }),
-            areas[1],
-        );
+        draw_library_source_message(frame, areas[1], message, failed);
     }
+}
+
+fn draw_library_source_message(frame: &mut Frame, area: Rect, message: &str, failed: bool) {
+    let color = if failed { Color::Red } else { Color::Cyan };
+    let title = if failed { "Error" } else { "Status" };
+    frame.render_widget(
+        Paragraph::new(message)
+            .style(Style::default().fg(color))
+            .block(
+                Block::default()
+                    .title(format!(" {title} "))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(color)),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn separation_spinner_frame() -> &'static str {
@@ -1633,6 +2109,63 @@ fn display_name(path: &Path) -> String {
         || path.display().to_string(),
         |value| value.to_string_lossy().into_owned(),
     )
+}
+
+fn fit_source_name(name: &str, width: usize) -> String {
+    if UnicodeWidthStr::width(name) <= width {
+        return name.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".into();
+    }
+
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .filter(|extension| UnicodeWidthStr::width(extension.as_str()) + 1 < width)
+        .unwrap_or_default();
+    let suffix_width = UnicodeWidthStr::width(extension.as_str());
+    let prefix_width = width.saturating_sub(suffix_width + 1);
+    format!("{}…{extension}", take_prefix_width(name, prefix_width))
+}
+
+fn take_prefix_width(value: &str, maximum_width: usize) -> String {
+    let mut width = 0;
+    value
+        .chars()
+        .take_while(|character| {
+            let character_width = UnicodeWidthChar::width(*character).unwrap_or(0);
+            if width + character_width > maximum_width {
+                return false;
+            }
+            width += character_width;
+            true
+        })
+        .collect()
+}
+
+fn char_index_to_byte(value: &str, index: usize) -> usize {
+    value
+        .char_indices()
+        .nth(index)
+        .map_or(value.len(), |(byte, _)| byte)
+}
+
+fn fit_text_end(value: &str, width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= width {
+        return value.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".into();
+    }
+    format!("{}…", take_prefix_width(value, width - 1))
 }
 
 fn effect_preset_for_key(key: KeyCode) -> Option<VocalEffectPreset> {
@@ -1896,18 +2429,20 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        FooterAction, ImportJob, LyricCountdown, MediaLibrary, PlaybackState, PlaybackTrack,
-        TrackKind, effect_preset_for_key, format_duration, handle_library_source_key, load_lyrics,
-        lyric_countdown, lyric_seek_target, lyric_window, mode_allows_footer_action,
-        poll_import_job, should_handle_key,
+        App, FooterAction, ImportJob, LyricCountdown, LyricsPicker, LyricsQueryEditor,
+        MediaLibrary, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
+        fit_source_name, format_duration, handle_library_source_key, load_lyrics, lyric_countdown,
+        lyric_seek_target, lyric_window, mode_allows_footer_action, poll_import_job,
+        should_handle_key,
     };
+    use crate::lyrics_download::LyricsChoice;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use k3_core::{
         CreateProject, FileProjectRepository, LyricsTimeline, ProjectRepository, RecordingState,
         VocalEffectPreset,
     };
     use ratatui::{Terminal, backend::TestBackend, style::Color};
-    use std::{fs, sync::mpsc, time::Duration};
+    use std::{fs, path::Path, sync::mpsc, time::Duration};
 
     #[test]
     fn missing_configured_lyrics_are_treated_as_not_loaded() {
@@ -1928,6 +2463,129 @@ mod tests {
         fs::remove_file(project.root().join(configured_lyrics.as_str())).unwrap();
 
         assert!(load_lyrics(&project).unwrap().is_none());
+    }
+
+    #[test]
+    fn selected_online_lyrics_are_saved_only_after_confirmation() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("同名歌曲.flac");
+        fs::write(&song, b"audio").unwrap();
+        let project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("同名歌曲".into()),
+            })
+            .unwrap();
+        let mut app = App::new(project, None, None, VocalEffectPreset::Clean);
+        app.lyrics_picker = Some(LyricsPicker {
+            choices: vec![
+                LyricsChoice::for_test("test", "同名歌曲", "歌手甲", 180.0, "[00:01.00]错误版本"),
+                LyricsChoice::for_test("test", "同名歌曲", "歌手乙", 182.0, "[00:01.00]正确版本"),
+            ],
+            selected: 0,
+        });
+
+        assert!(app.session.project().lyrics().is_none());
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Enter);
+
+        let relative = app.session.project().lyrics().unwrap();
+        let saved =
+            fs::read_to_string(app.session.project().root().join(relative.as_str())).unwrap();
+        assert!(saved.contains("正确版本"), "{saved}");
+        assert!(!saved.contains("错误版本"), "{saved}");
+        assert!(app.lyrics_picker.is_none());
+        assert_eq!(app.lyrics_origin.as_deref(), Some("test · auto"));
+        assert!(
+            app.recording_message
+                .as_deref()
+                .is_some_and(|message| message.contains("test · auto"))
+        );
+    }
+
+    #[test]
+    fn lyrics_search_editor_edits_unicode() {
+        let mut editor = LyricsQueryEditor::new("难舍难分".into());
+
+        editor.backspace();
+        editor.insert('份');
+        editor.cursor = 0;
+        editor.delete();
+        editor.insert('难');
+
+        assert_eq!(editor.query, "难舍难份");
+        assert_eq!(editor.cursor, 1);
+    }
+
+    #[test]
+    fn lyrics_search_editor_opens_with_default_title() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("source.flac");
+        fs::write(&song, b"audio").unwrap();
+        let project = FileProjectRepository
+            .create(CreateProject {
+                root: sandbox.path().join("project"),
+                song,
+                lyrics: None,
+                title: Some("默认搜索名".into()),
+            })
+            .unwrap();
+        let mut app = App::new(project, None, None, VocalEffectPreset::Clean);
+
+        app.handle_key(KeyCode::Char('l'));
+
+        assert_eq!(
+            app.lyrics_query_editor
+                .as_ref()
+                .map(|editor| editor.query.as_str()),
+            Some("默认搜索名")
+        );
+    }
+
+    #[test]
+    fn selected_lyrics_candidate_renders_preview_and_origin() {
+        let picker = LyricsPicker {
+            choices: vec![
+                LyricsChoice::for_test(
+                    "LRCLIB",
+                    "同名歌曲",
+                    "歌手甲",
+                    180.0,
+                    "[00:01.00]错误歌词预览",
+                ),
+                LyricsChoice::for_test(
+                    "LRCLIB",
+                    "同名歌曲",
+                    "歌手乙",
+                    182.0,
+                    "[00:01.00]正确歌词预览\n[00:05.00]下一句",
+                ),
+            ],
+            selected: 1,
+        };
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| super::draw_lyrics_picker(frame, frame.area(), &picker))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rendered = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let compact = rendered.replace(' ', "");
+        assert!(compact.contains("正确歌词预览"), "{rendered}");
+        assert!(compact.contains("下一句"), "{rendered}");
+        assert!(rendered.contains("LRCLIB · auto"), "{rendered}");
     }
 
     #[test]
@@ -2120,6 +2778,59 @@ mod tests {
     }
 
     #[test]
+    fn long_source_name_is_shortened_to_one_row_and_keeps_its_extension() {
+        let fitted = fit_source_name("some looooooooooong name.flac", 18);
+
+        assert!(fitted.chars().count() <= 18, "{fitted}");
+        assert!(fitted.contains('…'), "{fitted}");
+        assert!(
+            Path::new(&fitted)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("flac")),
+            "{fitted}"
+        );
+        assert!(!fitted.contains('\n'));
+    }
+
+    #[test]
+    fn selected_long_source_name_expands_in_place() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let filename = "selected-super-long-audio-filename.wav";
+        fs::write(music.join(filename), b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        library.focus = super::LibraryFocus::Sources;
+        let backend = TestBackend::new(24, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| super::draw_library_sources(frame, frame.area(), &library))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let highlighted = (1..buffer.area.height.saturating_sub(1))
+            .flat_map(|y| {
+                (1..buffer.area.width.saturating_sub(1)).filter_map(move |x| {
+                    buffer.cell((x, y)).and_then(|cell| {
+                        (cell.fg == Color::Yellow && !cell.symbol().trim().is_empty())
+                            .then(|| cell.symbol().to_owned())
+                    })
+                })
+            })
+            .collect::<String>();
+        assert!(highlighted.contains(filename), "{highlighted}");
+    }
+
+    #[test]
     fn formats_playback_position_as_minutes_and_seconds() {
         assert_eq!(format_duration(Duration::from_secs(125)), "02:05");
     }
@@ -2141,6 +2852,14 @@ mod tests {
         assert!(!mode_allows_footer_action(
             RecordingState::Armed,
             FooterAction::Effect
+        ));
+        assert!(mode_allows_footer_action(
+            RecordingState::Idle,
+            FooterAction::Lyrics
+        ));
+        assert!(!mode_allows_footer_action(
+            RecordingState::Recording,
+            FooterAction::Lyrics
         ));
         assert!(!mode_allows_footer_action(
             RecordingState::Recording,

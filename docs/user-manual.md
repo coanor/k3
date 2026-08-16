@@ -4,8 +4,8 @@ K3 是一个本地优先的终端 K 歌工作区。目前可创建歌曲工程�
 歌词、使用本地 GPU 模型分离人声和伴奏，并在 TUI 中播放和切换音轨。
 
 本文以 Ubuntu 24.04、Windows WSL2 和 Windows 11 原生环境为当前支持环境。
-Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离；macOS 的音频、模型安装与
-打包仍属于后续工作。
+Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离。GitHub Actions 会生成 macOS
+Intel 与 Apple Silicon 二进制包，但 macOS 的音频设备和模型安装尚未完成实机验证。
 
 ## 1. 系统要求
 
@@ -56,6 +56,64 @@ cargo run -p k3 --
 ```bash
 target/release/k3 --help
 ```
+
+### 2.1 Makefile
+
+仓库根目录提供统一的常用构建入口。Ubuntu/WSL 若尚未安装 GNU Make，先运行
+`sudo apt install make`：
+
+```bash
+make help
+make check
+make build
+make dist
+```
+
+`make dist` 根据当前主机生成 Linux x86_64 或对应架构的 macOS 包。也可明确指定：
+
+```bash
+make dist-linux
+make dist-windows
+make dist-macos
+```
+
+`dist-windows` 在 Linux/WSL 中使用 `cargo-xwin`；缺少工具时先运行
+`cargo install cargo-xwin`。如果 `llvm-lib` 不在 `PATH`，通过
+`make dist-windows LLVM_BIN=/path/to/llvm/bin` 指定。macOS 目标必须在 macOS
+主机或 GitHub macOS runner 上运行，因为构建需要 Apple SDK。
+
+要从本机触发 GitHub 上的完整四平台构建，先安装并登录 GitHub CLI，然后运行：
+
+```bash
+gh auth login
+make dist-all REF=main
+```
+
+本地产物写入被 Git 忽略的 `dist/`；可用 `DIST_DIR=/path/to/output` 改变目录。
+
+### 2.2 GitHub Actions 发行包
+
+仓库中的 `Build distributions` workflow 支持在 GitHub Actions 页面手动运行，也会在
+推送 `v*` tag 时自动执行。每次运行先在 Linux 上执行 workspace 测试和严格 Clippy，
+随后并行生成：
+
+- `k3-linux-x86_64.tar.gz`；
+- `k3-windows-x86_64.zip`；
+- `k3-macos-x86_64.tar.gz`；
+- `k3-macos-aarch64.tar.gz`。
+
+手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天。推送版本 tag 时，
+workflow 会创建或更新同名 GitHub Release，并附加四个平台包、各自的 `.sha256` 文件
+和汇总的 `SHA256SUMS`。例如：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Windows 包使用静态 MSVC C runtime。Linux 包包含 `separate.sh`；Windows 包包含
+`separate.ps1` 和 `install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
+因此只包含 `k3`、README 和文档，不包含尚未验证的 Python 分离环境。
 
 ## 3. 安装本地分离 worker
 
@@ -178,8 +236,8 @@ target/release/k3 tui --config ~/.config/k3/config.json
 选择同一首不会重复入队。右栏用旋转的 `⠋` 表示正在处理、`◷` 表示排队等待、`+`
 表示尚未加入任务、`✓` 表示已经存在可用 project。当前任务成功或失败后都会继续
 处理下一首。分离完成只刷新并选中左栏中的新 project，不会自动打开或播放，因而
-不会打断当前歌曲的播放或录音。左右栏长名称换行时，滚动位置按换行后的实际行数
-计算，确保当前选中项及其高亮始终留在视口中。
+不会打断当前歌曲的播放或录音。右栏未选中的文件名始终只占一行；名称过长时会在
+扩展名前使用 `…` 省略。当前选中的文件名会在原位置展开并保持高亮，可换行显示完整名称。
 首次分离失败时，右栏底部会持续显示红色错误信息；失败的 project 会移到
 `projects_root/.failed/` 归档，不会加入左栏，对应源文件仍可在右栏按 `Enter`
 重试。已有 project 重新分离失败时，原有状态与 stem 会保留，不会归档整个
@@ -423,8 +481,24 @@ target/release/k3 tui --project ./songs/example
 如果 project 没有本地歌词，或者 `project.json` 配置的歌词文件已经不存在，K3 会在
 进入 TUI 和开始录音前查询 LRCLIB。下载成功后会把新路径写回 `project.json`。若在线
 搜索失败或没有可靠匹配，缺失的旧路径会被当作“未加载歌词”，不会导致 K3 退出。
-可显式启用网易云音乐作为备用源；只有 LRCLIB 没有可用同步歌词时才请求网易云，主源返回
-无时间轴候选或时长不匹配也会继续备用源；一个来源出错不会阻止下一个来源继续搜索。
+若同一来源返回多个时长匹配的同步歌词，K3 不会立即写入文件，而是在 TUI 中显示
+候选选择框。使用 `↑` / `↓` 查看“歌手、歌名、时长、来源”，按 `Enter` 确认下载，
+按 `Esc` 跳过；只有一个可靠候选时仍会自动下载。
+project 处于空闲状态时可按 `l` 强制重新搜索，即使当前已经加载歌词也不会跳过。
+按下 `l` 后会先显示搜索输入框，并自动填入音频标签中的歌名；没有可用标签时使用
+project 标题。可直接输入中文或英文，使用 `←` / `→`、`Home` / `End`、`Backspace` /
+`Delete` 编辑，按 `Enter` 开始搜索，按 `Esc` 取消。输入内容作为完整查询发送，不会
+自动拆分 `歌名 - 歌手`。
+重新搜索在后台进行，原歌词会一直保留。结果框上半部分列出候选，下半部分实时预览
+当前选中项的同步歌词；使用 `↑` / `↓` 对比候选及预览，确认内容匹配后按 `Enter`
+下载。按 `Esc`、没有匹配、网络失败或保存失败都不会改动原歌词。
+每个候选、预览标题、下载完成状态和当前会话的歌词面板标题都会显示来源标签：服务名
+之后的 `auto` 表示自动主搜索命中，`fallback` 表示标题或备用服务回退命中，`manual`
+表示使用手工查询，`manual fallback` 表示手工查询通过备用服务命中。历史 project 没有
+保存过该元数据时，不会猜测旧歌词的在线来源。
+可显式启用网易云音乐作为备用源。启用后每次在线搜索都会同时查询 LRCLIB 和网易云，
+即使 LRCLIB 已有可用结果也会继续取得备用候选，方便通过预览选择更匹配的版本。结果按
+主来源在前、备用来源在后排列并标注来源；一个来源出错不会丢弃其他来源已经返回的候选。
 查询优先使用音频文件内的歌名、歌手和时长标签；没有 title、artist 和 album 标签时，
 K3 不会尝试拆分 `歌名 - 歌手` 等不可靠的文件名格式，而是把 project 标题作为自由
 搜索文本交给来源。对于网易云返回的模糊搜索候选，候选歌名和至少一位歌手必须同时
