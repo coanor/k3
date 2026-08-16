@@ -210,31 +210,57 @@ fn source_identity(path: &Path) -> Option<(std::ffi::OsString, u64)> {
 
 /// 创建一个 project，并通过配置好的 worker 完成分离。
 ///
-/// project 目录一旦存在便拒绝覆盖；失败状态会写回 project.json 供界面展示。
+/// 新歌曲创建 project；同名已有 project 则保留其他内容并覆盖分离结果。
 pub fn import_and_separate(
     config: &LibraryConfig,
     source: &Path,
 ) -> Result<PathBuf, Box<dyn Error>> {
-    let repository = FileProjectRepository;
     let project_root = project_path_for_source(&config.projects_root, source);
-    if project_root.exists()
-        && repository
-            .open(&project_root)
-            .is_ok_and(|project| matches!(project.separation(), SeparationState::Failed { .. }))
-    {
-        archive_failed_project(&config.projects_root, &project_root)?;
+    separate_into_project(config, source, &project_root)
+}
+
+/// 使用当前配置重新分离已有 project，同时保留其歌词、take 和其他文件。
+pub fn reseparate(
+    config: &LibraryConfig,
+    source: &Path,
+    project_root: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if !project_root.exists() {
+        return Err(format!("project no longer exists: {}", project_root.display()).into());
     }
+    separate_into_project(config, source, project_root)
+}
+
+fn separate_into_project(
+    config: &LibraryConfig,
+    source: &Path,
+    project_root: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let repository = FileProjectRepository;
+    let replacing = project_root.exists();
     let title = source
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("Untitled")
         .to_owned();
-    let mut project = repository.create(CreateProject {
-        root: project_root.clone(),
-        song: source.to_path_buf(),
-        lyrics: None,
-        title: Some(title),
-    })?;
+    let mut project = if replacing {
+        let project = repository.open(project_root)?;
+        if source_identity(source) != source_identity(&project.source_path()) {
+            return Err(format!(
+                "source does not match existing project: {}",
+                project_root.display()
+            )
+            .into());
+        }
+        project
+    } else {
+        repository.create(CreateProject {
+            root: project_root.to_path_buf(),
+            song: source.to_path_buf(),
+            lyrics: None,
+            title: Some(title),
+        })?
+    };
     let separator = PythonStemSeparator::new(PythonSeparatorConfig {
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
@@ -247,28 +273,42 @@ pub fn import_and_separate(
                 Ok(directory.join("separate.log"))
             })?,
         model_id: config.separation.model.clone(),
-        overwrite: false,
+        overwrite: replacing,
         segment_size: config.separation.segment_size,
         autocast: config.separation.autocast,
         preserve_backing_vocals: config.separation.preserve_backing_vocals,
     });
-    let result = SongPreparation::new(separator).prepare(&mut project, config.separation.profile);
-    repository.save(&project)?;
-    if let Err(error) = result {
-        return match archive_failed_project(&config.projects_root, &project_root) {
-            Ok(archived) => Err(format!(
-                "{error}; failed project archived at {}; fix the configuration and retry",
-                archived.display()
-            )
-            .into()),
-            Err(archive_error) => Err(format!(
-                "{error}; failed to archive project {}: {archive_error}",
-                project_root.display()
-            )
-            .into()),
-        };
+    let mut preparation = SongPreparation::new(separator);
+    let result = if replacing {
+        preparation.reprepare(&mut project, config.separation.profile)
+    } else {
+        preparation.prepare(&mut project, config.separation.profile)
+    };
+    if result.is_ok() {
+        repository.save(&project)?;
+        return Ok(project_root.to_path_buf());
     }
-    Ok(project_root)
+    let error = result.unwrap_err();
+    if replacing {
+        return Err(format!(
+            "{error}; existing project and stems were preserved: {}",
+            project_root.display()
+        )
+        .into());
+    }
+    repository.save(&project)?;
+    match archive_failed_project(&config.projects_root, project_root) {
+        Ok(archived) => Err(format!(
+            "{error}; failed project archived at {}; fix the configuration and retry",
+            archived.display()
+        )
+        .into()),
+        Err(archive_error) => Err(format!(
+            "{error}; failed to archive project {}: {archive_error}",
+            project_root.display()
+        )
+        .into()),
+    }
 }
 
 fn archive_failed_project(
@@ -344,7 +384,7 @@ const fn default_auto_download() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryConfig, import_and_separate, scan};
+    use super::{LibraryConfig, import_and_separate, reseparate, scan};
     use k3_core::{FileProjectRepository, ProjectRepository, SeparationState, VocalEffectPreset};
     use std::fs;
 
@@ -474,6 +514,100 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
 
     #[cfg(unix)]
     #[test]
+    fn reseparation_overwrites_stems_but_preserves_the_existing_project() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let song = music.join("song.wav");
+        fs::write(&song, b"audio").unwrap();
+        let worker = sandbox.path().join("worker");
+        let write_worker = |vocals: &str, fail: bool| {
+            let response = if fail {
+                r#"print(json.dumps({"id": r["id"], "ok": False, "error": {
+  "code": "forced_failure", "message": "new configuration failed"}}))"#
+                    .to_owned()
+            } else {
+                format!(
+                    r#"out = pathlib.Path(r["params"]["output_dir"])
+out.mkdir(parents=True, exist_ok=True)
+v, b, a = out / "vocals.wav", out / "backing-vocals.wav", out / "accompaniment.wav"
+v.write_bytes({vocals:?}.encode())
+b.write_bytes(b"backing")
+a.write_bytes(b"music")
+model = r["params"].get("model_id") or "default-model"
+print(json.dumps({{"id": r["id"], "ok": True, "result": {{
+  "vocals": str(v), "backing_vocals": str(b), "accompaniment": str(a), "provenance": {{
+    "provider": "fake", "architecture": "mdx-net",
+    "checkpoint_id": model, "checkpoint_sha256": "a" * 64,
+    "profile": r["params"]["profile"], "backing_vocals_model": {{
+      "provider": "fake", "architecture": "mdx-net",
+      "checkpoint_id": "uvr-mdx-karaoke-2", "checkpoint_sha256": "b" * 64}}}}}}}}))"#
+                )
+            };
+            fs::write(
+                &worker,
+                format!("#!/usr/bin/env python3\nimport json, pathlib, sys\nr = json.loads(sys.stdin.readline())\n{response}\n"),
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&worker).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&worker, permissions).unwrap();
+        };
+        write_worker("voice-v1", false);
+        let mut config: LibraryConfig = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {
+                "worker": worker,
+                "log_dir": sandbox.path().join("logs"),
+                "profile": "fast",
+                "model": "model-v1"
+            }
+        }))
+        .unwrap();
+        let project_path = import_and_separate(&config, &song).unwrap();
+        let original = FileProjectRepository.open(&project_path).unwrap();
+        fs::write(project_path.join("takes/keep.wav"), b"keep").unwrap();
+
+        write_worker("voice-v2", false);
+        config.separation.model = Some("model-v2".into());
+        reseparate(&config, &song, &project_path).unwrap();
+        let replaced = FileProjectRepository.open(&project_path).unwrap();
+
+        assert_eq!(original.id(), replaced.id());
+        assert_eq!(
+            fs::read(project_path.join("stems/vocals.wav")).unwrap(),
+            b"voice-v2"
+        );
+        assert_eq!(
+            fs::read(project_path.join("takes/keep.wav")).unwrap(),
+            b"keep"
+        );
+        let SeparationState::Ready(manifest) = replaced.separation() else {
+            panic!("expected ready separation")
+        };
+        assert_eq!(manifest.provenance.checkpoint_id, "model-v2");
+
+        write_worker("unused", true);
+        let error = reseparate(&config, &song, &project_path)
+            .unwrap_err()
+            .to_string();
+        let preserved = FileProjectRepository.open(&project_path).unwrap();
+        assert!(error.contains("existing project and stems were preserved"));
+        assert!(matches!(preserved.separation(), SeparationState::Ready(_)));
+        assert_eq!(
+            fs::read(project_path.join("stems/vocals.wav")).unwrap(),
+            b"voice-v2"
+        );
+        assert!(project_path.join("takes/keep.wav").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn failed_import_is_archived_hidden_and_retryable() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -541,7 +675,8 @@ print(json.dumps({"id": r["id"], "ok": False, "error": {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(retry_error.contains("测试分离失败"));
-        assert!(!projects.join("失败歌曲").exists());
-        assert_eq!(retry_archived.len(), 2);
+        assert!(retry_error.contains("existing project and stems were preserved"));
+        assert!(projects.join("失败歌曲/project.json").is_file());
+        assert!(retry_archived.is_empty());
     }
 }

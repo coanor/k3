@@ -107,8 +107,8 @@ for input_arg in "${input_args[@]}"; do
         exit 1
     fi
     seen_projects["$project_name"]=1
-    if [[ -e "$project_dir" ]]; then
-        echo "k3-separate: project already exists: $project_dir" >&2
+    if [[ -e "$project_dir" && ! -f "$project_dir/project.json" ]]; then
+        echo "k3-separate: destination exists but is not a project: $project_dir" >&2
         exit 1
     fi
 
@@ -168,14 +168,20 @@ for index in "${!input_paths[@]}"; do
     project_name="${project_names[$index]}"
     project_dir="${project_dirs[$index]}"
 
-    echo "k3-separate: creating project for $input_path" >&2
-    if ! "$k3_bin" new \
-        --root "$project_dir" \
-        --song "$input_path" \
-        --title "$project_name"; then
-        echo "k3-separate: failed to create project: $project_dir" >&2
-        failures=$((failures + 1))
-        continue
+    replacing=0
+    if [[ -f "$project_dir/project.json" ]]; then
+        replacing=1
+        echo "k3-separate: re-separating existing project with current settings: $project_dir" >&2
+    else
+        echo "k3-separate: creating project for $input_path" >&2
+        if ! "$k3_bin" new \
+            --root "$project_dir" \
+            --song "$input_path" \
+            --title "$project_name"; then
+            echo "k3-separate: failed to create project: $project_dir" >&2
+            failures=$((failures + 1))
+            continue
+        fi
     fi
 
     separate_args=(
@@ -184,6 +190,9 @@ for index in "${!input_paths[@]}"; do
         --profile "$profile"
         --worker "$script_path"
     )
+    if [[ $replacing -eq 1 ]]; then
+        separate_args+=(--overwrite)
+    fi
     if [[ -n "$model_id" ]]; then
         separate_args+=(--model "$model_id")
     fi

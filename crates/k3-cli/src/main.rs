@@ -13,8 +13,8 @@ use std::{error::Error, path::PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
-    CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationProfile,
-    SongPreparation,
+    CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationFailure,
+    SeparationProfile, SongPreparation,
 };
 
 use crate::lyrics_download::{LyricsDownload, download_missing_lyrics};
@@ -199,7 +199,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 preserve_backing_vocals: !no_preserve_backing_vocals,
             });
             let mut preparation = SongPreparation::new(separator);
-            let result = preparation.prepare(&mut project, profile.into());
+            let result = prepare_project(&mut preparation, &mut project, profile.into(), overwrite);
             repository.save(&project)?;
             result?;
             print_summary(&project);
@@ -252,6 +252,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn prepare_project(
+    preparation: &mut SongPreparation<PythonStemSeparator>,
+    project: &mut Project,
+    profile: SeparationProfile,
+    overwrite: bool,
+) -> Result<(), SeparationFailure> {
+    if overwrite {
+        preparation.reprepare(project, profile)
+    } else {
+        preparation.prepare(project, profile)
+    }
 }
 
 fn open_library_tui(

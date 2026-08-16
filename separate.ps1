@@ -150,8 +150,9 @@ foreach ($file in $Files) {
         throw "多个输入会映射到同一个 project：$name"
     }
     $project = Join-Path $projectsRoot $name
-    if (Test-Path -LiteralPath $project) {
-        throw "project 已存在：$project"
+    if ((Test-Path -LiteralPath $project) -and
+        -not (Test-Path -LiteralPath (Join-Path $project "project.json") -PathType Leaf)) {
+        throw "目标目录已存在但不是有效 project：$project"
     }
     $inputs += $resolved
     $projects += $project
@@ -161,10 +162,18 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
     $input = $inputs[$index]
     $project = $projects[$index]
     $title = [IO.Path]::GetFileNameWithoutExtension($input)
-    Write-Host "正在创建 project：$title"
-    Invoke-K3 -Arguments @("new", "--root", $project, "--song", $input, "--title", $title)
+    $replacing = Test-Path -LiteralPath (Join-Path $project "project.json") -PathType Leaf
+    if ($replacing) {
+        Write-Host "正在按当前配置重新分离：$title"
+    } else {
+        Write-Host "正在创建 project：$title"
+        Invoke-K3 -Arguments @("new", "--root", $project, "--song", $input, "--title", $title)
+    }
 
     $arguments = @("separate", "--project", $project, "--profile", $profile, "--worker", $worker)
+    if ($replacing) {
+        $arguments += "--overwrite"
+    }
     if (-not [string]::IsNullOrWhiteSpace($model)) {
         $arguments += @("--model", $model)
     }

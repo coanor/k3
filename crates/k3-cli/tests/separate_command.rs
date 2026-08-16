@@ -8,18 +8,7 @@ use k3_core::{
 
 #[test]
 fn separate_command_runs_worker_and_persists_ready_project() {
-    let sandbox = tempfile::tempdir().unwrap();
-    let source = sandbox.path().join("song.wav");
-    fs::write(&source, b"source audio").unwrap();
-    let project_root = sandbox.path().join("project");
-    FileProjectRepository
-        .create(CreateProject {
-            root: project_root.clone(),
-            song: source,
-            lyrics: None,
-            title: Some("Worker integration".into()),
-        })
-        .unwrap();
+    let (sandbox, project_root) = project_fixture("Worker integration");
 
     let worker = sandbox.path().join("fake-worker");
     fs::write(
@@ -113,6 +102,8 @@ print(json.dumps({
     assert_eq!(request["params"]["options"]["segment_size"], 128);
     assert_eq!(request["params"]["options"]["autocast"], true);
     assert_eq!(request["params"]["preserve_backing_vocals"], true);
+
+    assert_overwrite_rerun(&project_root, &worker, &log_dir);
 }
 
 #[test]
@@ -204,6 +195,57 @@ fn make_executable(path: &std::path::Path) {
     let mut permissions = fs::metadata(path).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).unwrap();
+}
+
+fn project_fixture(title: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join("song.wav");
+    fs::write(&source, b"source audio").unwrap();
+    let project_root = sandbox.path().join("project");
+    FileProjectRepository
+        .create(CreateProject {
+            root: project_root.clone(),
+            song: source,
+            lyrics: None,
+            title: Some(title.into()),
+        })
+        .unwrap();
+    (sandbox, project_root)
+}
+
+fn assert_overwrite_rerun(
+    project_root: &std::path::Path,
+    worker: &std::path::Path,
+    log_dir: &std::path::Path,
+) {
+    let rerun = Command::new(env!("CARGO_BIN_EXE_k3"))
+        .env("K3_LOG_DIR", log_dir)
+        .args([
+            "separate",
+            "--project",
+            project_root.to_str().unwrap(),
+            "--profile",
+            "quality",
+            "--model",
+            "replacement-model",
+            "--worker",
+            worker.to_str().unwrap(),
+            "--overwrite",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        rerun.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    let replaced = FileProjectRepository.open(project_root).unwrap();
+    let SeparationState::Ready(manifest) = replaced.separation() else {
+        panic!("expected replaced separation state")
+    };
+    assert_eq!(manifest.provenance.checkpoint_id, "replacement-model");
+    let request = read_json(&project_root.join("stems/request.json"));
+    assert_eq!(request["params"]["overwrite"], true);
 }
 
 fn read_json(path: &std::path::Path) -> serde_json::Value {

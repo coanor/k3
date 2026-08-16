@@ -67,6 +67,47 @@ impl<S: StemSeparator> SongPreparation<S> {
             }
         }
     }
+
+    /// Runs separation again while preserving the previous ready state on failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the worker failure or an invalid-manifest error. A running project
+    /// cannot be restarted, and a failed retry restores the state observed before
+    /// the retry began.
+    pub fn reprepare(
+        &mut self,
+        project: &mut Project,
+        profile: SeparationProfile,
+    ) -> Result<(), SeparationFailure> {
+        if matches!(project.separation(), SeparationState::Running) {
+            return Err(SeparationFailure::InvalidState(
+                "cannot restart a running separation".into(),
+            ));
+        }
+        if matches!(project.separation(), SeparationState::NotRequested) {
+            return self.prepare(project, profile);
+        }
+        let previous = project.separation().clone();
+        project.set_separation(SeparationState::Running);
+        let result = self
+            .separator
+            .separate(&project.source_path(), profile)
+            .and_then(|manifest| {
+                validate_manifest(&manifest)?;
+                Ok(manifest)
+            });
+        match result {
+            Ok(manifest) => {
+                project.set_separation(SeparationState::Ready(manifest));
+                Ok(())
+            }
+            Err(error) => {
+                project.set_separation(previous);
+                Err(error)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

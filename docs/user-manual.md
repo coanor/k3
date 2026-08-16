@@ -154,7 +154,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 `K3_PROFILE`、`K3_MODEL`、`K3_MODEL_DIR`、`K3_SEGMENT_SIZE`、
 `K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。默认保留和声，
 因此输出包含 `vocals.wav`、`backing-vocals.wav` 和含和声的
-`accompaniment.wav`。
+`accompaniment.wav`。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖
+stem，但保留歌词、take、效果和其他 project 文件。
 
 ### 3.2 三栏媒体库配置
 
@@ -168,17 +169,21 @@ target/release/k3 tui --config ~/.config/k3/config.json
 
 界面左栏列出 `projects_root` 下的 project，右栏递归扫描 `music_root` 中的音频。
 媒体库启动时不会自动打开或播放任何 project；需要在左栏选择后按 `Enter` 打开。
-按 `Tab` 或 `Shift+Tab` 切换焦点；左栏按 `Enter` 打开 project，右栏按
-`Enter` 创建同名 project 并在后台分离。一个 K3 进程同时只运行一个分离任务。
+按 `Tab` 或 `Shift+Tab` 切换焦点；左栏按 `Enter` 打开 project。右栏未导入的
+歌曲按 `Enter` 或 `s` 创建同名 project 并在后台分离；已导入的歌曲按 `Enter`
+打开，按 `s` 则使用当前配置重新分离并覆盖 stem。重新分离不会删除歌词、take、
+效果或其他 project 文件；若该 project 正在录音，需要先停止或取消录音。
+一个 K3 进程同时只运行一个分离任务。
 分离期间可以继续在右栏选择其他歌曲并按 `Enter`，任务会按加入顺序自动排队；重复
 选择同一首不会重复入队。右栏用旋转的 `⠋` 表示正在处理、`◷` 表示排队等待、`+`
 表示尚未加入任务、`✓` 表示已经存在可用 project。当前任务成功或失败后都会继续
 处理下一首。分离完成只刷新并选中左栏中的新 project，不会自动打开或播放，因而
 不会打断当前歌曲的播放或录音。左右栏长名称换行时，滚动位置按换行后的实际行数
 计算，确保当前选中项及其高亮始终留在视口中。
-分离失败时，右栏底部会持续显示红色错误信息；失败的 project 会移到
+首次分离失败时，右栏底部会持续显示红色错误信息；失败的 project 会移到
 `projects_root/.failed/` 归档，不会加入左栏，对应源文件仍可在右栏按 `Enter`
-重试。启动时扫描到的旧失败 project 也不会显示在左栏，并会在下次重试前归档。
+重试。已有 project 重新分离失败时，原有状态与 stem 会保留，不会归档整个
+project。启动时扫描到的旧失败 project 也不会显示在左栏。
 目录改名不会让右栏重复导入：K3 会用 project 中的源文件名和文件大小识别已导入
 歌曲。配置中的分离参数与 `separate.sh`、`separate.ps1` 对应如下：
 
@@ -323,7 +328,8 @@ mel-band-roformer-kim-vocal-2
 - `--model-dir <PATH>`：设置模型缓存目录；
 - `--worker <PATH>`：指定 Python worker；
 - `--no-preserve-backing-vocals`：关闭默认的二次分离，不再把和声混回伴奏；
-- `--overwrite`：允许 worker 覆盖已经存在的 stem 文件。
+- `--overwrite`：按当前参数重新分离 ready/failed project，并覆盖已有 stem；失败时
+  保留重新分离前的 project 状态与正式 stem。
 
 ### 5.3 保留和声模式
 
@@ -345,15 +351,15 @@ provenance 不完整时，worker 都不会提交半套正式 stem。该模式会
 `K3_PRESERVE_BACKING_VOCALS` 环境变量设为 `false` 也可关闭。旧配置缺少该字段时
 同样按 `true` 处理。
 
-当前工程状态只允许：
+首次分离的状态转换为：
 
 ```text
 not requested -> running -> ready/failed
 ```
 
-已经进入 `ready` 或 `failed` 的工程不能再次执行分离。当前版本尚无 reset
-命令，因此 `--overwrite` 主要用于工程仍为 `not requested`、但 stem 文件已
-存在的恢复场景。若要比较另一模型，请新建一个工程。
+已经进入 `ready` 或 `failed` 的工程可使用 `--overwrite` 重新分离。媒体库右栏按
+`s`，或再次运行 `separate.sh` / `separate.ps1`，都会自动使用该模式，无需删除
+project。成功后 provenance 更新为新模型和参数；失败时仍保留上一次可用结果。
 
 ## 6. 分离结果
 

@@ -1,7 +1,9 @@
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from k3_separator.errors import WorkerError
 from k3_separator.models import ModelRegistry
@@ -107,13 +109,16 @@ class SeparationServiceTests(unittest.TestCase):
             root = Path(directory)
             source = root / "song.wav"
             source.write_bytes(b"source")
+            stems = root / "stems"
+            stems.mkdir()
+            (stems / "backing-vocals.wav").write_bytes(b"stale backing")
 
             result = self.service.handle(
                 {
                     "method": "separate",
                     "params": {
                         "input_path": str(source),
-                        "output_dir": str(root / "stems"),
+                        "output_dir": str(stems),
                         "profile": "quality",
                         "preserve_backing_vocals": False,
                     },
@@ -123,6 +128,7 @@ class SeparationServiceTests(unittest.TestCase):
             self.assertEqual(b"vocals", Path(result["vocals"]).read_bytes())
             self.assertNotIn("backing_vocals", result)
             self.assertNotIn("backing_vocals_model", result["provenance"])
+            self.assertFalse((stems / "backing-vocals.wav").exists())
 
     def test_refuses_to_overwrite_existing_stem(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -145,6 +151,51 @@ class SeparationServiceTests(unittest.TestCase):
                     }
                 )
             self.assertEqual(b"keep", (stems / "vocals.wav").read_bytes())
+
+    def test_overwrite_rolls_back_every_stem_when_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "song.wav"
+            source.write_bytes(b"source")
+            stems = root / "stems"
+            stems.mkdir()
+            previous = {
+                "vocals.wav": b"old vocals",
+                "backing-vocals.wav": b"old backing",
+                "accompaniment.wav": b"old accompaniment",
+            }
+            for name, content in previous.items():
+                (stems / name).write_bytes(content)
+            real_replace = os.replace
+
+            def fail_during_commit(source_path, destination_path):
+                source_path = Path(source_path)
+                if (
+                    source_path.name == "accompaniment.wav"
+                    and source_path.parent.name.startswith(".k3-separate-")
+                ):
+                    raise OSError("simulated commit failure")
+                real_replace(source_path, destination_path)
+
+            with (
+                patch("k3_separator.service.os.replace", side_effect=fail_during_commit),
+                self.assertRaisesRegex(OSError, "simulated commit failure"),
+            ):
+                self.service.handle(
+                    {
+                        "method": "separate",
+                        "params": {
+                            "input_path": str(source),
+                            "output_dir": str(stems),
+                            "profile": "quality",
+                            "model_id": "mel-band-roformer-kim-vocal-2",
+                            "overwrite": True,
+                        },
+                    }
+                )
+
+            for name, content in previous.items():
+                self.assertEqual(content, (stems / name).read_bytes())
 
     def test_missing_second_model_provenance_commits_no_stems(self) -> None:
         class MissingProvenanceRuntime(FakeRuntime):

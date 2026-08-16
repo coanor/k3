@@ -84,6 +84,7 @@ class SeparationService:
 
         scratch = Path(tempfile.mkdtemp(prefix=".k3-separate-", dir=output_dir))
         moved: list[Path] = []
+        backups: dict[Path, Path] = {}
         try:
             result = self._runtime.separate(
                 input_path, scratch, model, options, backing_vocals_model
@@ -109,12 +110,24 @@ class SeparationService:
                 source = sources[name]
                 if not source.is_file() or source.stat().st_size == 0:
                     raise WorkerError("separation_failed", f"missing output: {source}")
+                if destination.exists():
+                    backup = scratch / f"previous-{destination.name}"
+                    os.replace(destination, backup)
+                    backups[destination] = backup
                 os.replace(source, destination)
                 moved.append(destination)
+            if not preserve_backing_vocals:
+                stale_backing = output_dir / "backing-vocals.wav"
+                if stale_backing.exists():
+                    backup = scratch / f"previous-{stale_backing.name}"
+                    os.replace(stale_backing, backup)
+                    backups[stale_backing] = backup
         except Exception:
-            if not overwrite:
-                for path in moved:
-                    path.unlink(missing_ok=True)
+            for path in moved:
+                path.unlink(missing_ok=True)
+            for destination, backup in backups.items():
+                if backup.exists():
+                    os.replace(backup, destination)
             raise
         finally:
             shutil.rmtree(scratch, ignore_errors=True)

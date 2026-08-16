@@ -176,3 +176,34 @@ fn preparation_cannot_restart_a_completed_project() {
     assert!(matches!(error, SeparationFailure::InvalidState(_)));
     assert!(matches!(project.separation(), SeparationState::Ready(_)));
 }
+
+#[test]
+fn repreparation_replaces_a_ready_manifest() {
+    let mut project = support::project_fixture();
+    let mut preparation = SongPreparation::new(SuccessfulSeparator);
+    preparation
+        .prepare(&mut project, SeparationProfile::Quality)
+        .unwrap();
+
+    preparation
+        .reprepare(&mut project, SeparationProfile::Quality)
+        .unwrap();
+
+    assert!(matches!(project.separation(), SeparationState::Ready(_)));
+}
+
+#[test]
+fn failed_repreparation_restores_the_ready_manifest() {
+    let mut project = support::project_fixture();
+    SongPreparation::new(SuccessfulSeparator)
+        .prepare(&mut project, SeparationProfile::Quality)
+        .unwrap();
+    let previous = project.separation().clone();
+
+    let error = SongPreparation::new(FailingSeparator)
+        .reprepare(&mut project, SeparationProfile::Balanced)
+        .unwrap_err();
+
+    assert!(error.to_string().contains("model crashed"));
+    assert_eq!(project.separation(), &previous);
+}

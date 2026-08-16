@@ -30,7 +30,7 @@ use ratatui::{
 
 use crate::{
     audio::AudioPlayer,
-    library::{self, LibraryConfig, LibrarySnapshot},
+    library::{self, LibraryConfig, LibrarySnapshot, SourceEntry},
     lyrics_download::{LyricsDownload, download_missing_lyrics},
     mix::{render_take_mix, render_take_preview},
     recorder::{AudioRecorder, RecordingTimelineAnchor, place_recording_on_timeline},
@@ -66,6 +66,11 @@ struct ImportJob {
     result: Receiver<Result<PathBuf, String>>,
 }
 
+#[derive(Clone)]
+struct SeparationRequest {
+    source: SourceEntry,
+}
+
 struct MediaLibrary {
     config: LibraryConfig,
     snapshot: LibrarySnapshot,
@@ -73,7 +78,7 @@ struct MediaLibrary {
     project_selected: usize,
     source_selected: usize,
     job: Option<ImportJob>,
-    queue: VecDeque<PathBuf>,
+    queue: VecDeque<SeparationRequest>,
     message: Option<String>,
 }
 
@@ -108,16 +113,19 @@ impl MediaLibrary {
             self.message = Some("No importable audio files".into());
             return;
         };
-        if source.imported {
-            self.message = Some("Project already exists; open it from the left panel".into());
-            return;
-        }
-        let path = source.path.clone();
+        let request = SeparationRequest {
+            source: source.clone(),
+        };
+        let path = request.source.path.clone();
         if self.job.as_ref().is_some_and(|job| job.source == path) {
             self.message = Some(format!("Separating: {}", display_name(&path)));
             return;
         }
-        if let Some(position) = self.queue.iter().position(|queued| queued == &path) {
+        if let Some(position) = self
+            .queue
+            .iter()
+            .position(|queued| queued.source.path == path)
+        {
             self.message = Some(format!(
                 "Already queued at position {}: {}",
                 position + 1,
@@ -126,7 +134,7 @@ impl MediaLibrary {
             return;
         }
         if self.job.is_some() {
-            self.queue.push_back(path.clone());
+            self.queue.push_back(request);
             self.message = Some(format!(
                 "Queued at position {}: {}",
                 self.queue.len(),
@@ -134,41 +142,41 @@ impl MediaLibrary {
             ));
             return;
         }
-        self.launch_import(path.clone());
-        self.message = Some(format!(
-            "Creating project and separating: {}",
-            display_name(&path)
-        ));
+        let replacing = request.source.imported;
+        self.launch_import(request);
+        self.message = Some(if replacing {
+            format!("Re-separating and replacing stems: {}", display_name(&path))
+        } else {
+            format!("Creating project and separating: {}", display_name(&path))
+        });
     }
 
-    fn launch_import(&mut self, path: PathBuf) {
-        let worker_source = path.clone();
+    fn launch_import(&mut self, request: SeparationRequest) {
+        let worker_source = request.source.path.clone();
+        let worker_project = request.source.project_path.clone();
+        let replacing = request.source.imported;
         let config = self.config.clone();
         let (sender, result) = mpsc::channel();
         thread::spawn(move || {
-            let outcome = library::import_and_separate(&config, &worker_source)
-                .map_err(|error| error.to_string());
+            let outcome = if replacing {
+                library::reseparate(&config, &worker_source, &worker_project)
+            } else {
+                library::import_and_separate(&config, &worker_source)
+            }
+            .map_err(|error| error.to_string());
             let _ = sender.send(outcome);
         });
         self.job = Some(ImportJob {
-            source: path,
+            source: request.source.path,
             result,
         });
     }
 
     fn start_next_queued(&mut self) -> Option<PathBuf> {
-        while let Some(path) = self.queue.pop_front() {
-            let pending = self
-                .snapshot
-                .sources
-                .iter()
-                .any(|source| source.path == path && !source.imported);
-            if pending {
-                self.launch_import(path.clone());
-                return Some(path);
-            }
-        }
-        None
+        let request = self.queue.pop_front()?;
+        let path = request.source.path.clone();
+        self.launch_import(request);
+        Some(path)
     }
 }
 
@@ -1072,44 +1080,7 @@ fn handle_library_key(
                 }
                 _ => {}
             },
-            LibraryFocus::Sources => match key {
-                KeyCode::Up => {
-                    library.source_selected = library.source_selected.saturating_sub(1);
-                }
-                KeyCode::Down => {
-                    library.source_selected = (library.source_selected + 1)
-                        .min(library.snapshot.sources.len().saturating_sub(1));
-                }
-                KeyCode::Enter | KeyCode::Char('s') => {
-                    if let Some(source) = library.snapshot.sources.get(library.source_selected)
-                        && source.imported
-                    {
-                        if current
-                            .as_ref()
-                            .is_some_and(|app| app.session.state() != RecordingState::Idle)
-                        {
-                            library.message =
-                                Some("Stop or cancel recording before switching projects".into());
-                        } else {
-                            *current =
-                                Some(open_library_project(&library.config, &source.project_path)?);
-                            if let Some(index) = library
-                                .snapshot
-                                .projects
-                                .iter()
-                                .position(|entry| entry.path == source.project_path)
-                            {
-                                library.project_selected = index;
-                            }
-                            library.message =
-                                Some(format!("Opened: {}", source.project_path.display()));
-                        }
-                    } else {
-                        library.start_import();
-                    }
-                }
-                _ => {}
-            },
+            LibraryFocus::Sources => handle_library_source_key(library, current, key)?,
             LibraryFocus::Project => {
                 if let Some(app) = current {
                     return Ok(app.handle_key(key));
@@ -1118,6 +1089,82 @@ fn handle_library_key(
         },
     }
     Ok(false)
+}
+
+fn handle_library_source_key(
+    library: &mut MediaLibrary,
+    current: &mut Option<App>,
+    key: KeyCode,
+) -> Result<(), Box<dyn Error>> {
+    match key {
+        KeyCode::Up => {
+            library.source_selected = library.source_selected.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            library.source_selected =
+                (library.source_selected + 1).min(library.snapshot.sources.len().saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            if let Some(source) = library.snapshot.sources.get(library.source_selected)
+                && source.imported
+            {
+                if current
+                    .as_ref()
+                    .is_some_and(|app| app.session.state() != RecordingState::Idle)
+                {
+                    library.message =
+                        Some("Stop or cancel recording before switching projects".into());
+                } else {
+                    *current = Some(open_library_project(&library.config, &source.project_path)?);
+                    if let Some(index) = library
+                        .snapshot
+                        .projects
+                        .iter()
+                        .position(|entry| entry.path == source.project_path)
+                    {
+                        library.project_selected = index;
+                    }
+                    library.message = Some(format!("Opened: {}", source.project_path.display()));
+                }
+            } else {
+                library.start_import();
+            }
+        }
+        KeyCode::Char('s') => start_source_reseparation(library, current),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn start_source_reseparation(library: &mut MediaLibrary, current: &mut Option<App>) {
+    let selected = library
+        .snapshot
+        .sources
+        .get(library.source_selected)
+        .cloned();
+    let replacing_open = selected.as_ref().is_some_and(|source| {
+        source.imported
+            && current
+                .as_ref()
+                .is_some_and(|app| app.session.project().root() == source.project_path)
+    });
+    if replacing_open
+        && current
+            .as_ref()
+            .is_some_and(|app| app.session.state() != RecordingState::Idle)
+    {
+        library.message = Some("Stop or cancel recording before re-separating".into());
+        return;
+    }
+    if replacing_open {
+        if let Some(app) = current
+            && !app.save_project()
+        {
+            return;
+        }
+        *current = None;
+    }
+    library.start_import();
 }
 
 fn should_handle_key(key: &KeyEvent) -> bool {
@@ -1464,16 +1511,20 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let state = if entry.imported {
-                "✓"
-            } else if library
+            let state = if library
                 .job
                 .as_ref()
                 .is_some_and(|job| job.source == entry.path)
             {
                 separation_spinner_frame()
-            } else if library.queue.iter().any(|path| path == &entry.path) {
+            } else if library
+                .queue
+                .iter()
+                .any(|request| request.source.path == entry.path)
+            {
                 "◷"
+            } else if entry.imported {
+                "✓"
             } else {
                 "+"
             };
@@ -1491,7 +1542,10 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
         list_area.height,
     );
     let title = if library.focus == LibraryFocus::Sources {
-        format!("▶ Music · Enter separate · queued {}", library.queue.len())
+        format!(
+            "▶ Music · Enter open/separate · s re-separate · queued {}",
+            library.queue.len()
+        )
     } else {
         format!("Music · queued {}", library.queue.len())
     };
@@ -1843,9 +1897,9 @@ impl Drop for TerminalGuard {
 mod tests {
     use super::{
         FooterAction, ImportJob, LyricCountdown, MediaLibrary, PlaybackState, PlaybackTrack,
-        TrackKind, effect_preset_for_key, format_duration, load_lyrics, lyric_countdown,
-        lyric_seek_target, lyric_window, mode_allows_footer_action, poll_import_job,
-        should_handle_key,
+        TrackKind, effect_preset_for_key, format_duration, handle_library_source_key, load_lyrics,
+        lyric_countdown, lyric_seek_target, lyric_window, mode_allows_footer_action,
+        poll_import_job, should_handle_key,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use k3_core::{
@@ -1897,6 +1951,7 @@ mod tests {
         let mut library = MediaLibrary::new(config).unwrap();
         let active_source = library.snapshot.sources[0].path.clone();
         let queued_source = library.snapshot.sources[1].path.clone();
+        library.snapshot.sources[1].imported = true;
         let (sender, receiver) = mpsc::channel();
         library.job = Some(ImportJob {
             source: active_source,
@@ -1906,7 +1961,15 @@ mod tests {
         library.source_selected = 1;
         library.start_import();
 
-        assert_eq!(library.queue.iter().collect::<Vec<_>>(), [&queued_source]);
+        assert_eq!(
+            library
+                .queue
+                .iter()
+                .map(|request| &request.source.path)
+                .collect::<Vec<_>>(),
+            [&queued_source]
+        );
+        assert!(library.queue[0].source.imported);
         assert!(library.message.as_deref().unwrap().contains("Queued at"));
         library.start_import();
         assert_eq!(library.queue.len(), 1);
@@ -1930,6 +1993,43 @@ mod tests {
                 .unwrap()
                 .contains("Queue continues")
         );
+    }
+
+    #[test]
+    fn source_s_key_queues_reseparation_for_an_existing_project() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let song = music.join("song.wav");
+        fs::write(&song, b"song").unwrap();
+        FileProjectRepository
+            .create(CreateProject {
+                root: projects.join("song"),
+                song,
+                lyrics: None,
+                title: None,
+            })
+            .unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let (_sender, receiver) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source: sandbox.path().join("active.wav"),
+            result: receiver,
+        });
+
+        handle_library_source_key(&mut library, &mut None, KeyCode::Char('s')).unwrap();
+
+        assert_eq!(library.queue.len(), 1);
+        assert!(library.queue[0].source.imported);
+        assert!(library.message.as_deref().unwrap().contains("Queued at"));
     }
 
     #[test]
