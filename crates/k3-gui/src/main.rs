@@ -11,7 +11,7 @@ use std::{
 
 use k3_app::{
     LoadedProject, PlaybackCommand, PlaybackService, PlaybackSnapshot, PlaybackStatus,
-    ProjectLibrary, ProjectSummary, RodioBackend, TrackKind,
+    ProjectLibrary, ProjectSummary, RodioBackend, TrackKind, lyric_countdown,
 };
 use k3_gui::{
     logging::DiagnosticLog,
@@ -730,6 +730,8 @@ fn apply_loaded_project(ui: &K3Window, project: &LoadedProject) {
         .unwrap_or_default();
     ui.set_lyrics(ModelRc::new(VecModel::from(lyrics)));
     ui.set_active_lyric(-1);
+    ui.set_lyric_countdown_index(-1);
+    ui.set_lyric_countdown_dots(0);
     ui.set_lyric_scroll_y(0.0);
     ui.set_follow_lyrics(true);
 }
@@ -781,6 +783,16 @@ fn apply_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
         .and_then(|lyrics| lyrics.active_index(snapshot.position, 0))
         .and_then(|index| i32::try_from(index).ok())
         .unwrap_or(-1);
+    let countdown = snapshot
+        .lyrics
+        .as_ref()
+        .and_then(|lyrics| lyric_countdown(lyrics, snapshot.position));
+    ui.set_lyric_countdown_index(
+        countdown
+            .and_then(|countdown| i32::try_from(countdown.index).ok())
+            .unwrap_or(-1),
+    );
+    ui.set_lyric_countdown_dots(countdown.map_or(0, |countdown| i32::from(countdown.seconds)));
     ui.set_active_lyric(active);
     if ui.get_follow_lyrics() && active >= 0 {
         let active = f32::from(i16::try_from(active).unwrap_or(i16::MAX));

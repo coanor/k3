@@ -130,19 +130,28 @@ GUI 的用户可见文字首期全部使用英文。文案集中管理，不散�
 │ Search       │ Song title · track state             │
 │              │                                      │
 │ Projects     │          synchronized lyrics         │
-│              │        current line / light band     │
+│              │       current line / entry mark      │
 │              │                                      │
 ├──────────────┴──────────────────────────────────────┤
-│ track · key     playback / timeline       volume    │
+│ stem              transport          key · volume   │
 └─────────────────────────────────────────────────────┘
 ```
 
-视觉采用克制的深色演唱台风格。中央当前歌词形成横向“声场光带”，作为唯一强记忆点；
-侧栏和控制区保持安静、精确。不得简单复制 TUI，也不得堆叠通用 dashboard 卡片。
+视觉采用克制的“排练室监听屏”方向：歌词区域使用近黑舞台，当前待唱行使用柔和舞台黄
+和一条同色短入句线；已经唱过的行明显退暗，后续歌词保持中性灰白。当前行只通过字号、
+亮度和入句线建立层级，不使用卡片或大面积背景；侧栏和控制区继续使用深靛蓝，保持安静、
+精确。不得简单复制 TUI，也不得堆叠通用 dashboard 卡片或通用霓虹播放器渐变。
 
-正式界面直接使用 Slint，并建立仅覆盖实际需求的小型 K3 组件集：Button、IconButton、
-Slider、SidebarRow、Tooltip、ErrorBanner 和 LyricsRow。颜色、排版、间距、圆角和状态
-来自统一 design tokens。
+排版分为两个明确角色：Source Han Sans CN 负责歌曲、歌词和界面正文，系统等宽字体负责
+时间码、区块标签、调号与数值。底部按真实任务分为 Stem、Transport、Key / Volume，
+而不是平铺一排同权按钮。界面不依赖装饰动画；键盘焦点和禁用状态必须保持清晰。
+
+正式界面直接使用 Slint，并建立仅覆盖实际需求的小型 K3 组件集：ActionButton、
+PlayButton、TrackPill、SectionLabel 和歌词行。颜色、排版、间距、圆角和状态来自统一
+design tokens。仅 Refresh、Retry、Reload、Folder 和 Restart 等具有通用图形语义的动作
+使用居中的矢量图标，不显示重复文字，但必须保留 accessible label。按钮默认不显示描边，
+只通过 hover、键盘焦点和按下状态的背景变化提供反馈。时间跳转、调号和确认类操作不得
+为了视觉一致性强行改成纯图标。
 
 发行包捆绑开放许可的 UI 字体和完整 CJK fallback，并包含字体许可证，避免精简 Linux
 系统缺少中文字形。
@@ -150,7 +159,15 @@ Slider、SidebarRow、Tooltip、ErrorBanner 和 LyricsRow。颜色、排版、�
 ## 9. 歌词交互
 
 歌词流自动跟随播放位置，当前行位于主视觉区域，前后歌词逐级减弱。点击带时间戳的歌词
-立即跳转。用户手动滚动后暂时解除自动跟随，并显示 `Return to current lyric` 操作。
+立即跳转并恢复自动跟随。用户手动滚动后暂时解除自动跟随，在歌词标题栏显示
+`Follow current line` 操作，不得悬浮遮挡歌词。
+
+歌词区不常驻显示“点击歌词可跳转”等教学文案。可发现的直接操作由界面反馈和用户探索
+完成，避免提示噪音抢占歌词注意力。
+
+下一句进入最后三秒时，在该行上方显示三个舞台黄提示点，并按秒从右向左逐个熄灭；
+相邻歌词不足一秒时不显示，避免快速歌词持续闪烁。倒计时规则由 `k3-app` 共享，TUI
+可将同一数值呈现为数字，GUI 只负责点状视觉。
 
 没有同步歌词时显示 `No synced lyrics`，播放功能保持可用。首期不提供任何歌词修改或
 联网获取能力。
@@ -166,8 +183,8 @@ Slider、SidebarRow、Tooltip、ErrorBanner 和 LyricsRow。颜色、排版、�
 - `Ctrl/Cmd+F`：聚焦搜索；
 - `Ctrl/Cmd+R`：刷新工程库。
 
-输入框聚焦时不得触发单键播放命令。所有图标按钮必须有英文名称、tooltip 和清晰的焦点
-样式。Tab、Enter、Space 和方向键应遵循桌面控件习惯。
+输入框聚焦时不得触发单键播放命令。所有图标按钮必须有英文 accessible label 和清晰的
+焦点样式；不依赖常驻文字说明。Tab、Enter、Space 和方向键应遵循桌面控件习惯。
 
 ## 11. 错误、日志与隐私
 

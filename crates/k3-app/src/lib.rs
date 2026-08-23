@@ -33,6 +33,13 @@ pub struct LyricWindow {
     pub current: Option<usize>,
 }
 
+/// A short cue for the next lyric line, capped at three seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LyricCountdown {
+    pub index: usize,
+    pub seconds: u8,
+}
+
 /// Keeps a small amount of lyric history while reserving most rows for upcoming lines.
 #[must_use]
 pub fn lyric_window(
@@ -56,6 +63,31 @@ pub fn lyric_window(
         range: start..end,
         current,
     }
+}
+
+/// Returns a visual countdown during the final three seconds before the next lyric.
+///
+/// Intervals shorter than one second are ignored so rapid lyrics do not flicker continuously.
+#[must_use]
+pub fn lyric_countdown(timeline: &LyricsTimeline, position: Duration) -> Option<LyricCountdown> {
+    let next = timeline.lines().partition_point(|line| line.at <= position);
+    let next_line = timeline.lines().get(next)?;
+    let interval_start = next
+        .checked_sub(1)
+        .map_or(Duration::ZERO, |index| timeline.lines()[index].at);
+    if next_line.at.saturating_sub(interval_start) < Duration::from_secs(1) {
+        return None;
+    }
+
+    let remaining = next_line.at.saturating_sub(position);
+    if remaining.is_zero() || remaining > Duration::from_secs(3) {
+        return None;
+    }
+    let seconds = remaining.as_nanos().div_ceil(1_000_000_000);
+    Some(LyricCountdown {
+        index: next,
+        seconds: u8::try_from(seconds).ok()?,
+    })
 }
 
 /// A project row ready for presentation by any K3 frontend.

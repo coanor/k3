@@ -1,4 +1,4 @@
-import { AboutSlint, Button, LineEdit, ListView, Slider } from "std-widgets.slint";
+import { AboutSlint, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export struct ProjectItem {
@@ -15,23 +15,126 @@ export struct LyricItem {
 }
 
 global Tokens {
-    out property <color> ink: #f4efe7;
-    out property <color> muted: #807e83;
-    out property <color> faint: #4e4c52;
-    out property <color> canvas: #0b0c0f;
-    out property <color> panel: #111318;
-    out property <color> raised: #181b21;
-    out property <color> line: #292c34;
-    out property <color> amber: #f4a94e;
-    out property <color> amber-soft: #4b3521;
-    out property <color> danger: #ff857d;
+    // A rehearsal room, not a generic media player: indigo walls, paper lyrics,
+    // and one coral cue mark where the singer should enter.
+    out property <color> ink: #f4efe6;
+    out property <color> muted: #9f9caf;
+    out property <color> faint: #66657a;
+    out property <color> canvas: #15162b;
+    out property <color> stage: #0b0c14;
+    out property <color> panel: #1f2139;
+    out property <color> raised: #292b47;
+    out property <color> line: #393b58;
+    out property <color> cue: #ff776d;
+    out property <color> lyric-current: #ffd66b;
+    out property <color> lyric-upcoming: #a9a7b5;
+    out property <color> lyric-played: #414255;
+    out property <color> paper: #f4efe6;
+    out property <color> paper-ink: #242337;
+    out property <color> danger: #ff8c85;
 }
 
 component SectionLabel inherits Text {
     color: Tokens.muted;
+    font-family: "monospace";
     font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1.6px;
+    font-weight: 700;
+    letter-spacing: 1.3px;
+}
+
+component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <string> accessible-name: label;
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    callback clicked;
+
+    height: 36px;
+    min-width: 36px;
+    border-radius: root.primary ? 18px : 5px;
+    background: !root.enabled ? (root.primary ? Tokens.raised : transparent) : root.primary ? Tokens.cue : action-touch.has-hover || action-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.accessible-name;
+    accessible-enabled: root.enabled;
+
+    if root.icon.width > 0 && root.icon.height > 0: Image {
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        image-fit: contain;
+        colorize: !root.enabled ? Tokens.muted : root.primary ? Tokens.paper-ink : Tokens.ink;
+    }
+    if root.icon.width == 0 || root.icon.height == 0: Text {
+        text: root.label;
+        color: !root.enabled ? Tokens.muted : root.primary ? Tokens.paper-ink : Tokens.ink;
+        font-size: 12px;
+        font-weight: root.primary ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    action-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    action-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+component PlayButton inherits Rectangle {
+    in property <bool> playing;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    width: 54px;
+    height: 54px;
+    border-radius: 27px;
+    background: !root.enabled ? Tokens.raised : play-focus.has-focus ? Tokens.lyric-current : Tokens.paper;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.playing ? "Pause" : "Play";
+    accessible-enabled: root.enabled;
+
+    Text {
+        text: root.playing ? "Ⅱ" : "▶";
+        color: Tokens.paper-ink;
+        font-size: root.playing ? 20px : 18px;
+        font-weight: 700;
+        x: root.playing ? 0px : 2px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    play-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    play-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
 }
 
 component TrackPill inherits Rectangle {
@@ -42,10 +145,9 @@ component TrackPill inherits Rectangle {
     callback selected;
 
     height: 34px;
-    border-radius: 17px;
-    background: active ? Tokens.amber-soft : transparent;
-    border-width: active ? 1px : 0px;
-    border-color: Tokens.amber;
+    border-radius: 5px;
+    background: active ? Tokens.paper : track-touch.has-hover || track-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
     opacity: enabled ? 1 : 0.35;
     accessible-role: button;
     accessible-label: label;
@@ -54,19 +156,19 @@ component TrackPill inherits Rectangle {
 
     Text {
         text: root.label;
-        color: root.active ? Tokens.amber : Tokens.muted;
+        color: root.active ? Tokens.paper-ink : Tokens.muted;
         font-size: 12px;
-        font-weight: 600;
+        font-weight: root.active ? 700 : 500;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
 
-    touch := TouchArea {
+    track-touch := TouchArea {
         enabled: root.enabled;
         clicked => { root.selected(); }
     }
 
-    fs := FocusScope {
+    track-focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
             if (event.text == Key.Return || event.text == " ") {
@@ -79,6 +181,7 @@ component TrackPill inherits Rectangle {
 }
 
 export component K3Window inherits Window {
+    init => { Palette.color-scheme = ColorScheme.dark; }
     title: "K3 — Karaoke stage";
     background: Tokens.canvas;
     default-font-family: "Source Han Sans CN";
@@ -119,6 +222,8 @@ export component K3Window inherits Window {
     in property <bool> accompaniment-available: false;
     in property <bool> vocals-available: false;
     in property <int> active-lyric: -1;
+    in property <int> lyric-countdown-index: -1;
+    in property <int> lyric-countdown-dots: 0;
 
     callback choose-projects-root;
     callback save-projects-root(string);
@@ -177,61 +282,98 @@ export component K3Window inherits Window {
     if root.setup-mode: Rectangle {
         background: Tokens.canvas;
 
-        VerticalLayout {
-            width: 560px;
-            height: 390px;
+        Rectangle {
+            width: 640px;
+            height: 430px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            spacing: 22px;
-            alignment: center;
+            border-radius: 8px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
 
-            Text {
-                text: "K3";
-                color: Tokens.amber;
-                font-size: 18px;
-                font-weight: 800;
-                letter-spacing: 4px;
-                horizontal-alignment: center;
+            Rectangle {
+                width: 6px;
+                x: 0px;
+                y: 48px;
+                height: parent.height - 96px;
+                background: Tokens.cue;
             }
-            Text {
-                text: "Where do your projects live?";
-                color: Tokens.ink;
-                font-size: 32px;
-                font-weight: 500;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: "K3 will scan this folder for existing project.json files.\nYou can change it later without changing TUI settings.";
-                color: Tokens.muted;
-                font-size: 14px;
-                horizontal-alignment: center;
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                LineEdit {
-                    text <=> root.projects-root;
-                    placeholder-text: "/path/to/k3-projects";
+
+            VerticalLayout {
+                padding-left: 58px;
+                padding-right: 52px;
+                padding-top: 42px;
+                padding-bottom: 38px;
+                spacing: 20px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    Text {
+                        text: "K3";
+                        color: Tokens.cue;
+                        font-size: 18px;
+                        font-weight: 800;
+                        letter-spacing: 4px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    SectionLabel {
+                        text: "REHEARSAL ROOM";
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: "Find your songbook";
+                    color: Tokens.ink;
+                    font-size: 34px;
+                    font-weight: 650;
+                }
+                Text {
+                    text: "Choose the folder that contains your K3 projects.\nGUI preferences stay separate from the terminal interface.";
+                    color: Tokens.muted;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    LineEdit {
+                        text <=> root.projects-root;
+                        placeholder-text: "/path/to/k3-projects";
+                        height: 42px;
+                    }
+                    ActionButton {
+                        width: 42px;
+                        height: 42px;
+                        accessible-name: "Browse for projects folder";
+                        icon: @image-url("../assets/folder.svg");
+                        clicked => { root.choose-projects-root(); }
+                    }
+                }
+                if root.has-error: Text {
+                    text: root.error-message;
+                    color: Tokens.danger;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
                     height: 42px;
+                    ActionButton {
+                        width: 42px;
+                        accessible-name: "About K3";
+                        icon: @image-url("../assets/info.svg");
+                        clicked => { root.show-about = true; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 142px;
+                        height: 42px;
+                        label: root.loading ? "Checking…" : "Open songbook";
+                        primary: true;
+                        enabled: !root.loading && root.projects-root != "";
+                        clicked => { root.save-projects-root(root.projects-root); }
+                    }
                 }
-                Button {
-                    text: "Browse…";
-                    clicked => { root.choose-projects-root(); }
-                }
-            }
-            Button {
-                text: root.loading ? "Checking folder…" : "Open stage";
-                enabled: !root.loading && root.projects-root != "";
-                clicked => { root.save-projects-root(root.projects-root); }
-            }
-            if root.has-error: Text {
-                text: root.error-message;
-                color: Tokens.danger;
-                font-size: 12px;
-                horizontal-alignment: center;
-            }
-            Button {
-                text: "About Slint";
-                clicked => { root.show-about = true; }
             }
         }
     }
@@ -243,7 +385,7 @@ export component K3Window inherits Window {
             spacing: 0px;
 
             Rectangle {
-                width: 292px;
+                width: 304px;
                 background: Tokens.panel;
                 border-width: 0px;
 
@@ -252,18 +394,29 @@ export component K3Window inherits Window {
                     spacing: 16px;
 
                     HorizontalLayout {
-                        height: 32px;
-                        Text {
-                            text: "K3";
-                            color: Tokens.amber;
-                            font-size: 16px;
-                            font-weight: 800;
-                            letter-spacing: 3px;
-                            vertical-alignment: center;
+                        height: 42px;
+                        VerticalLayout {
+                            spacing: 1px;
+                            Text {
+                                text: "K3";
+                                color: Tokens.cue;
+                                font-size: 17px;
+                                font-weight: 800;
+                                letter-spacing: 3px;
+                            }
+                            Text {
+                                text: "KARAOKE REHEARSAL";
+                                color: Tokens.faint;
+                                font-family: "monospace";
+                                font-size: 8px;
+                                letter-spacing: 1.2px;
+                            }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        Button {
-                            text: "About";
+                        ActionButton {
+                            width: 36px;
+                            accessible-name: "About K3";
+                            icon: @image-url("../assets/info.svg");
                             clicked => { root.show-about = true; }
                         }
                     }
@@ -280,8 +433,11 @@ export component K3Window inherits Window {
                         height: 24px;
                         SectionLabel { text: "PROJECTS"; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
-                        Button {
-                            text: "Refresh";
+                        ActionButton {
+                            width: 28px;
+                            height: 28px;
+                            accessible-name: "Refresh projects";
+                            icon: @image-url("../assets/refresh.svg");
                             clicked => { root.refresh-library(); }
                         }
                     }
@@ -290,10 +446,10 @@ export component K3Window inherits Window {
                         vertical-stretch: 1;
                         for project[index] in root.projects: project-row := Rectangle {
                             height: 68px;
-                            border-radius: 8px;
-                            background: project.selected ? Tokens.raised : project-touch.has-hover ? #15171c : transparent;
+                            border-radius: 5px;
+                            background: project.selected ? Tokens.raised : project-touch.has-hover ? #252742 : transparent;
                             border-width: project.selected || project-focus.has-focus ? 1px : 0px;
-                            border-color: project-focus.has-focus ? Tokens.amber : Tokens.line;
+                            border-color: project-focus.has-focus ? Tokens.cue : Tokens.line;
                             accessible-role: list-item;
                             accessible-label: project.title;
 
@@ -305,7 +461,7 @@ export component K3Window inherits Window {
                                 spacing: 3px;
                                 Text {
                                     text: project.title;
-                                    color: project.selected ? Tokens.ink : #c8c5c2;
+                                    color: project.selected ? Tokens.ink : #cbc7d2;
                                     font-size: 14px;
                                     font-weight: project.selected ? 600 : 400;
                                     overflow: elide;
@@ -342,59 +498,76 @@ export component K3Window inherits Window {
                         font-size: 10px;
                         overflow: elide;
                     }
-                    Button {
-                        text: "Change folder";
-                        clicked => {
-                            if (root.playing) { root.confirm-root-change = true; }
-                            else { root.setup-mode = true; }
+                    HorizontalLayout {
+                        height: 36px;
+                        ActionButton {
+                            width: 36px;
+                            accessible-name: "Change projects folder";
+                            icon: @image-url("../assets/folder.svg");
+                            clicked => {
+                                if (root.playing) { root.confirm-root-change = true; }
+                                else { root.setup-mode = true; }
+                            }
                         }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
 
             Rectangle {
                 horizontal-stretch: 1;
-                background: Tokens.canvas;
+                background: Tokens.stage;
 
                 VerticalLayout {
-                    padding-left: 48px;
-                    padding-right: 48px;
-                    padding-top: 28px;
-                    padding-bottom: 18px;
-                    spacing: 16px;
+                    padding-left: 44px;
+                    padding-right: 44px;
+                    padding-top: 24px;
+                    padding-bottom: 16px;
+                    spacing: 14px;
 
                     HorizontalLayout {
-                        height: 54px;
+                        height: 62px;
                         VerticalLayout {
-                            spacing: 4px;
+                            spacing: 5px;
+                            SectionLabel {
+                                text: root.playback-ready ? "NOW REHEARSING" : "READY ROOM";
+                                color: root.playback-ready ? Tokens.cue : Tokens.faint;
+                            }
                             Text {
                                 text: root.song-title;
                                 color: Tokens.ink;
-                                font-size: 22px;
-                                font-weight: 600;
+                                font-size: 24px;
+                                font-weight: 650;
                                 overflow: elide;
-                            }
-                            Text {
-                                text: root.project-state;
-                                color: root.has-error ? Tokens.danger : Tokens.muted;
-                                font-size: 12px;
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        Text {
-                            text: root.playback-ready ? "LIVE PROJECT" : "STANDBY";
-                            color: root.playback-ready ? Tokens.amber : Tokens.faint;
-                            font-size: 11px;
-                            font-weight: 700;
-                            letter-spacing: 1.5px;
-                            vertical-alignment: center;
+                        VerticalLayout {
+                            width: 220px;
+                            spacing: 4px;
+                            alignment: center;
+                            Text {
+                                text: root.project-state;
+                                color: root.has-error ? Tokens.danger : Tokens.muted;
+                                font-size: 11px;
+                                horizontal-alignment: right;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: root.playback-ready ? root.format-time(root.position-seconds) + " / " + root.format-time(root.duration-seconds) : "WAITING FOR A SONG";
+                                color: root.playback-ready ? Tokens.ink : Tokens.faint;
+                                font-family: "monospace";
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: right;
+                            }
                         }
                     }
 
                     if root.has-error: Rectangle {
                         height: 44px;
-                        border-radius: 7px;
-                        background: #291b1d;
+                        border-radius: 5px;
+                        background: #3d2534;
                         border-width: 1px;
                         border-color: #5a2d31;
                         HorizontalLayout {
@@ -409,8 +582,11 @@ export component K3Window inherits Window {
                                 horizontal-stretch: 1;
                                 overflow: elide;
                             }
-                            if root.playback-error-visible: Button {
-                                text: "Retry";
+                            if root.playback-error-visible: ActionButton {
+                                width: 32px;
+                                height: 32px;
+                                accessible-name: "Retry playback";
+                                icon: @image-url("../assets/refresh.svg");
                                 clicked => { root.playback-command("retry"); }
                             }
                         }
@@ -418,26 +594,44 @@ export component K3Window inherits Window {
 
                     if root.project-changed: Rectangle {
                         height: 44px;
-                        border-radius: 7px;
-                        background: #2b2418;
+                        border-radius: 5px;
+                        background: #343044;
                         border-width: 1px;
-                        border-color: #5d4728;
+                        border-color: #6c6370;
                         HorizontalLayout {
                             padding-left: 14px;
                             padding-right: 8px;
                             spacing: 10px;
                             Text {
                                 text: "This project changed on disk. Reload to use the latest version.";
-                                color: Tokens.amber;
+                                color: Tokens.ink;
                                 font-size: 12px;
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
                                 overflow: elide;
                             }
-                            Button {
-                                text: "Reload";
+                            ActionButton {
+                                width: 32px;
+                                height: 32px;
+                                accessible-name: "Reload project";
+                                icon: @image-url("../assets/refresh.svg");
                                 clicked => { root.open-project(root.current-project-id); }
                             }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        height: 22px;
+                        SectionLabel {
+                            text: "LYRIC CUE";
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if !root.follow-lyrics && root.lyrics.length > 0: ActionButton {
+                            width: 142px;
+                            height: 28px;
+                            label: "Follow current line";
+                            clicked => { root.follow-lyrics = true; }
                         }
                     }
 
@@ -445,41 +639,96 @@ export component K3Window inherits Window {
                         vertical-stretch: 1;
                         background: transparent;
 
-                        if root.lyrics.length == 0: Text {
-                            text: root.playback-ready ? "No synced lyrics" : "Select a project to begin";
-                            color: Tokens.faint;
-                            font-size: 20px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        if root.lyrics.length == 0: VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Text {
+                                text: root.playback-ready ? "Instrumental rehearsal" : "Choose a song from the left";
+                                color: Tokens.muted;
+                                font-size: 22px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.playback-ready ? "This project has no synced lyrics." : "Its lyrics and playback controls will appear here.";
+                                color: Tokens.faint;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                            }
                         }
 
                         if root.lyrics.length > 0: lyrics-list := ListView {
                             viewport-y <=> root.lyric-scroll-y;
                             scrolled => { root.follow-lyrics = false; }
-                            for lyric[index] in root.lyrics: Rectangle {
+                            for lyric[index] in root.lyrics: lyric-row := Rectangle {
+                                property <int> cue-index: max(0, root.active-lyric);
+                                property <bool> current: index == self.cue-index;
+                                property <bool> played: index < self.cue-index;
+                                property <bool> countdown: index == root.lyric-countdown-index && root.lyric-countdown-dots > 0;
+
                                 height: 64px;
-                                border-radius: 8px;
-                                background: index == root.active-lyric ? @linear-gradient(90deg, transparent, #302419 20%, #49321f 50%, #302419 80%, transparent) : transparent;
+                                background: transparent;
+
+                                if lyric-row.current: Rectangle {
+                                    x: (parent.width - self.width) / 2;
+                                    y: parent.height - 5px;
+                                    width: 42px;
+                                    height: 3px;
+                                    border-radius: 2px;
+                                    background: Tokens.lyric-current;
+                                }
+                                if lyric-row.countdown: Rectangle {
+                                    x: (parent.width - self.width) / 2;
+                                    y: 3px;
+                                    width: 36px;
+                                    height: 6px;
+                                    background: transparent;
+
+                                    Rectangle {
+                                        x: 0px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                    }
+                                    Rectangle {
+                                        x: 15px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                        opacity: root.lyric-countdown-dots >= 2 ? 1 : 0.16;
+                                    }
+                                    Rectangle {
+                                        x: 30px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                        opacity: root.lyric-countdown-dots >= 3 ? 1 : 0.16;
+                                    }
+                                }
                                 Text {
+                                    x: 18px;
+                                    y: lyric-row.countdown ? 8px : 0px;
+                                    width: parent.width - 36px;
+                                    height: parent.height - (lyric-row.countdown ? 8px : 0px);
                                     text: lyric.text;
-                                    color: index == root.active-lyric ? Tokens.ink : abs(index - root.active-lyric) <= 1 ? #8d8986 : #4b494d;
-                                    font-size: index == root.active-lyric ? 25px : 17px;
-                                    font-weight: index == root.active-lyric ? 600 : 400;
+                                    color: lyric-row.current ? Tokens.lyric-current : lyric-row.played ? Tokens.lyric-played : Tokens.lyric-upcoming;
+                                    font-size: lyric-row.current ? 28px : 16px;
+                                    font-weight: lyric-row.current ? 700 : 400;
+                                    letter-spacing: lyric-row.current ? 0.4px : 0px;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 TouchArea {
-                                    clicked => { root.seek-lyric(lyric.at-seconds); }
+                                    clicked => {
+                                        root.follow-lyrics = true;
+                                        root.seek-lyric(lyric.at-seconds);
+                                    }
                                 }
                             }
-                        }
-
-                        if !root.follow-lyrics && root.lyrics.length > 0: Button {
-                            text: "Return to current lyric";
-                            x: (parent.width - self.width) / 2;
-                            y: parent.height - self.height - 8px;
-                            clicked => { root.follow-lyrics = true; }
                         }
                     }
                 }
@@ -487,17 +736,17 @@ export component K3Window inherits Window {
         }
 
         Rectangle {
-            height: 154px;
+            height: 168px;
             background: Tokens.panel;
             border-width: 1px;
             border-color: Tokens.line;
 
             VerticalLayout {
-                padding-left: 28px;
-                padding-right: 28px;
-                padding-top: 16px;
-                padding-bottom: 16px;
-                spacing: 13px;
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 14px;
+                padding-bottom: 14px;
+                spacing: 10px;
 
                 HorizontalLayout {
                     spacing: 12px;
@@ -505,6 +754,7 @@ export component K3Window inherits Window {
                         width: 46px;
                         text: root.format-time(root.position-seconds);
                         color: Tokens.muted;
+                        font-family: "monospace";
                         font-size: 11px;
                         vertical-alignment: center;
                     }
@@ -519,6 +769,7 @@ export component K3Window inherits Window {
                         width: 46px;
                         text: root.format-time(root.duration-seconds);
                         color: Tokens.muted;
+                        font-family: "monospace";
                         font-size: 11px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -528,104 +779,133 @@ export component K3Window inherits Window {
                 HorizontalLayout {
                     spacing: 18px;
 
-                    HorizontalLayout {
-                        width: 310px;
-                        spacing: 6px;
-                        TrackPill {
-                            width: 92px;
-                            label: "Original";
-                            unavailable-reason: "Original audio is unavailable";
-                            active: root.active-track == 0;
-                            enabled: root.original-available && !root.switching-track;
-                            selected => { root.switch-track(0); }
-                        }
-                        TrackPill {
-                            width: 110px;
-                            label: "Backing";
-                            unavailable-reason: "Backing track is unavailable";
-                            active: root.active-track == 1;
-                            enabled: root.accompaniment-available && !root.switching-track;
-                            selected => { root.switch-track(1); }
-                        }
-                        TrackPill {
-                            width: 88px;
-                            label: "Vocals";
-                            unavailable-reason: "Vocal track is unavailable";
-                            active: root.active-track == 2;
-                            enabled: root.vocals-available && !root.switching-track;
-                            selected => { root.switch-track(2); }
-                        }
-                    }
-
-                    Rectangle { horizontal-stretch: 1; }
-
-                    HorizontalLayout {
-                        width: 300px;
-                        spacing: 8px;
-                        Button {
-                            text: "−5";
-                            enabled: root.playback-ready;
-                            clicked => { root.playback-command("back"); }
-                        }
-                        Button {
-                            text: root.playing ? "Pause" : "Play";
-                            enabled: root.playback-ready;
-                            clicked => { root.playback-command("toggle"); }
-                        }
-                        Button {
-                            text: "Restart";
-                            enabled: root.playback-ready;
-                            clicked => { root.playback-command("restart"); }
-                        }
-                        Button {
-                            text: "+5";
-                            enabled: root.playback-ready;
-                            clicked => { root.playback-command("forward"); }
+                    VerticalLayout {
+                        width: 284px;
+                        spacing: 7px;
+                        SectionLabel { text: root.switching-track ? "STEM · SWITCHING" : "STEM"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            TrackPill {
+                                width: 82px;
+                                label: "Original";
+                                unavailable-reason: "Original audio is unavailable";
+                                active: root.active-track == 0;
+                                enabled: root.original-available && !root.switching-track;
+                                selected => { root.switch-track(0); }
+                            }
+                            TrackPill {
+                                width: 102px;
+                                label: "Backing";
+                                unavailable-reason: "Backing track is unavailable";
+                                active: root.active-track == 1;
+                                enabled: root.accompaniment-available && !root.switching-track;
+                                selected => { root.switch-track(1); }
+                            }
+                            TrackPill {
+                                width: 82px;
+                                label: "Vocals";
+                                unavailable-reason: "Vocal track is unavailable";
+                                active: root.active-track == 2;
+                                enabled: root.vocals-available && !root.switching-track;
+                                selected => { root.switch-track(2); }
+                            }
                         }
                     }
 
                     Rectangle { horizontal-stretch: 1; }
 
-                    HorizontalLayout {
-                        width: 318px;
-                        spacing: 9px;
-                        Button {
-                            text: "Key −";
-                            enabled: root.playback-ready && root.key-shift > -6;
-                            clicked => { root.set-key(root.key-shift - 1); }
-                        }
-                        Text {
-                            width: 38px;
-                            text: root.key-shift > 0 ? "+" + root.key-shift : root.key-shift;
-                            color: Tokens.ink;
-                            font-size: 13px;
+                    VerticalLayout {
+                        width: 280px;
+                        spacing: 3px;
+                        SectionLabel {
+                            text: root.playing ? "PLAYING" : "TRANSPORT";
+                            color: root.playing ? Tokens.cue : Tokens.muted;
                             horizontal-alignment: center;
-                            vertical-alignment: center;
                         }
-                        Button {
-                            text: "Key +";
-                            enabled: root.playback-ready && root.key-shift < 6;
-                            clicked => { root.set-key(root.key-shift + 1); }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
+                            ActionButton {
+                                width: 52px;
+                                label: "−5s";
+                                enabled: root.playback-ready;
+                                clicked => { root.playback-command("back"); }
+                            }
+                            PlayButton {
+                                playing: root.playing;
+                                enabled: root.playback-ready;
+                                clicked => { root.playback-command("toggle"); }
+                            }
+                            ActionButton {
+                                width: 52px;
+                                label: "+5s";
+                                enabled: root.playback-ready;
+                                clicked => { root.playback-command("forward"); }
+                            }
+                            ActionButton {
+                                width: 42px;
+                                accessible-name: "Restart playback";
+                                icon: @image-url("../assets/restart.svg");
+                                enabled: root.playback-ready;
+                                clicked => { root.playback-command("restart"); }
+                            }
                         }
-                        Button {
-                            text: "Reset";
-                            enabled: root.playback-ready && root.key-shift != 0;
-                            clicked => { root.set-key(0); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    VerticalLayout {
+                        width: 300px;
+                        spacing: 7px;
+                        HorizontalLayout {
+                            SectionLabel { text: "KEY"; }
+                            Rectangle { horizontal-stretch: 1; }
+                            SectionLabel { text: "VOLUME  " + round(root.volume * 100) + "%"; }
                         }
-                        Text {
-                            text: "VOL";
-                            color: Tokens.faint;
-                            font-size: 10px;
-                            vertical-alignment: center;
-                        }
-                        Slider {
-                            width: 88px;
-                            minimum: 0;
-                            maximum: 1;
-                            step: 0.01;
-                            value: root.volume;
-                            changed(value) => { root.set-volume(value); }
-                            released(value) => { root.save-volume(value); }
+                        HorizontalLayout {
+                            spacing: 7px;
+                            ActionButton {
+                                width: 42px;
+                                label: "−";
+                                enabled: root.playback-ready && root.key-shift > -6;
+                                clicked => { root.set-key(root.key-shift - 1); }
+                            }
+                            Rectangle {
+                                width: 44px;
+                                height: 36px;
+                                border-radius: 5px;
+                                background: Tokens.canvas;
+                                Text {
+                                    text: root.key-shift > 0 ? "+" + root.key-shift : root.key-shift;
+                                    color: Tokens.ink;
+                                    font-family: "monospace";
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            ActionButton {
+                                width: 42px;
+                                label: "+";
+                                enabled: root.playback-ready && root.key-shift < 6;
+                                clicked => { root.set-key(root.key-shift + 1); }
+                            }
+                            ActionButton {
+                                width: 54px;
+                                label: "Reset";
+                                enabled: root.playback-ready && root.key-shift != 0;
+                                clicked => { root.set-key(0); }
+                            }
+                            Slider {
+                                width: 90px;
+                                minimum: 0;
+                                maximum: 1;
+                                step: 0.01;
+                                value: root.volume;
+                                changed(value) => { root.set-volume(value); }
+                                released(value) => { root.save-volume(value); }
+                            }
                         }
                     }
                 }
@@ -634,14 +914,14 @@ export component K3Window inherits Window {
     }
 
     if root.show-about: Rectangle {
-        background: #0b0c0fee;
+        background: #15162bee;
         TouchArea { clicked => { root.show-about = false; } }
         Rectangle {
             width: 430px;
             height: 310px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            border-radius: 12px;
+            border-radius: 8px;
             background: Tokens.raised;
             border-width: 1px;
             border-color: Tokens.line;
@@ -650,10 +930,10 @@ export component K3Window inherits Window {
                 padding: 24px;
                 spacing: 12px;
                 Text {
-                    text: "K3 GUI";
+                    text: "K3 · Rehearsal room";
                     color: Tokens.ink;
                     font-size: 22px;
-                    font-weight: 600;
+                    font-weight: 650;
                     horizontal-alignment: center;
                 }
                 AboutSlint { vertical-stretch: 1; }
@@ -664,8 +944,8 @@ export component K3Window inherits Window {
                     horizontal-alignment: center;
                     overflow: elide;
                 }
-                Button {
-                    text: "Close";
+                ActionButton {
+                    label: "Close";
                     clicked => { root.show-about = false; }
                 }
             }
@@ -673,13 +953,13 @@ export component K3Window inherits Window {
     }
 
     if root.confirm-root-change: Rectangle {
-        background: #0b0c0fee;
+        background: #15162bee;
         Rectangle {
             width: 440px;
             height: 210px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            border-radius: 12px;
+            border-radius: 8px;
             background: Tokens.raised;
             border-width: 1px;
             border-color: Tokens.line;
@@ -702,12 +982,13 @@ export component K3Window inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 12px;
-                    Button {
-                        text: "Cancel";
+                    ActionButton {
+                        label: "Cancel";
                         clicked => { root.confirm-root-change = false; }
                     }
-                    Button {
-                        text: "Change folder";
+                    ActionButton {
+                        label: "Change folder";
+                        primary: true;
                         clicked => {
                             root.confirm-root-change = false;
                             root.setup-mode = true;

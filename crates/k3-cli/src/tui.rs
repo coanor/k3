@@ -14,7 +14,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use k3_app::lyric_window;
+use k3_app::{lyric_countdown, lyric_window};
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
     RecordingSession, RecordingState, SeparationState, Take, VocalEffectPreset,
@@ -2256,36 +2256,6 @@ fn lyric_seek_target(
     lines.get(next).map(|line| line.at)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LyricCountdown {
-    index: usize,
-    seconds: u8,
-}
-
-/// 返回下一句歌词进入前三秒内的视觉倒计时。
-///
-/// 相邻歌词不足一秒时不提示，避免快速歌词持续闪烁。
-fn lyric_countdown(timeline: &LyricsTimeline, position: Duration) -> Option<LyricCountdown> {
-    let next = timeline.lines().partition_point(|line| line.at <= position);
-    let next_line = timeline.lines().get(next)?;
-    let interval_start = next
-        .checked_sub(1)
-        .map_or(Duration::ZERO, |index| timeline.lines()[index].at);
-    if next_line.at.saturating_sub(interval_start) < Duration::from_secs(1) {
-        return None;
-    }
-
-    let remaining = next_line.at.saturating_sub(position);
-    if remaining.is_zero() || remaining > Duration::from_secs(3) {
-        return None;
-    }
-    let seconds = remaining.as_nanos().div_ceil(1_000_000_000);
-    Some(LyricCountdown {
-        index: next,
-        seconds: u8::try_from(seconds).expect("three-second countdown fits in u8"),
-    })
-}
-
 struct RecordingPaths {
     id: String,
     dry_relative_path: String,
@@ -2403,14 +2373,14 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, FooterAction, ImportJob, LyricCountdown, LyricsPicker, LyricsQueryEditor,
-        MediaLibrary, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
-        fit_source_name, format_duration, handle_library_source_key, load_lyrics, lyric_countdown,
-        lyric_seek_target, lyric_window, mode_allows_footer_action, poll_import_job,
-        should_handle_key,
+        App, FooterAction, ImportJob, LyricsPicker, LyricsQueryEditor, MediaLibrary, PlaybackState,
+        PlaybackTrack, TrackKind, effect_preset_for_key, fit_source_name, format_duration,
+        handle_library_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
+        mode_allows_footer_action, poll_import_job, should_handle_key,
     };
     use crate::lyrics_download::LyricsChoice;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use k3_app::LyricCountdown;
     use k3_core::{
         CreateProject, FileProjectRepository, LyricsTimeline, ProjectRepository, RecordingState,
         VocalEffectPreset,
