@@ -9,8 +9,15 @@ use std::{
 
 const NETEASE_BASE_URL: &str = "https://music.163.com";
 const NETEASE_USER_AGENT: &str = "Mozilla/5.0 (K3 experimental NetEase source)";
+const NETEASE_WEAPI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/3.0.12.2443";
+const NETEASE_WEAPI_COOKIE_CONTEXT: &str = "channel=appstore; ntes_kaola_ad=1; WEVNSM=1.0; \
+appver=3.0.12; os=osx; osver=15.3.2; mode=MacBookPro16,1; _iuqxldmzr_=33; \
+__remember_me=true";
 
 use serde::{Deserialize, Serialize};
+
+mod weapi;
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeteaseError {
@@ -474,7 +481,7 @@ impl NeteaseClient {
             .session_store
             .load()?
             .ok_or(NeteaseError::LoginRequired)?;
-        let Some(source) = self.select_audio_source(&session.cookie, song.id)? else {
+        let Some(source) = self.select_audio_source(&session.cookie, song)? else {
             return Ok(DownloadOutcome::Unavailable {
                 song_id: song.id,
                 reason: "no downloadable quality is available".into(),
@@ -504,10 +511,13 @@ impl NeteaseClient {
     fn select_audio_source(
         &self,
         cookie: &str,
-        song_id: u64,
+        song: &Song,
     ) -> Result<Option<AudioSource>, NeteaseError> {
-        for quality in Quality::HIGHEST_FIRST {
-            let source = retry_transient(|| self.provider.audio_source(cookie, song_id, quality))?;
+        for quality in Quality::HIGHEST_FIRST
+            .into_iter()
+            .filter(|quality| *quality <= song.max_quality)
+        {
+            let source = retry_transient(|| self.provider.audio_source(cookie, song.id, quality))?;
             if source.is_some() {
                 return Ok(source);
             }
@@ -678,15 +688,23 @@ fn commit_download(
 
 struct WebNeteaseProvider {
     agent: ureq::Agent,
+    base_url: String,
 }
 
 impl WebNeteaseProvider {
     fn new() -> Self {
+        Self::at_base_url(NETEASE_BASE_URL)
+    }
+
+    fn at_base_url(base_url: impl Into<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .build()
             .into();
-        Self { agent }
+        Self {
+            agent,
+            base_url: base_url.into(),
+        }
     }
 }
 
@@ -806,14 +824,21 @@ struct WebAlbum {
 struct WebAudioQuality {}
 
 #[derive(Deserialize)]
-struct PlayerUrlResponse {
+struct DownloadUrlResponse {
     code: i32,
-    #[serde(default)]
-    data: Vec<WebAudioSource>,
+    data: Option<WebAudioSource>,
+}
+
+#[derive(Serialize)]
+struct DownloadUrlRequest<'a> {
+    id: &'a str,
+    br: &'a str,
 }
 
 #[derive(Deserialize)]
 struct WebAudioSource {
+    #[serde(default)]
+    code: i32,
     url: Option<String>,
     #[serde(rename = "type")]
     extension: Option<String>,
@@ -1013,20 +1038,30 @@ impl NeteaseProvider for WebNeteaseProvider {
         quality: Quality,
     ) -> Result<Option<AudioSource>, NeteaseError> {
         let song_id_text = song_id.to_string();
-        let ids = format!("[{song_id}]");
-        let mut response = self
+        let bitrate = quality.download_bitrate().to_string();
+        let encrypted = weapi::encrypt(&DownloadUrlRequest {
+            id: &song_id_text,
+            br: &bitrate,
+        })
+        .map_err(|error| {
+            NeteaseError::Protocol(format!("cannot encrypt WEAPI request: {error}"))
+        })?;
+        let mut request = self
             .agent
-            .get(format!("{NETEASE_BASE_URL}/api/song/enhance/player/url/v1"))
-            .header("User-Agent", NETEASE_USER_AGENT)
+            .post(format!("{}/weapi/song/enhance/download/url", self.base_url))
+            .header("User-Agent", NETEASE_WEAPI_USER_AGENT)
             .header("Referer", NETEASE_BASE_URL)
-            .header("Cookie", cookie)
-            .query("id", &song_id_text)
-            .query("ids", &ids)
-            .query("level", quality.as_level())
-            .query("encodeType", quality.encode_type())
-            .call()
+            .header("Cookie", weapi_cookie_header(cookie));
+        if let Some(csrf) = cookie_header_value(cookie, "__csrf") {
+            request = request.query("csrf_token", csrf);
+        }
+        let mut response = request
+            .send_form([
+                ("params", encrypted.params.as_str()),
+                ("encSecKey", encrypted.enc_sec_key.as_str()),
+            ])
             .map_err(http_error)?;
-        let body: PlayerUrlResponse = response.body_mut().read_json().map_err(body_error)?;
+        let body: DownloadUrlResponse = response.body_mut().read_json().map_err(body_error)?;
         if body.code == 301 {
             return Err(NeteaseError::LoginRequired);
         }
@@ -1036,9 +1071,12 @@ impl NeteaseProvider for WebNeteaseProvider {
                 body.code
             )));
         }
-        let Some(audio) = body.data.into_iter().next() else {
+        let Some(audio) = body.data else {
             return Ok(None);
         };
+        if !matches!(audio.code, 0 | 200) {
+            return Ok(None);
+        }
         let Some(url) = audio.url else {
             return Ok(None);
         };
@@ -1115,6 +1153,27 @@ impl NeteaseProvider for WebNeteaseProvider {
         file.sync_all()?;
         Ok(downloaded)
     }
+}
+
+fn cookie_header_value<'a>(cookie: &'a str, name: &str) -> Option<&'a str> {
+    cookie.split(';').find_map(|part| {
+        let (candidate, value) = part.trim().split_once('=')?;
+        (candidate == name).then_some(value)
+    })
+}
+
+fn weapi_cookie_header(cookie: &str) -> String {
+    let mut header = cookie.trim().trim_end_matches(';').to_owned();
+    for default in NETEASE_WEAPI_COOKIE_CONTEXT.split(';').map(str::trim) {
+        let name = default.split_once('=').map_or(default, |(name, _)| name);
+        if cookie_header_value(cookie, name).is_none() {
+            if !header.is_empty() {
+                header.push_str("; ");
+            }
+            header.push_str(default);
+        }
+    }
+    header
 }
 
 impl WebNeteaseProvider {
@@ -1260,10 +1319,13 @@ impl Quality {
         }
     }
 
-    const fn encode_type(self) -> &'static str {
+    const fn download_bitrate(self) -> u64 {
         match self {
-            Self::Standard | Self::Higher | Self::ExHigh => "mp3",
-            Self::Lossless | Self::HiRes | Self::Jyeffect | Self::Sky | Self::Jymaster => "flac",
+            Self::Standard => 128_000,
+            Self::Higher => 192_000,
+            Self::ExHigh => 320_000,
+            Self::Lossless => 999_000,
+            Self::HiRes | Self::Jyeffect | Self::Sky | Self::Jymaster => 9_999_999,
         }
     }
 }
@@ -1523,8 +1585,11 @@ mod tests {
     };
     use std::{
         fs,
+        io::{Read, Write},
+        net::TcpListener,
         path::Path,
         sync::{Arc, Mutex},
+        thread,
     };
 
     struct LoginProvider;
@@ -2141,6 +2206,120 @@ mod tests {
             Err(NeteaseError::Protocol(_))
         ));
         assert_eq!(deterministic_attempts, 1);
+    }
+
+    #[test]
+    fn web_provider_uses_the_download_endpoint_with_the_requested_quality_bitrate() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4_096];
+            loop {
+                let count = stream.read(&mut buffer).unwrap();
+                assert!(count > 0, "client closed before sending the request body");
+                request.extend_from_slice(&buffer[..count]);
+                let Some(header_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or_default();
+                if request.len() >= header_end + content_length {
+                    break;
+                }
+            }
+            let body = r#"{"code":200,"data":{"code":200,"url":"https://cdn.example.test/song.flac","type":"flac","size":22961285,"level":"lossless"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        let provider = super::WebNeteaseProvider::at_base_url(base_url);
+
+        let source = provider
+            .audio_source("MUSIC_U=secret", 185_726, Quality::Lossless)
+            .unwrap()
+            .unwrap();
+        let request = server.join().unwrap();
+
+        assert!(request.starts_with("POST /weapi/song/enhance/download/url HTTP/1.1"));
+        assert!(request.contains("content-type: application/x-www-form-urlencoded"));
+        assert!(request.contains("params="));
+        assert!(request.contains("encSecKey="));
+        assert!(!request.contains("id=185726"));
+        assert!(!request.contains("br=999000"));
+        assert!(!request.contains("player/url"));
+        assert_eq!(source.url, "https://cdn.example.test/song.flac");
+        assert_eq!(source.quality, Quality::Lossless);
+        assert_eq!(source.extension, "flac");
+        assert_eq!(source.size, 22_961_285);
+    }
+
+    #[test]
+    fn weapi_cookie_context_preserves_values_from_the_saved_session() {
+        let header =
+            super::weapi_cookie_header("MUSIC_U=secret; __csrf=token; os=pc; appver=9.9.9");
+
+        assert!(header.contains("MUSIC_U=secret"));
+        assert!(header.contains("__csrf=token"));
+        assert!(header.contains("os=pc"));
+        assert!(header.contains("appver=9.9.9"));
+        assert!(!header.contains("os=osx"));
+        assert!(!header.contains("appver=3.0.12"));
+        assert!(header.contains("channel=appstore"));
+        assert!(header.contains("__remember_me=true"));
+    }
+
+    #[test]
+    #[ignore = "contacts the live undocumented NetEase endpoint"]
+    fn live_weapi_download_url_returns_fetchable_media() {
+        let session_path = std::env::var_os("K3_NETEASE_SESSION_PATH")
+            .expect("K3_NETEASE_SESSION_PATH must point to a saved session");
+        let session = SessionStore::at(session_path.into())
+            .load()
+            .unwrap()
+            .expect("the saved session must exist");
+        let provider = super::WebNeteaseProvider::new();
+
+        let source = provider
+            .audio_source(&session.cookie, 301_448, Quality::Lossless)
+            .unwrap()
+            .expect("翩翩飞起 should have a lossless source");
+        let response = provider
+            .agent
+            .get(&source.url)
+            .header("User-Agent", super::NETEASE_USER_AGENT)
+            .header("Referer", super::NETEASE_BASE_URL)
+            .call()
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get("Content-Length")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            source.size
+        );
     }
 
     #[test]

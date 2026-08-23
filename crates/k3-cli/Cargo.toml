@@ -5,11 +5,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aes = "0.8.4"
+base64 = "0.22.1"
+cbc = { version = "0.1.2", features = ["alloc"] }
 clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 hound = "3.5.1"
 lofty = "0.24.0"
+num-bigint = "0.4.8"
+rand = "0.8.7"
 ratatui.workspace = true
 rodio = "0.22.2"
 rodio-wsola = "0.2.0"
