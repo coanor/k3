@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, atomic::AtomicBool},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -235,15 +236,26 @@ fn source_identity(path: &Path) -> Option<(std::ffi::OsString, u64)> {
 /// 创建一个 project，并通过配置好的 worker 完成分离。
 ///
 /// 新歌曲创建 project；同名已有 project 则保留其他内容并覆盖分离结果。
+#[cfg(test)]
 pub fn import_and_separate(
     config: &LibraryConfig,
     source: &Path,
 ) -> Result<PathBuf, Box<dyn Error>> {
     let project_root = project_path_for_source(&config.projects_root, source);
-    separate_into_project(config, source, &project_root)
+    separate_into_project(config, source, &project_root, None)
+}
+
+pub fn import_and_separate_with_cancellation(
+    config: &LibraryConfig,
+    source: &Path,
+    cancellation: Arc<AtomicBool>,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let project_root = project_path_for_source(&config.projects_root, source);
+    separate_into_project(config, source, &project_root, Some(cancellation))
 }
 
 /// 使用当前配置重新分离已有 project，同时保留其歌词、take 和其他文件。
+#[cfg(test)]
 pub fn reseparate(
     config: &LibraryConfig,
     source: &Path,
@@ -252,13 +264,26 @@ pub fn reseparate(
     if !project_root.exists() {
         return Err(format!("project no longer exists: {}", project_root.display()).into());
     }
-    separate_into_project(config, source, project_root)
+    separate_into_project(config, source, project_root, None)
+}
+
+pub fn reseparate_with_cancellation(
+    config: &LibraryConfig,
+    source: &Path,
+    project_root: &Path,
+    cancellation: Arc<AtomicBool>,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if !project_root.exists() {
+        return Err(format!("project no longer exists: {}", project_root.display()).into());
+    }
+    separate_into_project(config, source, project_root, Some(cancellation))
 }
 
 fn separate_into_project(
     config: &LibraryConfig,
     source: &Path,
     project_root: &Path,
+    cancellation: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf, Box<dyn Error>> {
     let repository = FileProjectRepository;
     let replacing = project_root.exists();
@@ -285,7 +310,7 @@ fn separate_into_project(
             title: Some(title),
         })?
     };
-    let separator = PythonStemSeparator::new(PythonSeparatorConfig {
+    let separator_config = PythonSeparatorConfig {
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
         project_root: project.root().to_path_buf(),
@@ -301,7 +326,13 @@ fn separate_into_project(
         segment_size: config.separation.segment_size,
         autocast: config.separation.autocast,
         preserve_backing_vocals: config.separation.preserve_backing_vocals,
-    });
+    };
+    let separator = match cancellation {
+        Some(cancellation) => {
+            PythonStemSeparator::with_cancellation(separator_config, cancellation)
+        }
+        None => PythonStemSeparator::new(separator_config),
+    };
     let mut preparation = SongPreparation::new(separator);
     let result = if replacing {
         preparation.reprepare(&mut project, config.separation.profile)

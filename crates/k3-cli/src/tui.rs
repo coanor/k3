@@ -11,7 +11,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
-    thread,
+    thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -77,6 +77,8 @@ impl LibraryFocus {
 struct ImportJob {
     source: PathBuf,
     result: Receiver<Result<PathBuf, String>>,
+    cancellation: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -467,12 +469,23 @@ impl MediaLibrary {
         let worker_project = request.source.project_path.clone();
         let replacing = request.source.imported;
         let config = self.config.clone();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let worker_cancellation = cancellation.clone();
         let (sender, result) = mpsc::channel();
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             let outcome = if replacing {
-                library::reseparate(&config, &worker_source, &worker_project)
+                library::reseparate_with_cancellation(
+                    &config,
+                    &worker_source,
+                    &worker_project,
+                    worker_cancellation,
+                )
             } else {
-                library::import_and_separate(&config, &worker_source)
+                library::import_and_separate_with_cancellation(
+                    &config,
+                    &worker_source,
+                    worker_cancellation,
+                )
             }
             .map_err(|error| error.to_string());
             let _ = sender.send(outcome);
@@ -480,7 +493,19 @@ impl MediaLibrary {
         self.job = Some(ImportJob {
             source: request.source.path,
             result,
+            cancellation,
+            worker: Some(worker),
         });
+    }
+
+    fn cancel_imports(&mut self) {
+        self.queue.clear();
+        if let Some(mut job) = self.job.take() {
+            job.cancellation.store(true, Ordering::Release);
+            if let Some(worker) = job.worker.take() {
+                let _ = worker.join();
+            }
+        }
     }
 
     fn start_next_queued(&mut self) -> Option<PathBuf> {
@@ -500,6 +525,12 @@ impl MediaLibrary {
         }
         self.queue.push_back(SeparationRequest { source });
         true
+    }
+}
+
+impl Drop for MediaLibrary {
+    fn drop(&mut self) {
+        self.cancel_imports();
     }
 }
 
@@ -1909,7 +1940,11 @@ fn poll_import_job(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>> {
     let Some(outcome) = outcome else {
         return Ok(());
     };
-    library.job = None;
+    if let Some(mut job) = library.job.take()
+        && let Some(worker) = job.worker.take()
+    {
+        let _ = worker.join();
+    }
     library.refresh()?;
     let mut message = match outcome {
         Ok(path) => {
@@ -1939,8 +1974,7 @@ fn handle_library_key(
     key: KeyCode,
 ) -> Result<bool, Box<dyn Error>> {
     if library.confirm_exit {
-        library.confirm_exit = false;
-        return Ok(matches!(key, KeyCode::Char('y' | 'Y')));
+        return Ok(confirm_library_exit(library, current, key));
     }
     if library.music_source == MusicSource::Netease
         && library
@@ -1952,10 +1986,12 @@ fn handle_library_key(
         return Ok(false);
     }
     if key == KeyCode::Char('q')
-        && library
-            .netease
-            .as_ref()
-            .is_some_and(NeteasePanel::active_download)
+        && (library.job.is_some()
+            || !library.queue.is_empty()
+            || library
+                .netease
+                .as_ref()
+                .is_some_and(NeteasePanel::active_download))
     {
         library.confirm_exit = true;
         return Ok(false);
@@ -2034,6 +2070,24 @@ fn handle_library_key(
         },
     }
     Ok(false)
+}
+
+fn confirm_library_exit(
+    library: &mut MediaLibrary,
+    current: &mut Option<App>,
+    key: KeyCode,
+) -> bool {
+    library.confirm_exit = false;
+    if !matches!(key, KeyCode::Char('y' | 'Y')) {
+        return false;
+    }
+    if let Some(app) = current
+        && !app.save_project()
+    {
+        return false;
+    }
+    library.cancel_imports();
+    true
 }
 
 fn toggle_music_source(library: &mut MediaLibrary) -> Result<(), NeteaseError> {
@@ -2989,7 +3043,7 @@ fn netease_session_expired_hint() -> &'static str {
 
 fn draw_netease_modal(frame: &mut Frame, library: &MediaLibrary) {
     if library.confirm_exit {
-        draw_netease_exit_confirmation(frame);
+        draw_exit_confirmation(frame, library);
         return;
     }
     let Some(panel) = &library.netease else {
@@ -3008,11 +3062,24 @@ fn draw_netease_modal(frame: &mut Frame, library: &MediaLibrary) {
     }
 }
 
-fn draw_netease_exit_confirmation(frame: &mut Frame) {
+fn draw_exit_confirmation(frame: &mut Frame, library: &MediaLibrary) {
+    let separation_active = library.job.is_some() || !library.queue.is_empty();
+    let downloads_active = library
+        .netease
+        .as_ref()
+        .is_some_and(NeteasePanel::active_download);
+    let prompt = match (separation_active, downloads_active) {
+        (true, true) => {
+            "NetEase downloads and separation tasks are still active. Cancel them and exit?"
+        }
+        (true, false) => "Separation tasks are still active. Cancel them and exit?",
+        (false, true) => "NetEase downloads are still active. Cancel them and exit?",
+        (false, false) => "Exit K3?",
+    };
     let popup = centered_popup(frame.area(), 64, 5);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new("NetEase downloads are still active. Cancel them and exit?\n\ny yes · n no")
+        Paragraph::new(format!("{prompt}\n\ny yes · n no"))
             .block(
                 Block::default()
                     .title(" Confirm exit ")
@@ -3523,11 +3590,12 @@ mod tests {
     use super::{
         App, CatalogJob, ChromeLoginJob, FooterAction, ImportJob, LyricCountdown, LyricsPicker,
         LyricsQueryEditor, MediaLibrary, NeteaseDownloadJob, NeteaseModal, NeteasePanel,
-        NeteaseView, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
-        fit_source_name, format_duration, handle_library_source_key, load_lyrics, lyric_countdown,
-        lyric_seek_target, lyric_window, mode_allows_footer_action, netease_message_is_failure,
-        netease_sign_in_hint, netease_song_label, poll_import_job, poll_netease_catalog,
-        poll_netease_chrome_login, poll_netease_download, should_handle_key,
+        NeteaseView, PlaybackState, PlaybackTrack, SeparationRequest, TrackKind,
+        effect_preset_for_key, fit_source_name, format_duration, handle_library_key,
+        handle_library_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
+        mode_allows_footer_action, netease_message_is_failure, netease_sign_in_hint,
+        netease_song_label, poll_import_job, poll_netease_catalog, poll_netease_chrome_login,
+        poll_netease_download, should_handle_key,
     };
     use crate::{
         lyrics_download::LyricsChoice,
@@ -3539,7 +3607,17 @@ mod tests {
         VocalEffectPreset,
     };
     use ratatui::{Terminal, backend::TestBackend, style::Color};
-    use std::{fs, path::Path, sync::mpsc, time::Duration};
+    use std::{
+        fs,
+        path::Path,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
 
     #[test]
     fn netease_page_selection_and_all_liked_selection_have_distinct_scopes() {
@@ -4073,6 +4151,8 @@ mod tests {
         library.job = Some(ImportJob {
             source: active_source,
             result: receiver,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
 
         library.source_selected = 1;
@@ -4140,6 +4220,8 @@ mod tests {
         library.job = Some(ImportJob {
             source: sandbox.path().join("active.wav"),
             result: receiver,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
 
         handle_library_source_key(&mut library, &mut None, KeyCode::Char('s')).unwrap();
@@ -4172,6 +4254,8 @@ mod tests {
         library.job = Some(ImportJob {
             source: library.snapshot.sources[0].path.clone(),
             result: receiver,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
         sender.send(Ok(completed)).unwrap();
         poll_import_job(&mut library).unwrap();
@@ -4183,6 +4267,82 @@ mod tests {
                 .unwrap()
                 .starts_with("Separation complete")
         );
+    }
+
+    #[test]
+    fn quit_during_separation_requires_confirmation() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let source = music.join("song.wav");
+        fs::write(&source, b"song").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (_sender, receiver) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source,
+            result: receiver,
+            cancellation: cancellation.clone(),
+            worker: None,
+        });
+
+        let should_exit = handle_library_key(&mut library, &mut None, KeyCode::Char('q')).unwrap();
+
+        assert!(!should_exit);
+        assert!(library.confirm_exit);
+        assert!(!cancellation.load(Ordering::Acquire));
+        assert!(library.job.is_some());
+    }
+
+    #[test]
+    fn confirmed_quit_cancels_active_separation_and_clears_queue() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(music.join("active.wav"), b"active").unwrap();
+        fs::write(music.join("queued.wav"), b"queued").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let worker_cancellation = cancellation.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            while !worker_cancellation.load(Ordering::Acquire) {
+                thread::yield_now();
+            }
+            let _ = sender.send(Err("separation cancelled".into()));
+        });
+        library.job = Some(ImportJob {
+            source: library.snapshot.sources[0].path.clone(),
+            result: receiver,
+            cancellation: cancellation.clone(),
+            worker: Some(worker),
+        });
+        library.queue.push_back(SeparationRequest {
+            source: library.snapshot.sources[1].clone(),
+        });
+
+        assert!(!handle_library_key(&mut library, &mut None, KeyCode::Char('q')).unwrap());
+        assert!(handle_library_key(&mut library, &mut None, KeyCode::Char('y')).unwrap());
+
+        assert!(cancellation.load(Ordering::Acquire));
+        assert!(library.job.is_none());
+        assert!(library.queue.is_empty());
     }
 
     #[test]
