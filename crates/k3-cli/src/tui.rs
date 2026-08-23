@@ -14,10 +14,13 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use k3_app::{lyric_countdown, lyric_window};
+use k3_app::{
+    PlaybackCommand, PlaybackStatus, SessionPlayback, SessionTrackKind,
+    TrackKind as ProjectTrackKind, lyric_countdown, lyric_window,
+};
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
-    RecordingSession, RecordingState, SeparationState, Take, VocalEffectPreset,
+    RecordingSession, RecordingState, Take, VocalEffectPreset,
 };
 use ratatui::{
     Frame, Terminal,
@@ -30,7 +33,6 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    audio::AudioPlayer,
     library::{self, LibraryConfig, LibrarySnapshot, SourceEntry},
     lyrics_download::{
         LyricsChoice, LyricsProgress, LyricsSearch, default_lyrics_query, find_lyrics_again,
@@ -184,249 +186,44 @@ impl MediaLibrary {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TrackKind {
-    Original,
-    Accompaniment,
-    Vocals,
-    Take,
+fn playback_command_for_key(key: KeyCode) -> Option<PlaybackCommand> {
+    match key {
+        KeyCode::Char(' ') => Some(PlaybackCommand::Toggle),
+        KeyCode::Left => Some(PlaybackCommand::SeekBy(-5)),
+        KeyCode::Right => Some(PlaybackCommand::SeekBy(5)),
+        KeyCode::Char('r') => Some(PlaybackCommand::Restart),
+        KeyCode::Char('1') => Some(PlaybackCommand::SwitchTrack(ProjectTrackKind::Original)),
+        KeyCode::Char('2') => Some(PlaybackCommand::SwitchTrack(
+            ProjectTrackKind::Accompaniment,
+        )),
+        KeyCode::Char('3') => Some(PlaybackCommand::SwitchTrack(ProjectTrackKind::Vocals)),
+        _ => None,
+    }
 }
 
-impl TrackKind {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Original => "original",
-            Self::Accompaniment => "accompaniment",
-            Self::Vocals => "vocals",
-            Self::Take => "take",
-        }
+fn recording_track_for_key(key: KeyCode) -> Option<SessionTrackKind> {
+    match key {
+        KeyCode::Char('1') => Some(SessionTrackKind::Original),
+        KeyCode::Char('2') => Some(SessionTrackKind::Accompaniment),
+        KeyCode::Char('3') => Some(SessionTrackKind::Vocals),
+        _ => None,
     }
+}
 
-    const fn recording_shortcut(key: KeyCode) -> Option<Self> {
+fn handle_playback_key(playback: &mut SessionPlayback, key: KeyCode) -> bool {
+    if key == KeyCode::Char('q') {
+        return true;
+    }
+    if let Some(command) = playback_command_for_key(key) {
+        playback.execute(&command);
+    } else {
         match key {
-            KeyCode::Char('1') => Some(Self::Original),
-            KeyCode::Char('2') => Some(Self::Accompaniment),
-            KeyCode::Char('3') => Some(Self::Vocals),
-            _ => None,
-        }
-    }
-}
-
-struct PlaybackTrack {
-    kind: TrackKind,
-    path: PathBuf,
-}
-
-struct PlaybackState {
-    tracks: Vec<PlaybackTrack>,
-    selected: usize,
-    audio: Option<AudioPlayer>,
-    error: Option<String>,
-    key_shift_semitones: i8,
-}
-
-impl PlaybackState {
-    fn new(tracks: Vec<PlaybackTrack>, key_shift_semitones: i8) -> Self {
-        let selected = tracks
-            .iter()
-            .position(|track| track.kind == TrackKind::Accompaniment)
-            .unwrap_or(0);
-        let mut error = None;
-        let audio = match AudioPlayer::open_paused(&tracks[selected].path, key_shift_semitones) {
-            Ok(player) => Some(player),
-            Err(open_error) => {
-                error = Some(open_error.to_string());
-                None
-            }
-        };
-        Self {
-            tracks,
-            selected,
-            audio,
-            error,
-            key_shift_semitones,
-        }
-    }
-
-    fn position(&self) -> Duration {
-        self.audio
-            .as_ref()
-            .map_or(Duration::ZERO, AudioPlayer::position)
-    }
-
-    fn refresh_stream_error(&mut self) {
-        if let Some(error) = self.audio.as_ref().and_then(AudioPlayer::take_stream_error) {
-            self.error = Some(error);
-        }
-    }
-
-    fn handle_key(&mut self, key: KeyCode) -> bool {
-        match key {
-            KeyCode::Char('q') => return true,
-            KeyCode::Char(' ') => {
-                if let Some(player) = &self.audio {
-                    player.toggle();
-                    self.error = None;
-                }
-            }
-            KeyCode::Left => {
-                let result = self
-                    .audio
-                    .as_ref()
-                    .map_or(Ok(()), |player| player.seek_by(-5));
-                self.update_error(result);
-            }
-            KeyCode::Right => {
-                let result = self
-                    .audio
-                    .as_ref()
-                    .map_or(Ok(()), |player| player.seek_by(5));
-                self.update_error(result);
-            }
-            KeyCode::Char('r') => {
-                let path = &self.tracks[self.selected].path;
-                let key_shift = self.selected_key_shift();
-                let result = self.audio.as_mut().map_or(Ok(()), |player| {
-                    player.load(path, Duration::ZERO, true, key_shift)
-                });
-                self.update_error(result);
-            }
-            key if let Some(kind) = TrackKind::recording_shortcut(key) => self.switch_track(kind),
-            KeyCode::Char('-') => {
-                if let Some(player) = &self.audio {
-                    player.adjust_volume(-0.1);
-                }
-            }
-            KeyCode::Char('+' | '=') => {
-                if let Some(player) = &self.audio {
-                    player.adjust_volume(0.1);
-                }
-            }
+            KeyCode::Char('-') => playback.adjust_volume(-0.1),
+            KeyCode::Char('+' | '=') => playback.adjust_volume(0.1),
             _ => {}
         }
-        false
     }
-
-    fn switch_track(&mut self, kind: TrackKind) {
-        let Some(next) = self.tracks.iter().position(|track| track.kind == kind) else {
-            self.error = Some(format!("{} track is unavailable", kind.label()));
-            return;
-        };
-        if next == self.selected {
-            return;
-        }
-
-        let result = if let Some(player) = &mut self.audio {
-            let position = player.position();
-            let should_play = !player.is_paused() && !player.is_finished();
-            let key_shift = if self.tracks[next].kind == TrackKind::Take {
-                0
-            } else {
-                self.key_shift_semitones
-            };
-            player.load(&self.tracks[next].path, position, should_play, key_shift)
-        } else {
-            let key_shift = if self.tracks[next].kind == TrackKind::Take {
-                0
-            } else {
-                self.key_shift_semitones
-            };
-            AudioPlayer::open(&self.tracks[next].path, key_shift).map(|player| {
-                self.audio = Some(player);
-            })
-        };
-        if result.is_ok() {
-            self.selected = next;
-        }
-        self.update_error(result);
-    }
-
-    fn update_error(&mut self, result: Result<(), Box<dyn Error>>) {
-        self.error = result.err().map(|error| error.to_string());
-    }
-
-    fn prepare_recording(&mut self) -> Result<(), Box<dyn Error>> {
-        let key_shift = self.selected_key_shift();
-        let player = self
-            .audio
-            .as_mut()
-            .ok_or("playback is unavailable; cannot synchronize recording")?;
-        player.load(
-            &self.tracks[self.selected].path,
-            Duration::ZERO,
-            false,
-            key_shift,
-        )?;
-        self.error = None;
-        Ok(())
-    }
-
-    fn play_from_start(&mut self) -> Result<(), Box<dyn Error>> {
-        let player = self
-            .audio
-            .as_ref()
-            .ok_or("playback is unavailable; cannot synchronize recording")?;
-        player.play_prepared();
-        self.error = None;
-        Ok(())
-    }
-
-    fn play_take(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
-        let index = if let Some(index) = self
-            .tracks
-            .iter()
-            .position(|track| track.kind == TrackKind::Take)
-        {
-            self.tracks[index].path = path.to_path_buf();
-            index
-        } else {
-            self.tracks.push(PlaybackTrack {
-                kind: TrackKind::Take,
-                path: path.to_path_buf(),
-            });
-            self.tracks.len() - 1
-        };
-        if let Some(player) = &mut self.audio {
-            player.load(path, Duration::ZERO, true, 0)?;
-        } else {
-            self.audio = Some(AudioPlayer::open(path, 0)?);
-        }
-        self.selected = index;
-        self.error = None;
-        Ok(())
-    }
-
-    fn selected_key_shift(&self) -> i8 {
-        if self.tracks[self.selected].kind == TrackKind::Take {
-            0
-        } else {
-            self.key_shift_semitones
-        }
-    }
-
-    fn accompaniment_path(&self) -> Result<PathBuf, Box<dyn Error>> {
-        self.tracks
-            .iter()
-            .find(|track| track.kind == TrackKind::Accompaniment)
-            .map(|track| track.path.clone())
-            .ok_or_else(|| "project accompaniment is unavailable".into())
-    }
-
-    fn set_key_shift(&mut self, semitones: i8) -> Result<(), Box<dyn Error>> {
-        self.key_shift_semitones = semitones;
-        let key_shift = self.selected_key_shift();
-        let Some(player) = &mut self.audio else {
-            return Ok(());
-        };
-        let position = player.position();
-        let should_play = !player.is_paused() && !player.is_finished();
-        player.load(
-            &self.tracks[self.selected].path,
-            position,
-            should_play,
-            key_shift,
-        )
-    }
+    false
 }
 
 struct ActiveRecording {
@@ -502,7 +299,7 @@ impl LyricsSources {
 }
 
 struct App {
-    playback: PlaybackState,
+    playback: SessionPlayback,
     session: RecordingSession,
     active_recording: Option<ActiveRecording>,
     recording_message: Option<String>,
@@ -527,9 +324,9 @@ impl App {
         default_effect: VocalEffectPreset,
     ) -> Self {
         let selected_take = project.takes().len().checked_sub(1);
-        let key_shift_semitones = project.key_shift_semitones();
+        let playback = SessionPlayback::open(&project);
         Self {
-            playback: PlaybackState::new(playback_tracks(&project), key_shift_semitones),
+            playback,
             session: RecordingSession::new(project),
             active_recording: None,
             recording_message: startup_message,
@@ -593,7 +390,7 @@ impl App {
                 return self.finish_recording();
             }
             (RecordingState::Recording, KeyCode::Char('-' | '+' | '=')) => {
-                self.playback.handle_key(key);
+                handle_playback_key(&mut self.playback, key);
             }
             (RecordingState::Recording, KeyCode::Left) => {
                 self.seek_recording_by_lyric(-1);
@@ -601,16 +398,14 @@ impl App {
             (RecordingState::Recording, KeyCode::Right) => {
                 self.seek_recording_by_lyric(1);
             }
-            (RecordingState::Recording, key)
-                if let Some(kind) = TrackKind::recording_shortcut(key) =>
-            {
+            (RecordingState::Recording, key) if let Some(kind) = recording_track_for_key(key) => {
                 self.playback.switch_track(kind);
                 self.anchor_recording_at_playback_position();
-                self.recording_message = self.playback.error.as_ref().map_or_else(
+                self.recording_message = self.playback.error().map_or_else(
                     || {
                         Some(format!(
                             "Recording continues · monitoring {} · take still mixes accompaniment only",
-                            self.playback.tracks[self.playback.selected].kind.label()
+                            self.playback.selected_track().label()
                         ))
                     },
                     |error| Some(format!("Failed to switch monitor track: {error}")),
@@ -627,7 +422,7 @@ impl App {
             (_, KeyCode::Char('q')) => {
                 return self.save_project();
             }
-            _ => return self.playback.handle_key(key),
+            _ => return handle_playback_key(&mut self.playback, key),
         }
         false
     }
@@ -833,11 +628,12 @@ impl App {
             self.recording_message = Some("Reached the lyric timeline boundary".into());
             return;
         };
-        let Some(player) = &self.playback.audio else {
+        if !self.playback.has_audio() {
             self.recording_message = Some("playback is unavailable; cannot seek recording".into());
             return;
-        };
-        if let Err(error) = player.seek_to(target) {
+        }
+        self.playback.execute(&PlaybackCommand::SeekTo(target));
+        if let Some(error) = self.playback.error() {
             self.recording_message = Some(format!("Lyric seek failed: {error}"));
             return;
         }
@@ -1029,10 +825,9 @@ impl App {
             }
         };
         let backing_key_shift_semitones = self.session.project().key_shift_semitones();
-        let monitor_mixer = self.playback.audio.as_ref().map(AudioPlayer::mixer);
         let recorder = match AudioRecorder::start(
             &paths.dry_temporary_path,
-            monitor_mixer,
+            self.playback.monitor_player(),
             self.monitoring_enabled,
         ) {
             Ok(recorder) => recorder,
@@ -1528,18 +1323,17 @@ fn draw_project(
         ])
         .split(area);
     let project = app.session.project();
-    let playback_status = app.playback.audio.as_ref().map_or("unavailable", |player| {
-        if player.is_finished() {
-            "finished"
-        } else if player.is_paused() {
-            "paused"
-        } else {
-            "playing"
-        }
-    });
-    let duration = app.playback.audio.as_ref().and_then(AudioPlayer::duration);
-    let volume = app.playback.audio.as_ref().map_or(0.0, AudioPlayer::volume);
-    let track = app.playback.tracks[app.playback.selected].kind.label();
+    let playback_status = match app.playback.status() {
+        PlaybackStatus::Unavailable => "unavailable",
+        PlaybackStatus::Loading => "loading",
+        PlaybackStatus::Paused => "paused",
+        PlaybackStatus::Playing => "playing",
+        PlaybackStatus::Finished => "finished",
+        PlaybackStatus::Error => "error",
+    };
+    let duration = app.playback.duration();
+    let volume = app.playback.volume();
+    let track = app.playback.selected_track().label();
     let current_effect = if app.session.state() == RecordingState::Idle {
         app.selected_take.map_or(app.default_effect, |index| {
             project.takes()[index].effect_preset()
@@ -1551,7 +1345,7 @@ fn draw_project(
         || "selected take: none".to_owned(),
         |index| format!("selected take: {}/{}", index + 1, project.takes().len()),
     );
-    let audio_line = if let Some(error) = &app.playback.error {
+    let audio_line = if let Some(error) = app.playback.error() {
         format!("audio: {track} · error: {error}")
     } else {
         format!(
@@ -1783,8 +1577,8 @@ fn draw_project_footer(
     library_focused: Option<bool>,
 ) {
     let state = app.session.state();
-    let audio = app.playback.audio.is_some();
-    let has_track = |kind| app.playback.tracks.iter().any(|track| track.kind == kind);
+    let audio = app.playback.has_audio();
+    let has_track = |kind| app.playback.has_track(kind);
     let has_take = app.selected_take.is_some();
     let lyrics_searching = app.lyrics_search_job.is_some() || app.lyrics_query_editor.is_some();
     let mode = |action| mode_allows_footer_action(state, action);
@@ -1803,15 +1597,15 @@ fn draw_project_footer(
         footer_line(&[
             (
                 "1 original",
-                has_track(TrackKind::Original) && mode(FooterAction::SourceTrack),
+                has_track(SessionTrackKind::Original) && mode(FooterAction::SourceTrack),
             ),
             (
                 "2 accompaniment",
-                has_track(TrackKind::Accompaniment) && mode(FooterAction::SourceTrack),
+                has_track(SessionTrackKind::Accompaniment) && mode(FooterAction::SourceTrack),
             ),
             (
                 "3 vocals (switchable while recording)",
-                has_track(TrackKind::Vocals) && mode(FooterAction::SourceTrack),
+                has_track(SessionTrackKind::Vocals) && mode(FooterAction::SourceTrack),
             ),
             ("4 take", has_take && mode(FooterAction::Take)),
             ("q quit", mode(FooterAction::Quit)),
@@ -1827,7 +1621,7 @@ fn draw_project_footer(
             (
                 "a arm",
                 audio
-                    && has_track(TrackKind::Accompaniment)
+                    && has_track(SessionTrackKind::Accompaniment)
                     && mode(FooterAction::Arm)
                     && !lyrics_searching,
             ),
@@ -2297,32 +2091,6 @@ fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> 
     })
 }
 
-fn playback_tracks(project: &Project) -> Vec<PlaybackTrack> {
-    let mut tracks = vec![PlaybackTrack {
-        kind: TrackKind::Original,
-        path: project.source_path(),
-    }];
-    if let SeparationState::Ready(manifest) = project.separation() {
-        tracks.push(PlaybackTrack {
-            kind: TrackKind::Accompaniment,
-            path: project
-                .root()
-                .join(Path::new(manifest.accompaniment.as_str())),
-        });
-        tracks.push(PlaybackTrack {
-            kind: TrackKind::Vocals,
-            path: project.root().join(Path::new(manifest.vocals.as_str())),
-        });
-    }
-    if let Some(mix_audio) = project.takes().last().and_then(Take::mix_audio) {
-        tracks.push(PlaybackTrack {
-            kind: TrackKind::Take,
-            path: project.root().join(Path::new(mix_audio.as_str())),
-        });
-    }
-    tracks
-}
-
 fn format_duration(duration: Duration) -> String {
     let seconds = duration.as_secs();
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
@@ -2373,14 +2141,17 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, FooterAction, ImportJob, LyricsPicker, LyricsQueryEditor, MediaLibrary, PlaybackState,
-        PlaybackTrack, TrackKind, effect_preset_for_key, fit_source_name, format_duration,
-        handle_library_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
-        mode_allows_footer_action, poll_import_job, should_handle_key,
+        App, FooterAction, ImportJob, LyricsPicker, LyricsQueryEditor, MediaLibrary,
+        effect_preset_for_key, fit_source_name, format_duration, handle_library_source_key,
+        load_lyrics, lyric_countdown, lyric_seek_target, lyric_window, mode_allows_footer_action,
+        playback_command_for_key, poll_import_job, recording_track_for_key, should_handle_key,
     };
     use crate::lyrics_download::LyricsChoice;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-    use k3_app::LyricCountdown;
+    use k3_app::{
+        LyricCountdown, PlaybackCommand, SessionPlayback, SessionTrackKind,
+        TrackKind as SharedTrackKind,
+    };
     use k3_core::{
         CreateProject, FileProjectRepository, LyricsTimeline, ProjectRepository, RecordingState,
         VocalEffectPreset,
@@ -2923,46 +2694,81 @@ mod tests {
     #[test]
     fn recording_shortcuts_allow_switching_between_the_three_source_tracks() {
         assert_eq!(
-            TrackKind::recording_shortcut(KeyCode::Char('1')),
-            Some(TrackKind::Original)
+            recording_track_for_key(KeyCode::Char('1')),
+            Some(SessionTrackKind::Original)
         );
         assert_eq!(
-            TrackKind::recording_shortcut(KeyCode::Char('2')),
-            Some(TrackKind::Accompaniment)
+            recording_track_for_key(KeyCode::Char('2')),
+            Some(SessionTrackKind::Accompaniment)
         );
         assert_eq!(
-            TrackKind::recording_shortcut(KeyCode::Char('3')),
-            Some(TrackKind::Vocals)
+            recording_track_for_key(KeyCode::Char('3')),
+            Some(SessionTrackKind::Vocals)
         );
-        assert_eq!(TrackKind::recording_shortcut(KeyCode::Char('4')), None);
+        assert_eq!(recording_track_for_key(KeyCode::Char('4')), None);
+    }
+
+    #[test]
+    fn playback_keys_use_the_shared_application_commands() {
+        assert!(matches!(
+            playback_command_for_key(KeyCode::Char(' ')),
+            Some(PlaybackCommand::Toggle)
+        ));
+        assert!(matches!(
+            playback_command_for_key(KeyCode::Left),
+            Some(PlaybackCommand::SeekBy(-5))
+        ));
+        assert!(matches!(
+            playback_command_for_key(KeyCode::Char('2')),
+            Some(PlaybackCommand::SwitchTrack(SharedTrackKind::Accompaniment))
+        ));
     }
 
     #[test]
     fn take_backing_is_accompaniment_even_when_original_is_selected() {
-        let playback = PlaybackState {
-            tracks: vec![
-                PlaybackTrack {
-                    kind: TrackKind::Original,
-                    path: "original.flac".into(),
-                },
-                PlaybackTrack {
-                    kind: TrackKind::Accompaniment,
-                    path: "stems/accompaniment.wav".into(),
-                },
-                PlaybackTrack {
-                    kind: TrackKind::Vocals,
-                    path: "stems/vocals.wav".into(),
-                },
-            ],
-            selected: 0,
-            audio: None,
-            error: None,
-            key_shift_semitones: 0,
-        };
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("project");
+        for directory in ["source", "stems", "takes", "lyrics", "exports"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        fs::write(root.join("source/song.wav"), b"audio").unwrap();
+        fs::write(root.join("stems/accompaniment.wav"), b"audio").unwrap();
+        fs::write(root.join("stems/vocals.wav"), b"audio").unwrap();
+        fs::write(
+            root.join("project.json"),
+            r#"{
+              "schema_version": 1,
+              "id": "135a282d-5915-4b7f-a8da-1c5beff3eee3",
+              "title": "Tracks",
+              "source": "source/song.wav",
+              "lyrics": null,
+              "separation": {
+                "status": "ready",
+                "details": {
+                  "vocals": "stems/vocals.wav",
+                  "accompaniment": "stems/accompaniment.wav",
+                  "provenance": {
+                    "provider": "test",
+                    "architecture": "test",
+                    "checkpoint_id": "test",
+                    "checkpoint_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "profile": "quality"
+                  }
+                }
+              },
+              "takes": [],
+              "latency_compensation_ms": 0,
+              "key_shift_semitones": 0,
+              "effects_schema_version": 1
+            }"#,
+        )
+        .unwrap();
+        let project = FileProjectRepository.open(&root).unwrap();
+        let playback = SessionPlayback::open(&project);
 
         assert_eq!(
             playback.accompaniment_path().unwrap(),
-            std::path::PathBuf::from("stems/accompaniment.wav")
+            root.join("stems/accompaniment.wav")
         );
     }
 

@@ -6,14 +6,6 @@ const NATIVE_LOW_LATENCY_FRAMES: u32 = 512;
 const NATIVE_MONITOR_PREFILL_MS: usize = 5;
 const WSL_MONITOR_PREFILL_MS: usize = 100;
 
-pub fn output_buffer_size() -> Option<BufferSize> {
-    if is_wsl() {
-        None
-    } else {
-        Some(BufferSize::Fixed(NATIVE_LOW_LATENCY_FRAMES))
-    }
-}
-
 pub fn input_buffer_size(supported: &SupportedBufferSize) -> BufferSize {
     input_buffer_size_for(supported, is_wsl())
 }

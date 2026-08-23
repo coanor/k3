@@ -11,16 +11,14 @@ use std::{
     time::Duration,
 };
 
+use k3_app::{AudioPlayer, MonitorControl, MonitorTap};
+use rodio::cpal;
 use rodio::cpal::{
     FromSample, I24, Sample, SampleFormat, SizedSample, U24,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use rodio::{ChannelCount, SampleRate, Source, cpal, mixer::Mixer};
 
 const WRITER_QUEUE_DEPTH: usize = 64;
-const MONITOR_BUFFER_MS: usize = 250;
-const MONITOR_GAIN: f32 = 4.0;
-
 use crate::audio_config;
 
 enum WriterMessage {
@@ -129,15 +127,14 @@ pub struct AudioRecorder {
     sample_rate: u32,
     channels: u16,
     destination: PathBuf,
-    monitor_enabled: Option<Arc<AtomicBool>>,
-    monitor_closed: Option<Arc<AtomicBool>>,
+    monitor_control: Option<MonitorControl>,
     captured_samples: Arc<AtomicU64>,
 }
 
 impl AudioRecorder {
     pub fn start(
         destination: &Path,
-        monitor_mixer: Option<Mixer>,
+        monitor_player: Option<&AudioPlayer>,
         monitor_enabled: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let host = cpal::default_host();
@@ -189,19 +186,15 @@ impl AudioRecorder {
         let overrun = Arc::new(AtomicBool::new(false));
         let captured_samples = Arc::new(AtomicU64::new(0));
         let stream_error = Arc::new(Mutex::new(None));
-        let (monitor_tap, monitor_enabled, monitor_closed) =
-            monitor_mixer.map_or((None, None, None), |mixer| {
-                let (tap, source) = live_monitor(
-                    channels,
-                    sample_rate,
-                    monitor_enabled,
-                    audio_config::monitor_prefill_ms(),
-                );
-                let enabled = Arc::clone(&tap.enabled);
-                let closed = Arc::clone(&tap.closed);
-                mixer.add(source);
-                (Some(tap), Some(enabled), Some(closed))
-            });
+        let (monitor_tap, monitor_control) = monitor_player.map_or((None, None), |player| {
+            let (tap, control) = player.live_monitor(
+                channels,
+                sample_rate,
+                monitor_enabled,
+                audio_config::monitor_prefill_ms(),
+            );
+            (Some(tap), Some(control))
+        });
         let stream = match build_stream(
             &device,
             &config,
@@ -239,8 +232,7 @@ impl AudioRecorder {
             sample_rate,
             channels,
             destination: destination.to_path_buf(),
-            monitor_enabled,
-            monitor_closed,
+            monitor_control,
             captured_samples,
         })
     }
@@ -250,8 +242,8 @@ impl AudioRecorder {
     }
 
     pub fn set_monitoring(&self, enabled: bool) {
-        if let Some(state) = &self.monitor_enabled {
-            state.store(enabled, Ordering::Relaxed);
+        if let Some(control) = &self.monitor_control {
+            control.set_enabled(enabled);
         }
     }
 
@@ -261,11 +253,8 @@ impl AudioRecorder {
 
     pub fn stop(self) -> Result<RecordingSummary, Box<dyn Error>> {
         drop(self.stream);
-        if let Some(enabled) = &self.monitor_enabled {
-            enabled.store(false, Ordering::Relaxed);
-        }
-        if let Some(closed) = &self.monitor_closed {
-            closed.store(true, Ordering::Relaxed);
+        if let Some(control) = &self.monitor_control {
+            control.close();
         }
         self.sender.send(WriterMessage::Finish)?;
         drop(self.sender);
@@ -377,107 +366,6 @@ where
     )?)
 }
 
-struct MonitorTap {
-    producer: rtrb::Producer<f32>,
-    enabled: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
-}
-
-impl MonitorTap {
-    fn send(&mut self, samples: &[f32]) {
-        if self.enabled.load(Ordering::Relaxed) {
-            let _ = self.producer.push_partial_slice(samples);
-        }
-    }
-}
-
-struct LiveMonitorSource {
-    consumer: rtrb::Consumer<f32>,
-    enabled: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
-    channels: ChannelCount,
-    sample_rate: SampleRate,
-    prefill_samples: usize,
-    started: bool,
-}
-
-impl Iterator for LiveMonitorSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.enabled.load(Ordering::Relaxed) {
-            while self.consumer.pop().is_ok() {}
-            self.started = false;
-            return (!self.closed.load(Ordering::Relaxed)).then_some(0.0);
-        }
-
-        if self.closed.load(Ordering::Relaxed) && self.consumer.is_empty() {
-            return None;
-        }
-        if !self.started {
-            if self.consumer.slots() < self.prefill_samples {
-                return Some(0.0);
-            }
-            self.started = true;
-        }
-
-        match self.consumer.pop() {
-            Ok(sample) => Some((sample * MONITOR_GAIN).clamp(-1.0, 1.0)),
-            Err(rtrb::PopError::Empty) => {
-                self.started = false;
-                Some(0.0)
-            }
-        }
-    }
-}
-
-impl Source for LiveMonitorSource {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> ChannelCount {
-        self.channels
-    }
-
-    fn sample_rate(&self) -> SampleRate {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
-fn live_monitor(
-    channels: u16,
-    sample_rate: u32,
-    enabled: bool,
-    prefill_ms: usize,
-) -> (MonitorTap, LiveMonitorSource) {
-    let samples_per_millisecond = sample_rate as usize * channels as usize / 1_000;
-    let capacity = (samples_per_millisecond * MONITOR_BUFFER_MS).max(1);
-    let prefill_samples = (samples_per_millisecond * prefill_ms).max(1);
-    let (producer, consumer) = rtrb::RingBuffer::new(capacity);
-    let enabled = Arc::new(AtomicBool::new(enabled));
-    let closed = Arc::new(AtomicBool::new(false));
-    let tap = MonitorTap {
-        producer,
-        enabled: Arc::clone(&enabled),
-        closed: Arc::clone(&closed),
-    };
-    let source = LiveMonitorSource {
-        consumer,
-        enabled,
-        closed,
-        channels: ChannelCount::new(channels).expect("CPAL channel count is non-zero"),
-        sample_rate: SampleRate::new(sample_rate).expect("CPAL sample rate is non-zero"),
-        prefill_samples,
-        started: false,
-    };
-    (tap, source)
-}
-
 fn select_input_config(
     default: cpal::SupportedStreamConfig,
     supported: &[cpal::SupportedStreamConfigRange],
@@ -509,13 +397,10 @@ fn select_input_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RecordingTimelineAnchor, live_monitor, place_recording_on_timeline, select_input_config,
-    };
+    use super::{RecordingTimelineAnchor, place_recording_on_timeline, select_input_config};
     use rodio::cpal::{
         SampleFormat, SupportedBufferSize, SupportedStreamConfig, SupportedStreamConfigRange,
     };
-    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     #[test]
@@ -560,41 +445,6 @@ mod tests {
             vec![1.0, 2.0, 5.0, 6.0]
         );
         assert!(!raw.exists());
-    }
-
-    #[test]
-    fn live_monitor_can_be_toggled_and_applies_monitor_gain() {
-        let (mut tap, mut source) = live_monitor(1, 1_000, false, 100);
-        tap.send(&[0.25]);
-        assert_eq!(source.next(), Some(0.0));
-
-        tap.enabled.store(true, Ordering::Relaxed);
-        let mut samples = vec![0.0; 100];
-        samples[0] = 0.125;
-        samples[1] = -0.25;
-        tap.send(&samples);
-        assert_eq!(source.next(), Some(0.5));
-        assert_eq!(source.next(), Some(-1.0));
-
-        tap.enabled.store(false, Ordering::Relaxed);
-        assert_eq!(source.next(), Some(0.0));
-    }
-
-    #[test]
-    fn live_monitor_ends_when_recording_closes() {
-        let (tap, mut source) = live_monitor(1, 44_100, true, 100);
-        tap.closed.store(true, Ordering::Relaxed);
-        assert_eq!(source.next(), None);
-    }
-
-    #[test]
-    fn live_monitor_prefills_before_playing_input() {
-        let (mut tap, mut source) = live_monitor(1, 1_000, true, 100);
-        tap.send(&[0.125]);
-        assert_eq!(source.next(), Some(0.0));
-
-        tap.send(&vec![0.125; 99]);
-        assert_eq!(source.next(), Some(0.5));
     }
 
     #[test]

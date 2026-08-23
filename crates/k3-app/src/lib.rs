@@ -19,12 +19,16 @@ mod pitch;
 mod playback;
 mod rodio_backend;
 mod rodio_player;
+mod session_playback;
 
+pub use pitch::PitchShiftSource;
 pub use playback::{
     AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackResponse,
     PlaybackService, PlaybackSnapshot, PlaybackStatus,
 };
 pub use rodio_backend::RodioBackend;
+pub use rodio_player::{AudioPlayer, MonitorControl, MonitorTap};
+pub use session_playback::{SessionPlayback, SessionTrackKind};
 
 /// The synchronized lyric rows a frontend should present around the playback position.
 #[derive(Clone, Debug, PartialEq, Eq)]
