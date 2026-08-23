@@ -13,6 +13,7 @@ hound = "3.5.1"
 lofty = "0.24.0"
 ratatui.workspace = true
 rodio = "0.22.2"
+rodio-wsola = "0.2.0"
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }

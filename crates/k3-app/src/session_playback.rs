@@ -13,6 +13,17 @@ pub enum SessionTrackKind {
     Take,
 }
 
+/// Immutable presentation state produced by [`SessionPlayback`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionPlaybackSnapshot {
+    pub status: PlaybackStatus,
+    pub position: Duration,
+    pub duration: Option<Duration>,
+    pub volume: f32,
+    pub track: SessionTrackKind,
+    pub error: Option<String>,
+}
+
 impl SessionTrackKind {
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -125,6 +136,18 @@ impl SessionPlayback {
     }
 
     #[must_use]
+    pub fn snapshot(&self) -> SessionPlaybackSnapshot {
+        SessionPlaybackSnapshot {
+            status: self.status(),
+            position: self.position(),
+            duration: self.duration(),
+            volume: self.volume(),
+            track: self.selected_track(),
+            error: self.error.clone(),
+        }
+    }
+
+    #[must_use]
     pub fn position(&self) -> Duration {
         self.audio
             .as_ref()
@@ -143,6 +166,9 @@ impl SessionPlayback {
 
     #[must_use]
     pub fn status(&self) -> PlaybackStatus {
+        if self.error.is_some() {
+            return PlaybackStatus::Error;
+        }
         self.audio
             .as_ref()
             .map_or(PlaybackStatus::Unavailable, |player| {

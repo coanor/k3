@@ -7,9 +7,7 @@ use std::{
 use k3_core::{Project, ProjectPath, SeparationState, VocalEffectPreset};
 use rodio::{ChannelCount, Decoder, SampleRate, source::UniformSourceIterator};
 
-use k3_app::PitchShiftSource;
-
-use crate::effects::VocalEffect;
+use crate::{effects::VocalEffect, pitch::PitchShiftSource};
 
 const VOICE_GAIN: f32 = 4.0;
 const BACKING_GAIN: f32 = 0.65;

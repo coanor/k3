@@ -1313,7 +1313,8 @@ fn draw_project(
     app: &App,
     library_focused: Option<bool>,
 ) {
-    let position = app.playback.position();
+    let playback = app.playback.snapshot();
+    let position = playback.position;
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1323,7 +1324,7 @@ fn draw_project(
         ])
         .split(area);
     let project = app.session.project();
-    let playback_status = match app.playback.status() {
+    let playback_status = match playback.status {
         PlaybackStatus::Unavailable => "unavailable",
         PlaybackStatus::Loading => "loading",
         PlaybackStatus::Paused => "paused",
@@ -1331,9 +1332,9 @@ fn draw_project(
         PlaybackStatus::Finished => "finished",
         PlaybackStatus::Error => "error",
     };
-    let duration = app.playback.duration();
-    let volume = app.playback.volume();
-    let track = app.playback.selected_track().label();
+    let duration = playback.duration;
+    let volume = playback.volume;
+    let track = playback.track.label();
     let current_effect = if app.session.state() == RecordingState::Idle {
         app.selected_take.map_or(app.default_effect, |index| {
             project.takes()[index].effect_preset()
@@ -1345,7 +1346,7 @@ fn draw_project(
         || "selected take: none".to_owned(),
         |index| format!("selected take: {}/{}", index + 1, project.takes().len()),
     );
-    let audio_line = if let Some(error) = app.playback.error() {
+    let audio_line = if let Some(error) = playback.error.as_deref() {
         format!("audio: {track} · error: {error}")
     } else {
         format!(
@@ -2725,7 +2726,7 @@ mod tests {
     }
 
     #[test]
-    fn take_backing_is_accompaniment_even_when_original_is_selected() {
+    fn session_playback_resolves_the_recording_accompaniment() {
         let sandbox = tempfile::tempdir().unwrap();
         let root = sandbox.path().join("project");
         for directory in ["source", "stems", "takes", "lyrics", "exports"] {

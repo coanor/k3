@@ -686,6 +686,7 @@ fn start_snapshot_pump(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PlaybackTransition {
+    project_id: Option<[u8; 16]>,
     status: PlaybackStatus,
     track: Option<TrackKind>,
 }
@@ -698,6 +699,7 @@ struct PlaybackTransitionTracker {
 impl PlaybackTransitionTracker {
     fn observe(&mut self, snapshot: &PlaybackSnapshot) -> Option<String> {
         let next = PlaybackTransition {
+            project_id: snapshot.project_id.map(|id| *id.as_bytes()),
             status: snapshot.status,
             track: snapshot.track,
         };
@@ -708,7 +710,7 @@ impl PlaybackTransitionTracker {
         Some(format!(
             "playback state: status={} track={}",
             playback_status_log_label(next.status),
-            next.track.map_or("none", TrackKind::log_label)
+            next.track.map_or("none", track_log_label)
         ))
     }
 }
@@ -724,17 +726,11 @@ const fn playback_status_log_label(status: PlaybackStatus) -> &'static str {
     }
 }
 
-trait TrackLogLabel {
-    fn log_label(self) -> &'static str;
-}
-
-impl TrackLogLabel for TrackKind {
-    fn log_label(self) -> &'static str {
-        match self {
-            Self::Original => "original",
-            Self::Accompaniment => "accompaniment",
-            Self::Vocals => "vocals",
-        }
+const fn track_log_label(track: TrackKind) -> &'static str {
+    match track {
+        TrackKind::Original => "original",
+        TrackKind::Accompaniment => "accompaniment",
+        TrackKind::Vocals => "vocals",
     }
 }
 
