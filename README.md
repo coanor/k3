@@ -5,7 +5,8 @@ K3 是一个本地优先的 K 歌工作区，目前同时提供 Linux 桌面 GUI
 与 Vocals 音轨。
 
 安装步骤和完整工作流见[中文用户手册](docs/user-manual.md)。首期桌面界面的范围与
-技术决策见 [GUI 规格](docs/gui-spec.md)。
+技术决策见 [GUI 规格](docs/gui-spec.md)，平台与性能证据见
+[GUI 验收记录](docs/gui-acceptance.md)。
 
 ## 构建与测试
 

@@ -3,10 +3,10 @@
 状态：已确认  
 日期：2026-08-23
 
-实现状态：本分支已完成可运行的 GUI 播放纵向切片；第 16 节的发布完成标准尚未全部满足。
-合并或发布前仍需取得新增 Ubuntu 24.04 Wayland/X11 CI 门禁的实际通过结果，并完成 TUI
-播放切片迁移、GUI 文案集中化和 Slint 组件级交互测试。本文保留完整目标，不把阶段性
-实现误标为首期发布完成。
+实现状态：本分支已完成 GUI 播放纵向切片、TUI 共享播放模块迁移、GUI 文案集中化、
+Slint 组件交互测试、自动性能预算和 Linux 发行内容门禁。第 16 节仍需取得 Ubuntu 24.04
+Wayland/X11 CI、真实声卡延迟、歌词同步和 HiDPI 的外部验收结果；进度与证据记录在
+`docs/gui-acceptance.md`，不把尚未运行的外部验收误标为通过。
 
 ## 1. 目标
 
@@ -57,10 +57,11 @@ k3-cli        现有 CLI/TUI
 k3-gui        Slint 桌面前端
 ```
 
-`k3-app` 是深模块。其界面只暴露用户命令、只读状态快照和明确错误，不暴露 Slint
-context、Ratatui 类型、`rodio` 类型或工程 JSON 的内部表示。本阶段 GUI 已使用该模块，
-TUI 只先复用了歌词窗口；完整播放切片仍须迁入并通过 characterization tests 保持现有
-行为，才能满足第 16 节的发布完成标准。录音、分轨和在线歌词暂时保留在 `k3-cli`。
+`k3-app` 是深模块。其界面只暴露用户命令、只读状态快照、同步 `SessionPlayback` 和明确
+错误，不暴露 Slint、Ratatui 类型或工程 JSON 的内部表示。GUI 使用后台
+`PlaybackService`；TUI 使用同一模块提供的播放器、变调、实时监听、播放命令和同步状态机，
+并通过 characterization tests 保持录音和 take 行为。录音、分轨和在线歌词编排仍保留在
+`k3-cli`。
 
 ## 5. 播放模块
 
@@ -121,8 +122,8 @@ watcher。刷新后按工程 ID 保持选择。当前工程在磁盘上变化时
 
 ## 8. 界面与视觉
 
-GUI 的用户可见文字首期全部使用英文。文案集中管理，不散落在 view 实现中，为后续中文
-语言包保留 seam。中文歌曲名、歌词和文件名保持原样。
+GUI 的用户可见文字首期全部使用英文。Slint 文案集中在 `ui/strings.slint`，Rust adapter
+文案集中在 `ui_text` 模块，为后续语言包保留 seam。中文歌曲名、歌词和文件名保持原样。
 
 主窗口采用：
 
@@ -198,7 +199,7 @@ accessible label。按钮默认不显示描边，只通过 hover、键盘焦点�
 音频设备不可用、文件损坏或切轨失败时，应用继续显示工程和歌词。播放栏进入明确的
 disabled/error 状态，展示简短错误与 Retry。不得用连续模态弹窗阻断操作。
 
-详细诊断写入标准用户 state 目录下的滚动日志；设置页显示日志位置。日志记录平台、
+详细诊断写入标准用户 state 目录下的滚动日志；顶层 About 界面显示日志位置。日志记录平台、
 Slint/音频错误和应用状态转换。GUI 默认不联网，不上传任何数据。
 
 Slint 无法初始化 GPU 或显示后端时，`k3-gui` 输出英文诊断、日志路径和使用 `k3 tui`
@@ -230,6 +231,8 @@ GUI 框架使用经过验证的 crates.io 精确版本并提交 `Cargo.lock`，�
 
 因此正式实现固定使用 Slint 1.17.1 的 `backend-winit` 与 `renderer-femtovg`，不启用软件
 renderer。Ubuntu 24.04 Wayland/X11 仍是发布前硬门槛，不能由当前 Arch 结果替代。
+PR `verify` job 在 Ubuntu 24.04 上分别使用 Xvfb 和 Weston headless 执行 X11/Wayland
+启动门禁；最新分支的实际运行结果记录在 `docs/gui-acceptance.md`。
 
 Slint 按 Royalty-free Desktop, Mobile, and Web Applications License 2.0 使用；应用必须在
 顶层可访问的 About 界面展示官方 `AboutSlint` 组件，以满足归属条件。
@@ -245,6 +248,9 @@ Slint 按 Royalty-free Desktop, Mobile, and Web Applications License 2.0 使用�
 - 歌词显示与播放位置的误差不超过 100 ms；
 - UI 主线程不得执行可感知的目录扫描、工程读取或音频解码。
 
+自动测试直接约束 1000 工程扫描和首帧预算，并约束 UI 命令提交不阻塞调用线程。真实声卡
+起播延迟、歌词听感同步和 HiDPI 仍按 `docs/gui-acceptance.md` 进行平台验收。
+
 ## 14. 测试
 
 测试通过公开 interface 验证行为：
@@ -252,7 +258,8 @@ Slint 按 Royalty-free Desktop, Mobile, and Web Applications License 2.0 使用�
 1. `k3-app` 使用临时工程库和 fake 音频 adapter 测试工程发现、用户命令、状态转换、
    歌词窗口和错误恢复；
 2. 播放模块通过可替换 adapter 测试线程命令、快照和失败时序；
-3. Slint 组件测试验证 callbacks、焦点、禁用状态和主要呈现状态；
+3. Slint 组件测试验证首次点击、callbacks、全局快捷键、输入焦点隔离、禁用状态、Escape
+   弹层顺序、主要呈现状态和 1000 工程首帧；
 4. CI 不依赖真实声卡；真实听音、Wayland/X11、HiDPI 和 GPU 初始化进入平台验收；
 5. `cargo fmt --check`、严格 Clippy 和 workspace 全量测试必须通过。
 
@@ -268,6 +275,8 @@ Slint 按 Royalty-free Desktop, Mobile, and Web Applications License 2.0 使用�
 - 中文安装与故障排查说明。
 
 不提供需要 root 权限的自动安装器。用户可按文档手动安装 `.desktop` 文件和图标。
+发行 workflow 使用 `scripts/verify-linux-gui-package.sh` 拒绝缺少 GUI、桌面入口、图标或
+许可证的 Linux 包。
 
 ## 16. 完成标准
 
