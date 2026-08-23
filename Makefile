@@ -52,9 +52,11 @@ dist-host:
 
 dist-linux:
 	@test "$$(uname -s)" = Linux || { echo 'dist-linux 必须在 Linux 上运行' >&2; exit 1; }
-	$(CARGO) build --release --locked --target x86_64-unknown-linux-gnu
+	$(CARGO) build --release --locked --target x86_64-unknown-linux-gnu \
+		--package k3 --package k3-gui
 	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
-		linux k3-linux-x86_64 target/x86_64-unknown-linux-gnu/release/k3
+		linux k3-linux-x86_64 target/x86_64-unknown-linux-gnu/release/k3 \
+		target/x86_64-unknown-linux-gnu/release/k3-gui
 
 dist-windows:
 	@command -v cargo-xwin >/dev/null 2>&1 || { \
@@ -62,7 +64,8 @@ dist-windows:
 	}
 	@if [[ -n "$(LLVM_BIN)" ]]; then export PATH="$(LLVM_BIN):$$PATH"; fi; \
 	RUSTFLAGS='-C target-feature=+crt-static' \
-		$(CARGO) xwin build --release --locked --target x86_64-pc-windows-msvc
+		$(CARGO) xwin build --release --locked --target x86_64-pc-windows-msvc \
+			--package k3
 	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
 		windows k3-windows-x86_64 target/x86_64-pc-windows-msvc/release/k3.exe
 
@@ -71,14 +74,14 @@ dist-macos: dist-macos-x86_64 dist-macos-aarch64
 dist-macos-x86_64:
 	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
 	rustup target add x86_64-apple-darwin
-	$(CARGO) build --release --locked --target x86_64-apple-darwin
+	$(CARGO) build --release --locked --target x86_64-apple-darwin --package k3
 	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
 		macos k3-macos-x86_64 target/x86_64-apple-darwin/release/k3
 
 dist-macos-aarch64:
 	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
 	rustup target add aarch64-apple-darwin
-	$(CARGO) build --release --locked --target aarch64-apple-darwin
+	$(CARGO) build --release --locked --target aarch64-apple-darwin --package k3
 	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
 		macos k3-macos-aarch64 target/aarch64-apple-darwin/release/k3
 

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=K3
+Comment=Karaoke project player
+Exec=k3-gui
+Icon=k3
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=karaoke;lyrics;music;
+StartupNotify=true

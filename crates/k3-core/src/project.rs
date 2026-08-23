@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
 };
@@ -43,7 +43,9 @@ impl ProjectPath {
         &self.0
     }
 
-    fn resolve(&self, root: &Path) -> PathBuf {
+    /// Resolves this safe relative path below a project root.
+    #[must_use]
+    pub fn resolve(&self, root: &Path) -> PathBuf {
         root.join(&self.0)
     }
 }
@@ -327,6 +329,8 @@ impl Take {
 pub struct Project {
     #[serde(skip)]
     root: PathBuf,
+    #[serde(skip)]
+    loaded_document: Option<Vec<u8>>,
     schema_version: u32,
     id: Uuid,
     title: String,
@@ -344,6 +348,12 @@ impl Project {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Returns the exact serialized document revision loaded or committed under the project lock.
+    #[must_use]
+    pub fn document_revision(&self) -> Option<&[u8]> {
+        self.loaded_document.as_deref()
     }
 
     #[must_use]
@@ -522,12 +532,71 @@ pub trait ProjectRepository {
     /// # Errors
     ///
     /// Returns an error when validation, serialization, or filesystem operations fail.
-    fn save(&self, project: &Project) -> Result<(), ProjectError>;
+    fn save(&self, project: &mut Project) -> Result<(), ProjectError>;
 }
 
 /// JSON and filesystem implementation of [`ProjectRepository`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileProjectRepository;
+
+/// A narrow project change that can be safely applied to the latest on-disk document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectMutation {
+    SetKeyShift(i8),
+    SetLatencyCompensation(i32),
+}
+
+impl FileProjectRepository {
+    /// Locks a project briefly, reloads its latest document, applies one narrow change, and saves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project cannot be locked, opened, changed, or saved.
+    pub fn apply(
+        &self,
+        project_dir: &Path,
+        mutation: ProjectMutation,
+    ) -> Result<Project, ProjectError> {
+        self.apply_checked(project_dir, mutation, None)
+            .map(|(project, _)| project)
+    }
+
+    /// Applies a narrow change and reports whether the locked document differed from a frontend's
+    /// loaded revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project cannot be locked, opened, changed, or saved.
+    pub fn apply_checked(
+        &self,
+        project_dir: &Path,
+        mutation: ProjectMutation,
+        expected_revision: Option<&[u8]>,
+    ) -> Result<(Project, bool), ProjectError> {
+        let root = project_dir.canonicalize()?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(".project.lock"))?;
+        lock.lock()?;
+        let current_document = fs::read(root.join(PROJECT_FILE))?;
+        let changed_since_load =
+            expected_revision.is_some_and(|expected| expected != current_document);
+        let mut project = self.open(&root)?;
+        match mutation {
+            ProjectMutation::SetKeyShift(semitones) => {
+                project.set_key_shift_semitones(semitones)?;
+            }
+            ProjectMutation::SetLatencyCompensation(milliseconds) => {
+                project.set_latency_compensation_ms(milliseconds);
+            }
+        }
+        save_unlocked(&mut project)?;
+        Ok((project, changed_since_load))
+    }
+}
 
 impl ProjectRepository for FileProjectRepository {
     fn create(&self, request: CreateProject) -> Result<Project, ProjectError> {
@@ -555,8 +624,9 @@ impl ProjectRepository for FileProjectRepository {
             .and_then(|name| name.to_str())
             .unwrap_or("Untitled")
             .to_owned();
-        let project = Project {
+        let mut project = Project {
             root,
+            loaded_document: None,
             schema_version: 1,
             id: Uuid::new_v4(),
             title: request.title.unwrap_or(inferred_title),
@@ -569,7 +639,7 @@ impl ProjectRepository for FileProjectRepository {
             effects_schema_version: 1,
         };
         project.validate()?;
-        self.save(&project)?;
+        self.save(&mut project)?;
         Ok(project)
     }
 
@@ -578,28 +648,57 @@ impl ProjectRepository for FileProjectRepository {
         let input = fs::read(root.join(PROJECT_FILE))?;
         let mut project: Project = serde_json::from_slice(&input)?;
         project.root = root;
+        project.loaded_document = Some(input);
         project.validate()?;
         Ok(project)
     }
 
-    fn save(&self, project: &Project) -> Result<(), ProjectError> {
-        project.validate()?;
+    fn save(&self, project: &mut Project) -> Result<(), ProjectError> {
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(project.root.join(".project.lock"))?;
+        lock.lock()?;
         let destination = project.root.join(PROJECT_FILE);
-        let temporary = project.root.join("project.json.tmp");
-        let encoded = serde_json::to_vec_pretty(project)?;
-        let mut file = File::create(&temporary)?;
-        file.write_all(&encoded)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(temporary, destination)?;
-        Ok(())
+        match (&project.loaded_document, fs::read(&destination)) {
+            (Some(expected), Ok(current)) if current != *expected => {
+                return Err(ProjectError::ConcurrentModification(project.root.clone()));
+            }
+            (None, Ok(_)) => {
+                return Err(ProjectError::ConcurrentModification(project.root.clone()));
+            }
+            (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+            (_, Err(error)) => return Err(error.into()),
+            (Some(_), Ok(_)) => {}
+        }
+        save_unlocked(project)
     }
+}
+
+fn save_unlocked(project: &mut Project) -> Result<(), ProjectError> {
+    project.validate()?;
+    let destination = project.root.join(PROJECT_FILE);
+    let temporary = project.root.join("project.json.tmp");
+    let encoded = serde_json::to_vec_pretty(project)?;
+    let mut file = File::create(&temporary)?;
+    file.write_all(&encoded)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(temporary, destination)?;
+    let mut loaded_document = encoded;
+    loaded_document.push(b'\n');
+    project.loaded_document = Some(loaded_document);
+    Ok(())
 }
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
     #[error("project directory already exists: {0}")]
     AlreadyExists(PathBuf),
+    #[error("project changed on disk while it was open: {0}")]
+    ConcurrentModification(PathBuf),
     #[error("unsafe project-relative path: {0}")]
     UnsafePath(String),
     #[error("unsupported project schema version: {0}")]

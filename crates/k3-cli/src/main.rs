@@ -18,7 +18,10 @@ use k3_core::{
 };
 
 use crate::mix::render_take_preview;
-use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
+use crate::python_separator::{
+    PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
+    separation_output_paths,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -186,6 +189,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             no_preserve_backing_vocals,
         } => {
             let mut project = repository.open(&project)?;
+            let previous_outputs = separation_output_paths(&project);
             let separator = PythonStemSeparator::new(PythonSeparatorConfig {
                 worker,
                 model_dir,
@@ -199,8 +203,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             });
             let mut preparation = SongPreparation::new(separator);
             let result = prepare_project(&mut preparation, &mut project, profile.into(), overwrite);
-            repository.save(&project)?;
-            result?;
+            persist_preparation(repository, &mut project, &previous_outputs, result)?;
             print_summary(&project);
         }
         Command::Effect {
@@ -222,7 +225,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let preset = preset.into();
             let rendered = render_take_preview(&project, &take_id, preset)?;
             project.set_take_render(&take_id, preset, rendered.relative_path)?;
-            repository.save(&project)?;
+            repository.save(&mut project)?;
             println!("{}", rendered.path.display());
         }
         Command::Tui {
@@ -251,6 +254,21 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn persist_preparation(
+    repository: FileProjectRepository,
+    project: &mut Project,
+    previous_outputs: &[PathBuf],
+    result: Result<(), SeparationFailure>,
+) -> Result<(), Box<dyn Error>> {
+    let produced_outputs = separation_output_paths(project);
+    if let Err(error) = repository.save(project) {
+        cleanup_obsolete_outputs(&produced_outputs, previous_outputs);
+        return Err(error.into());
+    }
+    cleanup_obsolete_outputs(previous_outputs, &produced_outputs);
+    result.map_err(Into::into)
 }
 
 fn prepare_project(
@@ -295,11 +313,11 @@ fn open_tui(
             return Err("--latency-ms must be between -1000 and 1000".into());
         }
         project.set_latency_compensation_ms(latency_ms);
-        repository.save(&project)?;
+        repository.save(&mut project)?;
     }
     if let Some(key) = key {
         project.set_key_shift_semitones(key)?;
-        repository.save(&project)?;
+        repository.save(&mut project)?;
     }
     tui::open(project, None, !no_lyrics_download, netease_lyrics)
 }

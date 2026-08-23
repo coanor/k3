@@ -1,0 +1,18 @@
+[package]
+name = "k3-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+k3-core = { path = "../k3-core" }
+rodio = "0.22.2"
+rodio-wsola = "0.2.0"
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,21 +1,25 @@
 # K3
 
-K3 is an offline-first terminal karaoke application under active development.
-The current vertical slice creates durable song projects, imports LRC lyrics,
-models recording sessions, and isolates local stem-separation workers behind a
-small Rust interface.
+K3 是一个本地优先的 K 歌工作区，目前同时提供 Linux 桌面 GUI、CLI 和 TUI。它可以
+保存歌曲工程、导入 LRC 歌词、调用本地分轨 worker，并播放 Original、Accompaniment
+与 Vocals 音轨。
 
-For installation and end-user workflows, see the
-[Chinese user manual](docs/user-manual.md).
+安装步骤和完整工作流见[中文用户手册](docs/user-manual.md)。首期桌面界面的范围与
+技术决策见 [GUI 规格](docs/gui-spec.md)。
 
-## Build and test
+## 构建与测试
 
 ```bash
-cargo test --all
+cargo test --workspace
 cargo run -p k3 -- --help
+cargo run -p k3-gui
 ```
 
-## Create and inspect a project
+Linux 桌面发行包同时包含 `k3` 和 `k3-gui`。`k3-gui` 使用 Slint 的
+femtovg/OpenGL ES 硬件 renderer，不启用软件 renderer；无法启动桌面后端时仍可运行
+`k3 tui`。
+
+## 创建并打开工程
 
 ```bash
 cargo run -p k3 -- new \
@@ -26,9 +30,20 @@ cargo run -p k3 -- new \
 
 cargo run -p k3 -- show --project ./songs/example
 cargo run -p k3 -- tui --project ./songs/example
+cargo run -p k3-gui
 ```
 
-Run the local Python worker through the Rust `StemSeparator` adapter:
+首次启动 GUI 时只需选择保存现有 K3 工程的目录。GUI 与 TUI 共享各工程中的
+`project.json`，但 GUI 的窗口、音量和工程根目录设置单独保存。
+
+## 本地分轨 worker
+
+Rust 通过小型 `StemSeparator` interface 调用 `python/separator` 下的 JSON-lines
+worker。它支持质量 profile、明确的 checkpoint、SHA-256 provenance，以及标准化的
+`vocals.wav` / `accompaniment.wav` 输出。安装与协议说明见
+[worker README](python/separator/README.md)。
+
+示例：
 
 ```bash
 cargo run -p k3 -- separate \
@@ -38,16 +53,3 @@ cargo run -p k3 -- separate \
   --worker ./.venv-separator/bin/k3-separator \
   --model-dir ~/.cache/k3/models
 ```
-
-The microphone/audio-device adapter is not part of this milestone. Local model
-separation is available through the Python worker and Rust process adapter
-described below. See [the MVP specification](docs/mvp-spec.md) for the original
-slice boundaries and acceptance criteria.
-
-## Local separation worker
-
-The Python JSON-lines worker under [`python/separator`](python/separator) runs
-the local model outside the Rust process. It supports profile defaults, explicit
-checkpoint selection, custom registries, SHA-256 provenance, and normalized
-`vocals.wav` / `accompaniment.wav` output. See its
-[README](python/separator/README.md) for installation and protocol examples.

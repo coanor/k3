@@ -3,7 +3,6 @@ use std::{
     error::Error,
     fs,
     io::{self, stdout},
-    ops::Range,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
@@ -15,6 +14,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use k3_app::lyric_window;
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
     RecordingSession, RecordingState, SeparationState, Take, VocalEffectPreset,
@@ -1179,7 +1179,7 @@ impl App {
         if !self.project_dirty {
             return true;
         }
-        match FileProjectRepository.save(self.session.project()) {
+        match FileProjectRepository.save(self.session.project_mut()) {
             Ok(()) => {
                 self.project_dirty = false;
                 true
@@ -1274,14 +1274,14 @@ fn app_for_project(
     let lyrics_message = if auto_download_lyrics {
         match find_missing_lyrics(&mut project, netease_fallback, progress) {
             Ok(LyricsSearch::AlreadyPresent) => {
-                FileProjectRepository.save(&project)?;
+                FileProjectRepository.save(&mut project)?;
                 None
             }
             Ok(LyricsSearch::Candidates(mut choices)) if choices.len() == 1 => {
                 let (saved, relative_path) =
                     save_lyrics_choice(&project, choices.remove(0), progress)?;
                 project.set_lyrics(relative_path)?;
-                FileProjectRepository.save(&project)?;
+                FileProjectRepository.save(&mut project)?;
                 lyrics_origin = Some(saved.origin.clone());
                 Some(format!(
                     "Downloaded lyrics: {} - {} · {}",
@@ -2284,32 +2284,6 @@ fn lyric_countdown(timeline: &LyricsTimeline, position: Duration) -> Option<Lyri
         index: next,
         seconds: u8::try_from(seconds).expect("three-second countdown fits in u8"),
     })
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct LyricWindow {
-    range: Range<usize>,
-    current: Option<usize>,
-}
-
-fn lyric_window(timeline: &LyricsTimeline, position: Duration, visible_rows: usize) -> LyricWindow {
-    let total = timeline.lines().len();
-    let current = timeline.active_index(position, 0);
-    if total == 0 || visible_rows == 0 {
-        return LyricWindow {
-            range: 0..0,
-            current,
-        };
-    }
-
-    let look_behind = (visible_rows / 4).min(2);
-    let mut start = current.map_or(0, |current| current.saturating_sub(look_behind));
-    let end = start.saturating_add(visible_rows).min(total);
-    start = end.saturating_sub(visible_rows).min(start);
-    LyricWindow {
-        range: start..end,
-        current,
-    }
 }
 
 struct RecordingPaths {

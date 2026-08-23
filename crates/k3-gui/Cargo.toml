@@ -1,0 +1,29 @@
+[package]
+name = "k3-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+directories = "=6.0.0"
+k3-app = { path = "../k3-app" }
+rfd = "=0.17.2"
+serde.workspace = true
+serde_json.workspace = true
+slint = { version = "=1.17.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "accessibility", "compat-1-2", "unstable-winit-030"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+slint-build = "=1.17.1"
+
+[lints.rust]
+# Slint's generated item-tree code contains narrowly scoped `allow(unsafe_code)` blocks.
+# `deny` still rejects handwritten unsafe while permitting those generated blocks.
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

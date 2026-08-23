@@ -1,6 +1,8 @@
 use std::fs;
 
-use k3_core::{CreateProject, FileProjectRepository, ProjectPath, ProjectRepository};
+use k3_core::{
+    CreateProject, FileProjectRepository, ProjectMutation, ProjectPath, ProjectRepository,
+};
 
 #[test]
 fn user_can_create_and_reopen_a_project_with_local_media() {
@@ -93,8 +95,69 @@ fn project_key_is_validated_and_persisted() {
 
     assert_eq!(project.key_shift_semitones(), 0);
     project.set_key_shift_semitones(3).unwrap();
-    repository.save(&project).unwrap();
+    repository.save(&mut project).unwrap();
     assert_eq!(repository.open(&root).unwrap().key_shift_semitones(), 3);
     assert!(project.set_key_shift_semitones(7).is_err());
     assert_eq!(project.key_shift_semitones(), 3);
+}
+
+#[test]
+fn narrow_project_updates_preserve_changes_from_other_frontends() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let song = sandbox.path().join("song.wav");
+    fs::write(&song, b"audio").unwrap();
+    let root = sandbox.path().join("shared-song");
+    let repository = FileProjectRepository;
+    repository
+        .create(CreateProject {
+            root: root.clone(),
+            song,
+            lyrics: None,
+            title: None,
+        })
+        .unwrap();
+
+    repository
+        .apply(&root, ProjectMutation::SetKeyShift(3))
+        .unwrap();
+    repository
+        .apply(&root, ProjectMutation::SetLatencyCompensation(140))
+        .unwrap();
+
+    let reopened = repository.open(&root).unwrap();
+    assert_eq!(reopened.key_shift_semitones(), 3);
+    assert_eq!(reopened.latency_compensation_ms(), 140);
+}
+
+#[test]
+fn stale_full_project_save_reports_a_conflict_instead_of_losing_changes() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let song = sandbox.path().join("song.wav");
+    fs::write(&song, b"audio").unwrap();
+    let root = sandbox.path().join("shared-song");
+    let repository = FileProjectRepository;
+    repository
+        .create(CreateProject {
+            root: root.clone(),
+            song,
+            lyrics: None,
+            title: None,
+        })
+        .unwrap();
+
+    let mut first_frontend = repository.open(&root).unwrap();
+    let mut stale_frontend = repository.open(&root).unwrap();
+    first_frontend.set_key_shift_semitones(3).unwrap();
+    repository.save(&mut first_frontend).unwrap();
+    stale_frontend.set_latency_compensation_ms(140);
+
+    let error = repository.save(&mut stale_frontend).unwrap_err();
+
+    assert!(matches!(
+        error,
+        k3_core::ProjectError::ConcurrentModification(_)
+    ));
+    let reopened = repository.open(&root).unwrap();
+    assert_eq!(reopened.key_shift_semitones(), 3);
+    assert_eq!(reopened.latency_compensation_ms(), 0);
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/k3-core", "crates/k3-cli"]
+members = ["crates/k3-core", "crates/k3-app", "crates/k3-cli", "crates/k3-gui"]
 resolver = "2"
 
 [workspace.package]

@@ -1,7 +1,7 @@
 # K3 用户手册
 
-K3 是一个本地优先的终端 K 歌工作区。目前可创建歌曲工程、导入 LRC
-歌词、使用本地 GPU 模型分离人声和伴奏，并在 TUI 中播放和切换音轨。
+K3 是一个本地优先的 K 歌工作区。目前可创建歌曲工程、导入 LRC 歌词、使用本地 GPU
+模型分离人声和伴奏，并在 Linux GUI 或 TUI 中播放、切换音轨和查看同步歌词。
 
 本文以 Ubuntu 24.04、Windows WSL2 和 Windows 11 原生环境为当前支持环境。
 Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离。GitHub Actions 会生成 macOS
@@ -16,6 +16,9 @@ Intel 与 Apple Silicon 二进制包，但 macOS 的音频设备和模型安装�
 - Python 3.10 或更高版本；
 - `uv`；
 - 足够存放模型和 WAV stem 的磁盘空间。
+
+Linux GUI 还需要可用的 Wayland 或 X11 会话，以及支持 OpenGL ES 2.0 或更高版本的
+图形驱动。GUI 不提供软件渲染 fallback；桌面后端不可用时可继续使用 TUI。
 
 Windows 原生分离需要 64 位 Python 3.11、PowerShell 5.1 或更高版本以及网络。
 GPU 模式还需要 NVIDIA 显卡与支持 CUDA 12.8 的驱动；安装脚本会在发行目录创建
@@ -43,6 +46,7 @@ cargo build --release
 
 ```text
 target/release/k3
+target/release/k3-gui
 ```
 
 开发时也可以把后文的 `k3` 替换为：
@@ -56,6 +60,16 @@ cargo run -p k3 --
 ```bash
 target/release/k3 --help
 ```
+
+启动桌面界面：
+
+```bash
+target/release/k3-gui
+```
+
+首次启动只需选择已有 K3 工程所在目录。GUI 与 CLI/TUI 共享工程目录中的
+`project.json`，但 GUI 的工程根目录、主音量、窗口尺寸和上次工程保存在独立的
+`gui.json` 中，不复用 TUI 配置。GUI 再次启动时会加载上次工程，但始终从头保持暂停。
 
 ### 2.1 Makefile
 
@@ -111,9 +125,23 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Windows 包使用静态 MSVC C runtime。Linux 包包含 `separate.sh`；Windows 包包含
+Windows 包使用静态 MSVC C runtime。Linux 包包含 `k3-gui`、桌面入口、图标和
+`separate.sh`；Windows 包包含
 `separate.ps1` 和 `install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
 因此只包含 `k3`、README 和文档，不包含尚未验证的 Python 分离环境。
+
+Linux 包不执行需要 root 权限的安装器。需要在桌面启动器中显示 K3 时，可从解压后的
+包目录手动安装用户级入口：
+
+```bash
+install -Dm755 k3-gui ~/.local/bin/k3-gui
+install -Dm644 share/applications/k3.desktop ~/.local/share/applications/k3.desktop
+install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/k3.svg
+```
+
+桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
+登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
 
 ## 3. 安装本地分离 worker
 

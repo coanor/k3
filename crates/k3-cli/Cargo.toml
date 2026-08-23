@@ -8,6 +8,7 @@ license.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
+k3-app = { path = "../k3-app" }
 hound = "3.5.1"
 lofty = "0.24.0"
 ratatui.workspace = true

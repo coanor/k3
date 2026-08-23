@@ -128,7 +128,7 @@ class SeparationServiceTests(unittest.TestCase):
             self.assertEqual(b"vocals", Path(result["vocals"]).read_bytes())
             self.assertNotIn("backing_vocals", result)
             self.assertNotIn("backing_vocals_model", result["provenance"])
-            self.assertFalse((stems / "backing-vocals.wav").exists())
+            self.assertEqual(b"stale backing", (stems / "backing-vocals.wav").read_bytes())
 
     def test_refuses_to_overwrite_existing_stem(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,721 @@
+import { AboutSlint, Button, LineEdit, ListView, Slider } from "std-widgets.slint";
+import "../assets/fonts/SourceHanSansCN-Regular.otf";
+
+export struct ProjectItem {
+    id: string,
+    title: string,
+    path: string,
+    status: string,
+    selected: bool,
+}
+
+export struct LyricItem {
+    text: string,
+    at-seconds: float,
+}
+
+global Tokens {
+    out property <color> ink: #f4efe7;
+    out property <color> muted: #807e83;
+    out property <color> faint: #4e4c52;
+    out property <color> canvas: #0b0c0f;
+    out property <color> panel: #111318;
+    out property <color> raised: #181b21;
+    out property <color> line: #292c34;
+    out property <color> amber: #f4a94e;
+    out property <color> amber-soft: #4b3521;
+    out property <color> danger: #ff857d;
+}
+
+component SectionLabel inherits Text {
+    color: Tokens.muted;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.6px;
+}
+
+component TrackPill inherits Rectangle {
+    in property <string> label;
+    in property <string> unavailable-reason;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback selected;
+
+    height: 34px;
+    border-radius: 17px;
+    background: active ? Tokens.amber-soft : transparent;
+    border-width: active ? 1px : 0px;
+    border-color: Tokens.amber;
+    opacity: enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-description: enabled ? label : unavailable-reason;
+    accessible-enabled: enabled;
+
+    Text {
+        text: root.label;
+        color: root.active ? Tokens.amber : Tokens.muted;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.selected(); }
+    }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.selected();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+export component K3Window inherits Window {
+    title: "K3 — Karaoke stage";
+    background: Tokens.canvas;
+    default-font-family: "Source Han Sans CN";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    min-width: 960px;
+    min-height: 640px;
+
+    in property <[ProjectItem]> projects;
+    in property <[LyricItem]> lyrics;
+    in-out property <string> projects-root;
+    in-out property <string> search-query;
+    in-out property <bool> setup-mode: true;
+    in-out property <bool> loading: false;
+    in-out property <bool> show-about: false;
+    in-out property <bool> confirm-root-change: false;
+    in-out property <bool> follow-lyrics: true;
+    in-out property <length> lyric-scroll-y: 0px;
+    in-out property <int> focus-search-serial: 0;
+
+    in property <string> song-title: "Choose a project";
+    in property <string> project-state: "Library ready";
+    in property <string> error-message;
+    in property <string> log-path;
+    in property <bool> has-error: false;
+    in-out property <bool> playback-error-visible: false;
+    in-out property <bool> switching-track: false;
+    in-out property <bool> project-changed: false;
+    in-out property <string> current-project-id;
+    in property <bool> playback-ready: false;
+    in property <bool> playing: false;
+    in property <float> position-seconds: 0;
+    in property <float> duration-seconds: 0;
+    in-out property <float> volume: 1;
+    in property <int> key-shift: 0;
+    in property <int> active-track: 0;
+    in property <bool> original-available: false;
+    in property <bool> accompaniment-available: false;
+    in property <bool> vocals-available: false;
+    in property <int> active-lyric: -1;
+
+    callback choose-projects-root;
+    callback save-projects-root(string);
+    callback search(string);
+    callback refresh-library;
+    callback open-project(string);
+    callback playback-command(string);
+    callback seek-to(float);
+    callback set-volume(float);
+    callback save-volume(float);
+    callback set-key(int);
+    callback switch-track(int);
+    callback seek-lyric(float);
+
+    function format-time(seconds: float) -> string {
+        if (seconds <= 0) { return "0:00"; }
+        let total = round(seconds);
+        let minutes = floor(total / 60);
+        let remainder = total - minutes * 60;
+        return minutes + (remainder < 10 ? ":0" : ":") + remainder;
+    }
+
+    forward-focus: shortcuts;
+    shortcuts := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " && root.playback-ready) {
+                root.playback-command("toggle"); return accept;
+            }
+            if (event.text == Key.LeftArrow && root.playback-ready) {
+                root.playback-command("back"); return accept;
+            }
+            if (event.text == Key.RightArrow && root.playback-ready) {
+                root.playback-command("forward"); return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.set-volume(min(1, root.volume + 0.05)); return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.set-volume(max(0, root.volume - 0.05)); return accept;
+            }
+            if (event.text == "1" && root.original-available) { root.switch-track(0); return accept; }
+            if (event.text == "2" && root.accompaniment-available) { root.switch-track(1); return accept; }
+            if (event.text == "3" && root.vocals-available) { root.switch-track(2); return accept; }
+            return reject;
+        }
+
+        KeyBinding {
+            keys: @keys(Control + R);
+            activated => { root.refresh-library(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + F);
+            activated => { root.focus-search-serial += 1; }
+        }
+
+    if root.setup-mode: Rectangle {
+        background: Tokens.canvas;
+
+        VerticalLayout {
+            width: 560px;
+            height: 390px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            spacing: 22px;
+            alignment: center;
+
+            Text {
+                text: "K3";
+                color: Tokens.amber;
+                font-size: 18px;
+                font-weight: 800;
+                letter-spacing: 4px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Where do your projects live?";
+                color: Tokens.ink;
+                font-size: 32px;
+                font-weight: 500;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "K3 will scan this folder for existing project.json files.\nYou can change it later without changing TUI settings.";
+                color: Tokens.muted;
+                font-size: 14px;
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit {
+                    text <=> root.projects-root;
+                    placeholder-text: "/path/to/k3-projects";
+                    height: 42px;
+                }
+                Button {
+                    text: "Browse…";
+                    clicked => { root.choose-projects-root(); }
+                }
+            }
+            Button {
+                text: root.loading ? "Checking folder…" : "Open stage";
+                enabled: !root.loading && root.projects-root != "";
+                clicked => { root.save-projects-root(root.projects-root); }
+            }
+            if root.has-error: Text {
+                text: root.error-message;
+                color: Tokens.danger;
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
+            Button {
+                text: "About Slint";
+                clicked => { root.show-about = true; }
+            }
+        }
+    }
+
+    if !root.setup-mode: VerticalLayout {
+        spacing: 0px;
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 292px;
+                background: Tokens.panel;
+                border-width: 0px;
+
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        height: 32px;
+                        Text {
+                            text: "K3";
+                            color: Tokens.amber;
+                            font-size: 16px;
+                            font-weight: 800;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button {
+                            text: "About";
+                            clicked => { root.show-about = true; }
+                        }
+                    }
+
+                    search-input := LineEdit {
+                        property <int> focus-trigger: root.focus-search-serial;
+                        text <=> root.search-query;
+                        placeholder-text: "Search projects";
+                        edited => { root.search(self.text); }
+                        changed focus-trigger => { self.focus(); }
+                    }
+
+                    HorizontalLayout {
+                        height: 24px;
+                        SectionLabel { text: "PROJECTS"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button {
+                            text: "Refresh";
+                            clicked => { root.refresh-library(); }
+                        }
+                    }
+
+                    ListView {
+                        vertical-stretch: 1;
+                        for project[index] in root.projects: project-row := Rectangle {
+                            height: 68px;
+                            border-radius: 8px;
+                            background: project.selected ? Tokens.raised : project-touch.has-hover ? #15171c : transparent;
+                            border-width: project.selected || project-focus.has-focus ? 1px : 0px;
+                            border-color: project-focus.has-focus ? Tokens.amber : Tokens.line;
+                            accessible-role: list-item;
+                            accessible-label: project.title;
+
+                            VerticalLayout {
+                                padding-left: 14px;
+                                padding-right: 12px;
+                                padding-top: 9px;
+                                padding-bottom: 9px;
+                                spacing: 3px;
+                                Text {
+                                    text: project.title;
+                                    color: project.selected ? Tokens.ink : #c8c5c2;
+                                    font-size: 14px;
+                                    font-weight: project.selected ? 600 : 400;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: project.status;
+                                    color: project.status == "Repair needed" ? Tokens.danger : Tokens.faint;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            project-touch := TouchArea {
+                                clicked => { root.open-project(project.id); }
+                            }
+                            project-focus := FocusScope {
+                                key-pressed(event) => {
+                                    if (event.text == Key.Return || event.text == " ") {
+                                        root.open-project(project.id);
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Tokens.line;
+                    }
+                    Text {
+                        text: root.projects-root;
+                        color: Tokens.faint;
+                        font-size: 10px;
+                        overflow: elide;
+                    }
+                    Button {
+                        text: "Change folder";
+                        clicked => {
+                            if (root.playing) { root.confirm-root-change = true; }
+                            else { root.setup-mode = true; }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Tokens.canvas;
+
+                VerticalLayout {
+                    padding-left: 48px;
+                    padding-right: 48px;
+                    padding-top: 28px;
+                    padding-bottom: 18px;
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        height: 54px;
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: root.song-title;
+                                color: Tokens.ink;
+                                font-size: 22px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: root.project-state;
+                                color: root.has-error ? Tokens.danger : Tokens.muted;
+                                font-size: 12px;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.playback-ready ? "LIVE PROJECT" : "STANDBY";
+                            color: root.playback-ready ? Tokens.amber : Tokens.faint;
+                            font-size: 11px;
+                            font-weight: 700;
+                            letter-spacing: 1.5px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.has-error: Rectangle {
+                        height: 44px;
+                        border-radius: 7px;
+                        background: #291b1d;
+                        border-width: 1px;
+                        border-color: #5a2d31;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            Text {
+                                text: root.error-message;
+                                color: Tokens.danger;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            if root.playback-error-visible: Button {
+                                text: "Retry";
+                                clicked => { root.playback-command("retry"); }
+                            }
+                        }
+                    }
+
+                    if root.project-changed: Rectangle {
+                        height: 44px;
+                        border-radius: 7px;
+                        background: #2b2418;
+                        border-width: 1px;
+                        border-color: #5d4728;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            Text {
+                                text: "This project changed on disk. Reload to use the latest version.";
+                                color: Tokens.amber;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            Button {
+                                text: "Reload";
+                                clicked => { root.open-project(root.current-project-id); }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        vertical-stretch: 1;
+                        background: transparent;
+
+                        if root.lyrics.length == 0: Text {
+                            text: root.playback-ready ? "No synced lyrics" : "Select a project to begin";
+                            color: Tokens.faint;
+                            font-size: 20px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        if root.lyrics.length > 0: lyrics-list := ListView {
+                            viewport-y <=> root.lyric-scroll-y;
+                            scrolled => { root.follow-lyrics = false; }
+                            for lyric[index] in root.lyrics: Rectangle {
+                                height: 64px;
+                                border-radius: 8px;
+                                background: index == root.active-lyric ? @linear-gradient(90deg, transparent, #302419 20%, #49321f 50%, #302419 80%, transparent) : transparent;
+                                Text {
+                                    text: lyric.text;
+                                    color: index == root.active-lyric ? Tokens.ink : abs(index - root.active-lyric) <= 1 ? #8d8986 : #4b494d;
+                                    font-size: index == root.active-lyric ? 25px : 17px;
+                                    font-weight: index == root.active-lyric ? 600 : 400;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                TouchArea {
+                                    clicked => { root.seek-lyric(lyric.at-seconds); }
+                                }
+                            }
+                        }
+
+                        if !root.follow-lyrics && root.lyrics.length > 0: Button {
+                            text: "Return to current lyric";
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 8px;
+                            clicked => { root.follow-lyrics = true; }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 154px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 16px;
+                padding-bottom: 16px;
+                spacing: 13px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        width: 46px;
+                        text: root.format-time(root.position-seconds);
+                        color: Tokens.muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    timeline := Slider {
+                        enabled: root.playback-ready;
+                        minimum: 0;
+                        maximum: max(1, root.duration-seconds);
+                        value: root.position-seconds;
+                        released(value) => { root.seek-to(value); }
+                    }
+                    Text {
+                        width: 46px;
+                        text: root.format-time(root.duration-seconds);
+                        color: Tokens.muted;
+                        font-size: 11px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 18px;
+
+                    HorizontalLayout {
+                        width: 310px;
+                        spacing: 6px;
+                        TrackPill {
+                            width: 92px;
+                            label: "Original";
+                            unavailable-reason: "Original audio is unavailable";
+                            active: root.active-track == 0;
+                            enabled: root.original-available && !root.switching-track;
+                            selected => { root.switch-track(0); }
+                        }
+                        TrackPill {
+                            width: 110px;
+                            label: "Backing";
+                            unavailable-reason: "Backing track is unavailable";
+                            active: root.active-track == 1;
+                            enabled: root.accompaniment-available && !root.switching-track;
+                            selected => { root.switch-track(1); }
+                        }
+                        TrackPill {
+                            width: 88px;
+                            label: "Vocals";
+                            unavailable-reason: "Vocal track is unavailable";
+                            active: root.active-track == 2;
+                            enabled: root.vocals-available && !root.switching-track;
+                            selected => { root.switch-track(2); }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    HorizontalLayout {
+                        width: 300px;
+                        spacing: 8px;
+                        Button {
+                            text: "−5";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("back"); }
+                        }
+                        Button {
+                            text: root.playing ? "Pause" : "Play";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("toggle"); }
+                        }
+                        Button {
+                            text: "Restart";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("restart"); }
+                        }
+                        Button {
+                            text: "+5";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("forward"); }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    HorizontalLayout {
+                        width: 318px;
+                        spacing: 9px;
+                        Button {
+                            text: "Key −";
+                            enabled: root.playback-ready && root.key-shift > -6;
+                            clicked => { root.set-key(root.key-shift - 1); }
+                        }
+                        Text {
+                            width: 38px;
+                            text: root.key-shift > 0 ? "+" + root.key-shift : root.key-shift;
+                            color: Tokens.ink;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            text: "Key +";
+                            enabled: root.playback-ready && root.key-shift < 6;
+                            clicked => { root.set-key(root.key-shift + 1); }
+                        }
+                        Button {
+                            text: "Reset";
+                            enabled: root.playback-ready && root.key-shift != 0;
+                            clicked => { root.set-key(0); }
+                        }
+                        Text {
+                            text: "VOL";
+                            color: Tokens.faint;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                        Slider {
+                            width: 88px;
+                            minimum: 0;
+                            maximum: 1;
+                            step: 0.01;
+                            value: root.volume;
+                            changed(value) => { root.set-volume(value); }
+                            released(value) => { root.save-volume(value); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-about: Rectangle {
+        background: #0b0c0fee;
+        TouchArea { clicked => { root.show-about = false; } }
+        Rectangle {
+            width: 430px;
+            height: 310px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Tokens.raised;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                Text {
+                    text: "K3 GUI";
+                    color: Tokens.ink;
+                    font-size: 22px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                AboutSlint { vertical-stretch: 1; }
+                Text {
+                    text: "Diagnostics: " + root.log-path;
+                    color: Tokens.muted;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+                Button {
+                    text: "Close";
+                    clicked => { root.show-about = false; }
+                }
+            }
+        }
+    }
+
+    if root.confirm-root-change: Rectangle {
+        background: #0b0c0fee;
+        Rectangle {
+            width: 440px;
+            height: 210px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Tokens.raised;
+            border-width: 1px;
+            border-color: Tokens.line;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                Text {
+                    text: "Change projects folder?";
+                    color: Tokens.ink;
+                    font-size: 20px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Playback will remain on the current project until you open another one.";
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.confirm-root-change = false; }
+                    }
+                    Button {
+                        text: "Change folder";
+                        clicked => {
+                            root.confirm-root-change = false;
+                            root.setup-mode = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+}

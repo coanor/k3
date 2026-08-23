@@ -1,10 +1,11 @@
 mod support;
 
-use std::path::Path;
+use std::{fs, path::Path};
 
 use k3_core::{
-    CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure, SeparationManifest,
-    SeparationProfile, SeparationState, SongPreparation, StemSeparator,
+    CheckpointSha256, FileProjectRepository, ModelProvenance, ProjectMutation, ProjectPath,
+    ProjectRepository, SeparationFailure, SeparationManifest, SeparationProfile, SeparationState,
+    SongPreparation, StemSeparator,
 };
 
 struct SuccessfulSeparator;
@@ -34,6 +35,30 @@ impl StemSeparator for SuccessfulSeparator {
 }
 
 struct FailingSeparator;
+
+struct VersionedSeparator;
+
+impl StemSeparator for VersionedSeparator {
+    fn separate(
+        &mut self,
+        _input: &Path,
+        profile: SeparationProfile,
+    ) -> Result<SeparationManifest, SeparationFailure> {
+        Ok(SeparationManifest {
+            vocals: ProjectPath::new("stems/vocals-new.wav").unwrap(),
+            accompaniment: ProjectPath::new("stems/accompaniment-new.wav").unwrap(),
+            backing_vocals: None,
+            provenance: ModelProvenance {
+                provider: "local-worker".into(),
+                architecture: "mel-band-roformer".into(),
+                checkpoint_id: "vocals-v2".into(),
+                checkpoint_sha256: CheckpointSha256::new("d".repeat(64)).unwrap(),
+                profile,
+                backing_vocals_model: None,
+            },
+        })
+    }
+}
 
 impl StemSeparator for FailingSeparator {
     fn separate(
@@ -206,4 +231,53 @@ fn failed_repreparation_restores_the_ready_manifest() {
 
     assert!(error.to_string().contains("model crashed"));
     assert_eq!(project.separation(), &previous);
+}
+
+#[test]
+fn concurrent_project_change_cannot_pair_old_manifest_with_replaced_stems() {
+    let repository = FileProjectRepository;
+    let mut stale_separation = support::project_fixture();
+    fs::write(
+        stale_separation.root().join("stems/vocals.wav"),
+        b"old vocals",
+    )
+    .unwrap();
+    fs::write(
+        stale_separation.root().join("stems/accompaniment.wav"),
+        b"old accompaniment",
+    )
+    .unwrap();
+    SongPreparation::new(SuccessfulSeparator)
+        .prepare(&mut stale_separation, SeparationProfile::Quality)
+        .unwrap();
+    repository.save(&mut stale_separation).unwrap();
+
+    repository
+        .apply(stale_separation.root(), ProjectMutation::SetKeyShift(2))
+        .unwrap();
+    fs::write(
+        stale_separation.root().join("stems/vocals-new.wav"),
+        b"new vocals",
+    )
+    .unwrap();
+    fs::write(
+        stale_separation.root().join("stems/accompaniment-new.wav"),
+        b"new accompaniment",
+    )
+    .unwrap();
+    SongPreparation::new(VersionedSeparator)
+        .reprepare(&mut stale_separation, SeparationProfile::Quality)
+        .unwrap();
+
+    assert!(repository.save(&mut stale_separation).is_err());
+    let reopened = repository.open(stale_separation.root()).unwrap();
+    let SeparationState::Ready(manifest) = reopened.separation() else {
+        panic!("expected previous ready separation")
+    };
+    assert_eq!(manifest.vocals.as_str(), "stems/vocals.wav");
+    assert_eq!(reopened.key_shift_semitones(), 2);
+    assert_eq!(
+        fs::read(reopened.root().join(manifest.vocals.as_str())).unwrap(),
+        b"old vocals"
+    );
 }

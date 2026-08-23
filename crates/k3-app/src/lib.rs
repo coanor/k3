@@ -1,0 +1,243 @@
+//! UI-independent application workflows shared by K3 frontends.
+
+use std::{
+    fs, io,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+use k3_core::{
+    FileProjectRepository, LyricsTimeline, ProjectError, ProjectRepository, SeparationState,
+};
+use thiserror::Error;
+use uuid::Uuid;
+
+mod audio_config;
+mod pitch;
+mod playback;
+mod rodio_backend;
+mod rodio_player;
+
+pub use playback::{
+    AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackResponse,
+    PlaybackService, PlaybackSnapshot, PlaybackStatus,
+};
+pub use rodio_backend::RodioBackend;
+
+/// The synchronized lyric rows a frontend should present around the playback position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LyricWindow {
+    pub range: Range<usize>,
+    pub current: Option<usize>,
+}
+
+/// Keeps a small amount of lyric history while reserving most rows for upcoming lines.
+#[must_use]
+pub fn lyric_window(
+    timeline: &LyricsTimeline,
+    position: Duration,
+    visible_rows: usize,
+) -> LyricWindow {
+    let total = timeline.lines().len();
+    let current = timeline.active_index(position, 0);
+    if total == 0 || visible_rows == 0 {
+        return LyricWindow {
+            range: 0..0,
+            current,
+        };
+    }
+    let look_behind = (visible_rows / 4).min(2);
+    let mut start = current.map_or(0, |current| current.saturating_sub(look_behind));
+    let end = start.saturating_add(visible_rows).min(total);
+    start = end.saturating_sub(visible_rows).min(start);
+    LyricWindow {
+        range: start..end,
+        current,
+    }
+}
+
+/// A project row ready for presentation by any K3 frontend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub path: PathBuf,
+    pub source_available: bool,
+    pub document_revision: Option<Arc<[u8]>>,
+}
+
+/// Discovers durable K3 projects without exposing repository details to frontends.
+pub struct ProjectLibrary;
+
+impl ProjectLibrary {
+    /// Scans one projects root and returns valid projects in stable title order.
+    ///
+    /// Directories that do not contain a readable K3 project are ignored. A project whose
+    /// source media has disappeared remains visible and is marked unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root is not a directory or cannot be read.
+    pub fn scan(root: &std::path::Path) -> Result<Vec<ProjectSummary>, LibraryError> {
+        if !root.is_dir() {
+            return Err(LibraryError::NotDirectory(root.to_path_buf()));
+        }
+        let repository = FileProjectRepository;
+        let mut projects = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            let Ok(project) = repository.open(&path) else {
+                continue;
+            };
+            projects.push(ProjectSummary {
+                id: project.id(),
+                title: project.title().to_owned(),
+                source_available: project.source_path().is_file(),
+                document_revision: project_document_revision(&path),
+                path,
+            });
+        }
+        projects.sort_by(|left, right| {
+            left.title
+                .to_lowercase()
+                .cmp(&right.title.to_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(projects)
+    }
+
+    /// Filters a previously scanned library by a Unicode title substring.
+    #[must_use]
+    pub fn filter<'a>(projects: &'a [ProjectSummary], query: &str) -> Vec<&'a ProjectSummary> {
+        let query = query.trim().to_lowercase();
+        projects
+            .iter()
+            .filter(|project| query.is_empty() || project.title.to_lowercase().contains(&query))
+            .collect()
+    }
+}
+
+/// Audio sources a frontend may select for project playback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrackKind {
+    Original,
+    Accompaniment,
+    Vocals,
+}
+
+impl TrackKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Original => "Original",
+            Self::Accompaniment => "Accompaniment",
+            Self::Vocals => "Vocals",
+        }
+    }
+}
+
+/// One selectable project track, including unavailable tracks so a UI can explain them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectTrack {
+    pub kind: TrackKind,
+    pub path: Option<PathBuf>,
+}
+
+impl ProjectTrack {
+    #[must_use]
+    pub fn available(&self) -> bool {
+        self.path.as_ref().is_some_and(|path| path.is_file())
+    }
+}
+
+/// Project data prepared for playback without exposing JSON or repository details.
+#[derive(Clone, Debug)]
+pub struct LoadedProject {
+    pub id: Uuid,
+    pub title: String,
+    pub root: PathBuf,
+    pub tracks: Vec<ProjectTrack>,
+    pub lyrics: Option<LyricsTimeline>,
+    pub key_shift_semitones: i8,
+    pub document_revision: Option<Arc<[u8]>>,
+}
+
+impl LoadedProject {
+    /// Opens one durable project and resolves the media needed for presentation and playback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project, lyrics, or referenced paths cannot be read.
+    pub fn open(root: &std::path::Path) -> Result<Self, LoadProjectError> {
+        let project = FileProjectRepository.open(root)?;
+        let mut tracks = vec![ProjectTrack {
+            kind: TrackKind::Original,
+            path: Some(project.source_path()),
+        }];
+        let (accompaniment, vocals) = match project.separation() {
+            SeparationState::Ready(manifest) => (
+                Some(manifest.accompaniment.resolve(project.root())),
+                Some(manifest.vocals.resolve(project.root())),
+            ),
+            _ => (None, None),
+        };
+        tracks.push(ProjectTrack {
+            kind: TrackKind::Accompaniment,
+            path: accompaniment,
+        });
+        tracks.push(ProjectTrack {
+            kind: TrackKind::Vocals,
+            path: vocals,
+        });
+        let lyrics = project
+            .lyrics()
+            .map(|lyrics| lyrics.resolve(project.root()))
+            .filter(|path| path.is_file())
+            .map(fs::read_to_string)
+            .transpose()?
+            .map(|text| LyricsTimeline::parse(&text));
+        Ok(Self {
+            id: project.id(),
+            title: project.title().to_owned(),
+            root: project.root().to_path_buf(),
+            tracks,
+            lyrics,
+            key_shift_semitones: project.key_shift_semitones(),
+            document_revision: project_document_revision(root),
+        })
+    }
+
+    #[must_use]
+    pub fn track(&self, kind: TrackKind) -> Option<&ProjectTrack> {
+        self.tracks.iter().find(|track| track.kind == kind)
+    }
+
+    #[must_use]
+    pub fn default_track(&self) -> Option<TrackKind> {
+        [TrackKind::Accompaniment, TrackKind::Original]
+            .into_iter()
+            .find(|kind| self.track(*kind).is_some_and(ProjectTrack::available))
+    }
+}
+
+fn project_document_revision(root: &Path) -> Option<Arc<[u8]>> {
+    fs::read(root.join("project.json")).ok().map(Arc::from)
+}
+
+#[derive(Debug, Error)]
+pub enum LibraryError {
+    #[error("projects root is not a readable directory: {0}")]
+    NotDirectory(PathBuf),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum LoadProjectError {
+    #[error(transparent)]
+    Project(#[from] ProjectError),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}

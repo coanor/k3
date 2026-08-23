@@ -16,13 +16,15 @@ env:
 jobs:
   verify:
     name: Verify workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
       - name: Install Linux audio headers
-        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          libasound2-dev pkg-config libgl1-mesa-dri weston xvfb
 
       - name: Select stable Rust
         run: |
@@ -33,8 +35,53 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --locked
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build GUI smoke binary
+        run: cargo build --package k3-gui --locked
+
+      - name: Smoke-test GUI on X11
+        run: |
+          set +e
+          timeout 5s xvfb-run -a env \
+            K3_GUI_SETTINGS_PATH="$RUNNER_TEMP/k3-x11-settings.json" \
+            K3_GUI_LOG_PATH="$RUNNER_TEMP/k3-x11.log" \
+            ./target/debug/k3-gui
+          status=$?
+          set -e
+          test "$status" -eq 124
+
+      - name: Smoke-test GUI on Wayland
+        run: |
+          runtime_dir="$RUNNER_TEMP/k3-wayland-runtime"
+          mkdir -p "$runtime_dir"
+          chmod 700 "$runtime_dir"
+          XDG_RUNTIME_DIR="$runtime_dir" weston \
+            --backend=headless-backend.so \
+            --socket=k3-ci-wayland \
+            --idle-time=0 \
+            --log="$RUNNER_TEMP/weston.log" &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            [[ -S "$runtime_dir/k3-ci-wayland" ]] && break
+            sleep 0.1
+          done
+          [[ -S "$runtime_dir/k3-ci-wayland" ]]
+          set +e
+          XDG_RUNTIME_DIR="$runtime_dir" \
+            WAYLAND_DISPLAY=k3-ci-wayland \
+            XDG_SESSION_TYPE=wayland \
+            K3_GUI_SETTINGS_PATH="$RUNNER_TEMP/k3-wayland-settings.json" \
+            K3_GUI_LOG_PATH="$RUNNER_TEMP/k3-wayland.log" \
+            timeout 5s ./target/debug/k3-gui
+          status=$?
+          set -e
+          test "$status" -eq 124
 
   build:
     name: Build ${{ matrix.package }}
@@ -90,7 +137,12 @@ jobs:
           rustup target add "$BUILD_TARGET"
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          cargo build --release --locked --target "$BUILD_TARGET" --package k3
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            cargo build --release --locked --target "$BUILD_TARGET" --package k3-gui
+          fi
 
       - name: Package Linux or macOS distribution
         if: runner.os != 'Windows'
@@ -101,10 +153,18 @@ jobs:
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             platform=linux
           fi
-          scripts/package-dist.sh \
-            "$platform" \
-            "$PACKAGE_NAME" \
-            "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+          if [[ "$platform" == "linux" ]]; then
+            scripts/package-dist.sh \
+              "$platform" \
+              "$PACKAGE_NAME" \
+              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME" \
+              "target/$BUILD_TARGET/release/k3-gui"
+          else
+            scripts/package-dist.sh \
+              "$platform" \
+              "$PACKAGE_NAME" \
+              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+          fi
 
       - name: Package Windows distribution
         if: runner.os == 'Windows'

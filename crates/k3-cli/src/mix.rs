@@ -295,14 +295,14 @@ mod tests {
         project
             .set_take_render("take-1", VocalEffectPreset::Ktv, ktv.relative_path)
             .unwrap();
-        repository.save(&project).unwrap();
+        repository.save(&mut project).unwrap();
 
         let theater = render_take_preview(&project, "take-1", VocalEffectPreset::Theater).unwrap();
         assert_ne!(ktv_audio, fs::read(&theater.path).unwrap());
         project
             .set_take_render("take-1", VocalEffectPreset::Theater, theater.relative_path)
             .unwrap();
-        repository.save(&project).unwrap();
+        repository.save(&mut project).unwrap();
 
         let reopened = repository.open(root).unwrap();
         assert_eq!(
