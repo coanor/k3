@@ -110,14 +110,14 @@ component PlayButton inherits Rectangle {
     accessible-label: root.playing ? "Pause" : "Play";
     accessible-enabled: root.enabled;
 
-    Text {
-        text: root.playing ? "Ⅱ" : "▶";
-        color: Tokens.paper-ink;
-        font-size: root.playing ? 20px : 18px;
-        font-weight: 700;
-        x: root.playing ? 0px : 2px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    Image {
+        width: 20px;
+        height: 20px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.playing ? @image-url("../assets/pause.svg") : @image-url("../assets/play.svg");
+        image-fit: contain;
+        colorize: Tokens.paper-ink;
     }
 
     play-touch := TouchArea {
@@ -249,6 +249,18 @@ export component K3Window inherits Window {
     forward-focus: shortcuts;
     shortcuts := FocusScope {
         key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                if (root.show-about) {
+                    root.show-about = false; return accept;
+                }
+                if (root.confirm-root-change) {
+                    root.confirm-root-change = false; return accept;
+                }
+                if (root.setup-mode && root.projects-root != "") {
+                    root.setup-mode = false; return accept;
+                }
+                return reject;
+            }
             if (event.text == " " && root.playback-ready) {
                 root.playback-command("toggle"); return accept;
             }
@@ -321,6 +333,13 @@ export component K3Window inherits Window {
                     SectionLabel {
                         text: "REHEARSAL ROOM";
                         vertical-alignment: center;
+                    }
+                    if root.projects-root != "": ActionButton {
+                        width: 30px;
+                        height: 30px;
+                        accessible-name: "Cancel folder selection";
+                        icon: @image-url("../assets/close.svg");
+                        clicked => { root.setup-mode = false; }
                     }
                 }
                 Text {
@@ -492,14 +511,18 @@ export component K3Window inherits Window {
                         height: 1px;
                         background: Tokens.line;
                     }
-                    Text {
-                        text: root.projects-root;
-                        color: Tokens.faint;
-                        font-size: 10px;
-                        overflow: elide;
-                    }
                     HorizontalLayout {
                         height: 36px;
+                        horizontal-stretch: 1;
+                        spacing: 8px;
+                        Text {
+                            text: root.projects-root;
+                            color: Tokens.faint;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
                         ActionButton {
                             width: 36px;
                             accessible-name: "Change projects folder";
@@ -509,7 +532,6 @@ export component K3Window inherits Window {
                                 else { root.setup-mode = true; }
                             }
                         }
-                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
@@ -855,23 +877,19 @@ export component K3Window inherits Window {
                     Rectangle { horizontal-stretch: 1; }
 
                     VerticalLayout {
-                        width: 300px;
+                        width: 298px;
                         spacing: 7px;
+                        SectionLabel { text: "KEY"; }
                         HorizontalLayout {
-                            SectionLabel { text: "KEY"; }
-                            Rectangle { horizontal-stretch: 1; }
-                            SectionLabel { text: "VOLUME  " + round(root.volume * 100) + "%"; }
-                        }
-                        HorizontalLayout {
-                            spacing: 7px;
+                            spacing: 6px;
                             ActionButton {
-                                width: 42px;
+                                width: 36px;
                                 label: "−";
                                 enabled: root.playback-ready && root.key-shift > -6;
                                 clicked => { root.set-key(root.key-shift - 1); }
                             }
                             Rectangle {
-                                width: 44px;
+                                width: 40px;
                                 height: 36px;
                                 border-radius: 5px;
                                 background: Tokens.canvas;
@@ -886,16 +904,24 @@ export component K3Window inherits Window {
                                 }
                             }
                             ActionButton {
-                                width: 42px;
+                                width: 36px;
                                 label: "+";
                                 enabled: root.playback-ready && root.key-shift < 6;
                                 clicked => { root.set-key(root.key-shift + 1); }
                             }
                             ActionButton {
-                                width: 54px;
+                                width: 50px;
                                 label: "Reset";
                                 enabled: root.playback-ready && root.key-shift != 0;
                                 clicked => { root.set-key(0); }
+                            }
+                            Image {
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../assets/volume.svg");
+                                image-fit: contain;
+                                colorize: Tokens.muted;
+                                vertical-alignment: center;
                             }
                             Slider {
                                 width: 90px;
@@ -903,6 +929,7 @@ export component K3Window inherits Window {
                                 maximum: 1;
                                 step: 0.01;
                                 value: root.volume;
+                                accessible-label: "Volume";
                                 changed(value) => { root.set-volume(value); }
                                 released(value) => { root.save-volume(value); }
                             }

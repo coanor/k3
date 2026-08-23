@@ -104,7 +104,8 @@ GUI 使用独立、带 schema version 的设置文件，存放于平台标准用
 
 当前轨道、播放位置和播放/暂停状态不持久化。首次启动只选择 `projects_root`，不要求
 `music_root` 或分轨 worker 配置。设置页可更改工程根目录；正在播放时必须先确认，
-新目录验证失败时保留旧配置。
+新目录验证失败时保留旧配置。已有工程根目录时，选择界面必须提供关闭图标，并允许用
+`Escape` 取消返回；主界面中的目录图标与当前路径位于同一行且靠右。
 
 ## 7. 工程库行为
 
@@ -148,10 +149,10 @@ GUI 的用户可见文字首期全部使用英文。文案集中管理，不散�
 
 正式界面直接使用 Slint，并建立仅覆盖实际需求的小型 K3 组件集：ActionButton、
 PlayButton、TrackPill、SectionLabel 和歌词行。颜色、排版、间距、圆角和状态来自统一
-design tokens。仅 Refresh、Retry、Reload、Folder 和 Restart 等具有通用图形语义的动作
-使用居中的矢量图标，不显示重复文字，但必须保留 accessible label。按钮默认不显示描边，
-只通过 hover、键盘焦点和按下状态的背景变化提供反馈。时间跳转、调号和确认类操作不得
-为了视觉一致性强行改成纯图标。
+design tokens。Refresh、Retry、Reload、Folder、Close、Play / Pause、Restart 和 Volume
+等具有通用图形语义的动作使用居中的矢量图标，不显示重复文字或音量百分比，但必须保留
+accessible label。按钮默认不显示描边，只通过 hover、键盘焦点和按下状态的背景变化
+提供反馈。时间跳转、调号和确认类操作不得为了视觉一致性强行改成纯图标。
 
 发行包捆绑开放许可的 UI 字体和完整 CJK fallback，并包含字体许可证，避免精简 Linux
 系统缺少中文字形。
@@ -180,6 +181,7 @@ design tokens。仅 Refresh、Retry、Reload、Folder 和 Restart 等具有通�
 - `Left` / `Right`：后退或前进 5 秒；
 - `Up` / `Down`：调整音量；
 - `1` / `2` / `3`：Original / Accompaniment / Vocals；
+- `Escape`：关闭当前最上层弹窗，或取消工程目录选择；
 - `Ctrl/Cmd+F`：聚焦搜索；
 - `Ctrl/Cmd+R`：刷新工程库。
 
