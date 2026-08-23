@@ -373,6 +373,7 @@ struct MediaLibrary {
     job: Option<ImportJob>,
     queue: VecDeque<SeparationRequest>,
     message: Option<String>,
+    netease_message: Option<String>,
     music_source: MusicSource,
     netease: Option<NeteasePanel>,
     confirm_exit: bool,
@@ -396,6 +397,7 @@ impl MediaLibrary {
             job: None,
             queue: VecDeque::new(),
             message: None,
+            netease_message: None,
             music_source: MusicSource::Local,
             netease,
             confirm_exit: false,
@@ -413,15 +415,17 @@ impl MediaLibrary {
         Ok(())
     }
 
-    fn start_import(&mut self) {
-        if self
-            .netease
-            .as_ref()
-            .is_some_and(NeteasePanel::active_download)
-        {
-            self.message = Some("Wait for the NetEase download queue to finish".into());
-            return;
+    fn refresh_after_netease_download(&mut self) {
+        if let Err(error) = self.refresh() {
+            let warning = format!("Library refresh failed: {error}");
+            self.netease_message = Some(match self.netease_message.take() {
+                Some(message) => format!("{message}\n{warning}"),
+                None => warning,
+            });
         }
+    }
+
+    fn start_import(&mut self) {
         let Some(source) = self.snapshot.sources.get(self.source_selected) else {
             self.message = Some("No importable audio files".into());
             return;
@@ -525,6 +529,12 @@ impl MediaLibrary {
         }
         self.queue.push_back(SeparationRequest { source });
         true
+    }
+
+    fn project_is_being_separated(&self, project_path: &Path) -> bool {
+        self.job.as_ref().is_some_and(|job| {
+            library::source_entry_for_path(&self.config, &job.source).project_path == project_path
+        })
     }
 }
 
@@ -1630,13 +1640,13 @@ fn poll_netease_chrome_login(library: &mut MediaLibrary) -> Result<(), Box<dyn E
             let session = panel.client.session()?.ok_or_else(|| {
                 NeteaseError::Protocol("Chrome login completed without a saved session".into())
             })?;
-            library.message = Some(format!(
+            library.netease_message = Some(format!(
                 "Logged in to NetEase as {} via Chrome",
                 session.nickname()
             ));
             panel.resume_after_login(&library.config.music_root);
         }
-        Err(error) => library.message = Some(format!("Chrome login failed: {error}")),
+        Err(error) => library.netease_message = Some(format!("Chrome login failed: {error}")),
     }
     Ok(())
 }
@@ -1676,7 +1686,7 @@ fn poll_netease_login(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>> 
             }
             Ok(LoginStatus::LoggedIn) => {
                 panel.modal = None;
-                library.message = panel
+                library.netease_message = panel
                     .client
                     .session()?
                     .map(|session| format!("Logged in to NetEase as {}", session.nickname()));
@@ -1715,7 +1725,7 @@ fn poll_netease_catalog(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>
                 panel.page_offset = 0;
                 panel.search_query = None;
                 panel.selected_ids.clear();
-                library.message = Some(format!("Loaded {count} liked songs"));
+                library.netease_message = Some(format!("Loaded {count} liked songs"));
             }
             Ok(CatalogResult::Search { query, page }) => {
                 let count = page.songs.len();
@@ -1726,13 +1736,15 @@ fn poll_netease_catalog(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>
                 panel.page_offset = page.offset;
                 panel.search_query = Some(query);
                 panel.selected_ids.clear();
-                library.message = Some(format!("Search returned {count} of {total} songs"));
+                library.netease_message = Some(format!("Search returned {count} of {total} songs"));
             }
             Err(NeteaseError::LoginRequired) => {
                 panel.expire_session()?;
-                library.message = Some(netease_session_expired_hint().into());
+                library.netease_message = Some(netease_session_expired_hint().into());
             }
-            Err(error) => library.message = Some(format!("NetEase catalog failed: {error}")),
+            Err(error) => {
+                library.netease_message = Some(format!("NetEase catalog failed: {error}"));
+            }
         }
     }
     Ok(())
@@ -1765,7 +1777,7 @@ fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error
                 if quality < job.song.max_quality {
                     panel.download_summary.downgraded += 1;
                 }
-                library.message = Some(format!(
+                library.netease_message = Some(format!(
                     "Downloaded {} · {quality}: {} · project queued",
                     job.song.title,
                     path.display()
@@ -1774,19 +1786,21 @@ fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error
             }
             Ok(DownloadOutcome::Skipped { quality, .. }) => {
                 panel.download_summary.skipped += 1;
-                library.message = Some(format!("Skipped existing {} · {quality}", job.song.title));
+                library.netease_message =
+                    Some(format!("Skipped existing {} · {quality}", job.song.title));
             }
             Ok(DownloadOutcome::Unavailable { reason, .. }) => {
                 panel
                     .download_summary
                     .failed
                     .push(format!("{}: {reason}", job.song.title));
-                library.message = Some(format!("Skipped unavailable {}: {reason}", job.song.title));
+                library.netease_message =
+                    Some(format!("Skipped unavailable {}: {reason}", job.song.title));
             }
             Err(NeteaseError::LoginRequired) => {
                 panel.download_queue.push_front(job.song);
                 panel.expire_session()?;
-                library.message = Some(netease_session_expired_hint().into());
+                library.netease_message = Some(netease_session_expired_hint().into());
                 return Ok(());
             }
             Err(error) => {
@@ -1794,25 +1808,36 @@ fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error
                     .download_summary
                     .failed
                     .push(format!("{}: {error}", job.song.title));
-                library.message = Some(format!("Download failed {}: {error}", job.song.title));
+                library.netease_message =
+                    Some(format!("Download failed {}: {error}", job.song.title));
             }
         }
         (downloaded_path, panel.download_queue.is_empty())
     };
 
-    if let Some(path) = downloaded_path {
+    let refreshed_after_download = if let Some(path) = downloaded_path {
         library.enqueue_downloaded_source(&path);
+        library.refresh_after_netease_download();
+        true
+    } else {
+        false
+    };
+
+    if library.job.is_none()
+        && let Some(path) = library.start_next_queued()
+    {
+        library.message = Some(format!(
+            "Creating project and separating: {}",
+            display_name(&path)
+        ));
     }
 
     if downloads_finished {
         let panel = library.netease.as_ref().expect("source is configured");
-        let mut message = format_netease_download_summary(&panel.download_summary);
-        if let Some(path) = library.start_next_queued() {
-            message.push_str("\nCreating project and separating: ");
-            message.push_str(&display_name(&path));
+        library.netease_message = Some(format_netease_download_summary(&panel.download_summary));
+        if !refreshed_after_download {
+            library.refresh_after_netease_download();
         }
-        library.message = Some(message);
-        library.refresh()?;
     } else if let Some(panel) = &mut library.netease {
         panel.launch_next_download(&library.config.music_root);
     }
@@ -2026,35 +2051,7 @@ fn handle_library_key(
             return Ok(true);
         }
         _ => match library.focus {
-            LibraryFocus::Projects => match key {
-                KeyCode::Up => {
-                    library.project_selected = library.project_selected.saturating_sub(1);
-                }
-                KeyCode::Down => {
-                    library.project_selected = (library.project_selected + 1)
-                        .min(library.snapshot.projects.len().saturating_sub(1));
-                }
-                KeyCode::Enter => {
-                    if current
-                        .as_ref()
-                        .is_some_and(|app| app.session.state() != RecordingState::Idle)
-                    {
-                        library.message =
-                            Some("Stop or cancel recording before switching projects".into());
-                    } else if let Some(entry) =
-                        library.snapshot.projects.get(library.project_selected)
-                    {
-                        if let Some(app) = current
-                            && !app.save_project()
-                        {
-                            return Ok(false);
-                        }
-                        *current = Some(open_library_project(&library.config, &entry.path)?);
-                        library.message = Some(format!("Opened: {}", entry.title));
-                    }
-                }
-                _ => {}
-            },
+            LibraryFocus::Projects => handle_library_project_key(library, current, key)?,
             LibraryFocus::Sources => {
                 if library.music_source == MusicSource::Local {
                     handle_library_source_key(library, current, key)?;
@@ -2070,6 +2067,45 @@ fn handle_library_key(
         },
     }
     Ok(false)
+}
+
+fn handle_library_project_key(
+    library: &mut MediaLibrary,
+    current: &mut Option<App>,
+    key: KeyCode,
+) -> Result<(), Box<dyn Error>> {
+    match key {
+        KeyCode::Up => {
+            library.project_selected = library.project_selected.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            library.project_selected = (library.project_selected + 1)
+                .min(library.snapshot.projects.len().saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            if current
+                .as_ref()
+                .is_some_and(|app| app.session.state() != RecordingState::Idle)
+            {
+                library.message = Some("Stop or cancel recording before switching projects".into());
+            } else if let Some(entry) = library.snapshot.projects.get(library.project_selected) {
+                if library.project_is_being_separated(&entry.path) {
+                    library.message =
+                        Some("Wait for separation to finish before opening this project".into());
+                } else {
+                    if let Some(app) = current
+                        && !app.save_project()
+                    {
+                        return Ok(());
+                    }
+                    *current = Some(open_library_project(&library.config, &entry.path)?);
+                    library.message = Some(format!("Opened: {}", entry.title));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn confirm_library_exit(
@@ -2110,7 +2146,6 @@ fn handle_netease_modal_key(
     library: &mut MediaLibrary,
     key: KeyCode,
 ) -> Result<(), Box<dyn Error>> {
-    let import_busy = library.job.is_some() || !library.queue.is_empty();
     let Some(panel) = &mut library.netease else {
         return Ok(());
     };
@@ -2126,7 +2161,8 @@ fn handle_netease_modal_key(
             KeyCode::Char('y' | 'Y') => {
                 panel.risk_store.accept()?;
                 panel.modal = None;
-                library.message = Some("NetEase experimental source enabled locally".into());
+                library.netease_message =
+                    Some("NetEase experimental source enabled locally".into());
             }
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                 panel.modal = None;
@@ -2143,7 +2179,7 @@ fn handle_netease_modal_key(
             }
             KeyCode::Char('c') => {
                 panel.start_chrome_login();
-                library.message = Some("Importing NetEase login from Chrome...".into());
+                library.netease_message = Some("Importing NetEase login from Chrome...".into());
             }
             KeyCode::Char('r') => panel.start_login()?,
             _ => {}
@@ -2156,10 +2192,10 @@ fn handle_netease_modal_key(
                     _ => String::new(),
                 };
                 if query.trim().is_empty() {
-                    library.message = Some("Enter a search query".into());
+                    library.netease_message = Some("Enter a search query".into());
                 } else {
                     panel.start_search(query, 0);
-                    library.message = Some("Searching NetEase songs...".into());
+                    library.netease_message = Some("Searching NetEase songs...".into());
                 }
             }
             KeyCode::Backspace => {
@@ -2175,17 +2211,17 @@ fn handle_netease_modal_key(
             _ => {}
         },
         3 => match key {
-            KeyCode::Char('y' | 'Y') if !import_busy => {
+            KeyCode::Char('y' | 'Y') if panel.active_download() => {
                 panel.modal = None;
-                panel.queue_selected(&library.config.music_root);
-                library.message = Some(format!(
-                    "Downloading {} selected NetEase songs...",
-                    panel.selected_ids.len()
-                ));
+                library.netease_message = Some(netease_download_busy_hint().into());
             }
             KeyCode::Char('y' | 'Y') => {
                 panel.modal = None;
-                library.message = Some("Wait for the separation queue to finish".into());
+                panel.queue_selected(&library.config.music_root);
+                library.netease_message = Some(format!(
+                    "Downloading {} selected NetEase songs...",
+                    panel.selected_ids.len()
+                ));
             }
             KeyCode::Char('n' | 'N') | KeyCode::Esc => panel.modal = None,
             _ => {}
@@ -2199,7 +2235,6 @@ fn handle_netease_source_key(
     library: &mut MediaLibrary,
     key: KeyCode,
 ) -> Result<(), Box<dyn Error>> {
-    let import_busy = library.job.is_some() || !library.queue.is_empty();
     let Some(panel) = &mut library.netease else {
         return Ok(());
     };
@@ -2232,14 +2267,14 @@ fn handle_netease_source_key(
         }
         KeyCode::Char('c') if !panel.is_logged_in() => {
             panel.start_chrome_login();
-            library.message = Some("Importing NetEase login from Chrome...".into());
+            library.netease_message = Some("Importing NetEase login from Chrome...".into());
         }
         KeyCode::Char('i') if !panel.is_logged_in() && panel.chrome_login_job.is_none() => {
             panel.start_login()?;
         }
         KeyCode::Char('l') if panel.is_logged_in() => {
             panel.start_liked();
-            library.message = Some("Loading liked songs...".into());
+            library.netease_message = Some("Loading liked songs...".into());
         }
         KeyCode::Char('/') if panel.is_logged_in() => {
             panel.modal = Some(NeteaseModal::Search(String::new()));
@@ -2249,7 +2284,7 @@ fn handle_netease_source_key(
             panel.catalog_job = None;
             panel.songs.clear();
             panel.selected_ids.clear();
-            library.message = Some("Logged out of NetEase".into());
+            library.netease_message = Some("Logged out of NetEase".into());
         }
         KeyCode::Char('r') if panel.is_logged_in() => match panel.view {
             NeteaseView::Liked => panel.start_liked(),
@@ -2264,20 +2299,23 @@ fn handle_netease_source_key(
         KeyCode::Char('A') if panel.is_logged_in() => {
             if panel.view == NeteaseView::Liked {
                 panel.select_all_liked();
-                library.message = Some(format!(
+                library.netease_message = Some(format!(
                     "Selected all {} liked songs · press Enter to review",
                     panel.selected_ids.len()
                 ));
             } else {
-                library.message = Some("Press l before selecting all liked songs".into());
+                library.netease_message = Some("Press l before selecting all liked songs".into());
             }
         }
+        KeyCode::Enter
+            if panel.is_logged_in()
+                && panel.active_download()
+                && !panel.selected_ids.is_empty() =>
+        {
+            library.netease_message = Some(netease_download_busy_hint().into());
+        }
         KeyCode::Enter if panel.is_logged_in() && !panel.selected_ids.is_empty() => {
-            if import_busy {
-                library.message = Some("Wait for the separation queue to finish".into());
-            } else {
-                panel.modal = Some(NeteaseModal::ConfirmDownload);
-            }
+            panel.modal = Some(NeteaseModal::ConfirmDownload);
         }
         KeyCode::Enter if panel.is_logged_in() => {
             panel.toggle_current();
@@ -2286,7 +2324,7 @@ fn handle_netease_source_key(
             }
         }
         KeyCode::Char('c' | 'i' | 'l' | '/' | 'r' | ' ') | KeyCode::Enter => {
-            library.message = Some(netease_sign_in_hint().into());
+            library.netease_message = Some(netease_sign_in_hint().into());
         }
         _ => {}
     }
@@ -2928,7 +2966,11 @@ fn draw_netease_sources(frame: &mut Frame, area: Rect, library: &MediaLibrary) {
     let Some(panel) = &library.netease else {
         return;
     };
-    let status_height = if library.message.is_some() { 6 } else { 0 };
+    let status_height = if library.netease_message.is_some() {
+        6
+    } else {
+        0
+    };
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -2999,7 +3041,7 @@ fn draw_netease_sources(frame: &mut Frame, area: Rect, library: &MediaLibrary) {
         .wrap(Wrap { trim: false }),
         list_area,
     );
-    if let Some(message) = &library.message {
+    if let Some(message) = &library.netease_message {
         let failed = netease_message_is_failure(message);
         draw_library_source_message(frame, areas[1], message, failed);
     }
@@ -3010,11 +3052,12 @@ fn netease_message_is_failure(message: &str) -> bool {
         "Chrome login failed:",
         "NetEase catalog failed:",
         "Download failed ",
-        "Separation failed:",
+        "Library refresh failed:",
     ]
     .into_iter()
     .any(|prefix| message.starts_with(prefix))
         || message.contains("\nFailures:")
+        || message.contains("\nLibrary refresh failed:")
 }
 
 fn netease_song_label(song: &Song, selected: bool) -> String {
@@ -3035,6 +3078,10 @@ fn netease_song_label(song: &Song, selected: bool) -> String {
 
 fn netease_sign_in_hint() -> &'static str {
     "Press c to import Chrome login · i for QR"
+}
+
+fn netease_download_busy_hint() -> &'static str {
+    "Wait for the current NetEase download queue to finish"
 }
 
 fn netease_session_expired_hint() -> &'static str {
@@ -3591,8 +3638,9 @@ mod tests {
         App, CatalogJob, ChromeLoginJob, FooterAction, ImportJob, LyricCountdown, LyricsPicker,
         LyricsQueryEditor, MediaLibrary, NeteaseDownloadJob, NeteaseModal, NeteasePanel,
         NeteaseView, PlaybackState, PlaybackTrack, SeparationRequest, TrackKind,
-        effect_preset_for_key, fit_source_name, format_duration, handle_library_key,
-        handle_library_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
+        draw_library_sources, effect_preset_for_key, fit_source_name, format_duration,
+        handle_library_key, handle_library_source_key, handle_netease_modal_key,
+        handle_netease_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
         mode_allows_footer_action, netease_message_is_failure, netease_sign_in_hint,
         netease_song_label, poll_import_job, poll_netease_catalog, poll_netease_chrome_login,
         poll_netease_download, should_handle_key,
@@ -3688,10 +3736,14 @@ mod tests {
         assert!(netease_message_is_failure(
             "Download failed Song: network error"
         ));
+        assert!(netease_message_is_failure(
+            "Downloaded Song · lossless: song.flac · project queued\n\
+             Library refresh failed: missing directory"
+        ));
     }
 
     #[test]
-    fn completed_netease_download_is_queued_for_project_separation() {
+    fn completed_netease_download_starts_separation_while_next_download_runs() {
         let sandbox = tempfile::tempdir().unwrap();
         let music = sandbox.path().join("music");
         let projects = sandbox.path().join("projects");
@@ -3737,9 +3789,285 @@ mod tests {
 
         poll_netease_download(&mut library).unwrap();
 
-        assert_eq!(library.queue.len(), 1);
-        assert_eq!(library.queue[0].source.path, downloaded);
-        assert!(!library.queue[0].source.imported);
+        assert_eq!(library.job.as_ref().unwrap().source, downloaded);
+        assert!(library.queue.is_empty());
+        assert_eq!(
+            library
+                .netease
+                .as_ref()
+                .unwrap()
+                .download_job
+                .as_ref()
+                .unwrap()
+                .song
+                .title,
+            "Next"
+        );
+    }
+
+    #[test]
+    fn scan_failure_does_not_stop_separation_or_the_next_netease_download() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        let downloaded = music.join("NetEase/Artist-Song.flac");
+        fs::create_dir_all(downloaded.parent().unwrap()).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(&downloaded, b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let completed = Song {
+            id: 7,
+            title: "Song".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        };
+        let next = Song {
+            id: 8,
+            title: "Next".into(),
+            ..completed.clone()
+        };
+        let (sender, result) = mpsc::channel();
+        let panel = library.netease.as_mut().unwrap();
+        panel.download_job = Some(NeteaseDownloadJob {
+            song: completed,
+            result,
+        });
+        panel.download_queue.push_back(next);
+        sender
+            .send(Ok(crate::netease::DownloadOutcome::Downloaded {
+                path: downloaded.clone(),
+                quality: Quality::Lossless,
+            }))
+            .unwrap();
+        fs::remove_dir_all(&projects).unwrap();
+
+        poll_netease_download(&mut library).unwrap();
+
+        assert_eq!(library.job.as_ref().unwrap().source, downloaded);
+        assert_eq!(
+            library
+                .netease
+                .as_ref()
+                .unwrap()
+                .download_job
+                .as_ref()
+                .unwrap()
+                .song
+                .title,
+            "Next"
+        );
+        assert!(
+            library
+                .netease_message
+                .as_deref()
+                .unwrap()
+                .contains("Library refresh failed:")
+        );
+    }
+
+    #[test]
+    fn local_separation_can_start_while_netease_download_is_running() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let source = music.join("local.wav");
+        fs::write(&source, b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let (_sender, result) = mpsc::channel();
+        library.netease.as_mut().unwrap().download_job = Some(NeteaseDownloadJob {
+            song: Song {
+                id: 7,
+                title: "Online".into(),
+                artists: vec!["Artist".into()],
+                album: "Album".into(),
+                cover_url: None,
+                max_quality: Quality::Lossless,
+                available: true,
+            },
+            result,
+        });
+
+        library.start_import();
+
+        assert_eq!(library.job.as_ref().unwrap().source, source);
+        assert!(library.netease.as_ref().unwrap().download_job.is_some());
+    }
+
+    #[test]
+    fn netease_download_can_start_while_separation_is_running() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let (_sender, result) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source: sandbox.path().join("active.wav"),
+            result,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        });
+        let panel = library.netease.as_mut().unwrap();
+        let song = Song {
+            id: 7,
+            title: "Online".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        };
+        panel.selected_ids.insert(song.id);
+        panel.songs.push(song);
+        panel.modal = Some(NeteaseModal::ConfirmDownload);
+
+        handle_netease_modal_key(&mut library, KeyCode::Char('y')).unwrap();
+
+        assert!(library.job.is_some());
+        assert!(library.netease.as_ref().unwrap().download_job.is_some());
+    }
+
+    #[test]
+    fn active_netease_download_cannot_be_replaced_by_another_batch() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let active = Song {
+            id: 7,
+            title: "Active".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        };
+        let pending = Song {
+            id: 8,
+            title: "Pending".into(),
+            ..active.clone()
+        };
+        let replacement = Song {
+            id: 9,
+            title: "Replacement".into(),
+            ..active.clone()
+        };
+        let (_sender, result) = mpsc::channel();
+        let panel = library.netease.as_mut().unwrap();
+        panel.download_job = Some(NeteaseDownloadJob {
+            song: active.clone(),
+            result,
+        });
+        panel.download_queue.push_back(pending.clone());
+        panel.songs.push(replacement.clone());
+        panel.selected_ids.insert(replacement.id);
+        panel.download_summary.completed = 1;
+
+        handle_netease_source_key(&mut library, KeyCode::Enter).unwrap();
+
+        assert!(library.netease.as_ref().unwrap().modal.is_none());
+        assert_eq!(
+            library.netease_message.as_deref(),
+            Some("Wait for the current NetEase download queue to finish")
+        );
+
+        library.netease.as_mut().unwrap().modal = Some(NeteaseModal::ConfirmDownload);
+        handle_netease_modal_key(&mut library, KeyCode::Char('y')).unwrap();
+
+        let panel = library.netease.as_ref().unwrap();
+        assert_eq!(panel.download_job.as_ref().unwrap().song, active);
+        assert_eq!(panel.download_queue.front(), Some(&pending));
+        assert_eq!(panel.download_summary.completed, 1);
+    }
+
+    #[test]
+    fn source_switch_restores_each_features_own_status() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(music.join("local.wav"), b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        library.start_import();
+        let (sender, result) = mpsc::channel();
+        library.netease.as_mut().unwrap().catalog_job = Some(CatalogJob { result });
+        sender
+            .send(Ok(super::CatalogResult::Liked(Vec::new())))
+            .unwrap();
+        poll_netease_catalog(&mut library).unwrap();
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        library.music_source = super::MusicSource::Local;
+        terminal
+            .draw(|frame| draw_library_sources(frame, frame.area(), &library))
+            .unwrap();
+        let local = terminal.backend().buffer().content().to_vec();
+        let local = local
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(local.contains("Creating project and separating"), "{local}");
+        assert!(!local.contains("Loaded 0 liked songs"), "{local}");
+
+        library.music_source = super::MusicSource::Netease;
+        terminal
+            .draw(|frame| draw_library_sources(frame, frame.area(), &library))
+            .unwrap();
+        let netease = terminal.backend().buffer().content().to_vec();
+        let netease = netease
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(netease.contains("Loaded 0 liked songs"), "{netease}");
+        assert!(
+            !netease.contains("Creating project and separating"),
+            "{netease}"
+        );
     }
 
     #[test]
@@ -3801,6 +4129,51 @@ mod tests {
     }
 
     #[test]
+    fn active_separation_project_cannot_be_opened() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let source = music.join("active.wav");
+        fs::write(&source, b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let project_path =
+            crate::library::source_entry_for_path(&library.config, &source).project_path;
+        library
+            .snapshot
+            .projects
+            .push(crate::library::ProjectEntry {
+                path: project_path,
+                title: "Active".into(),
+            });
+        let (_sender, result) = mpsc::channel();
+        library.job = Some(ImportJob {
+            source,
+            result,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        });
+        library.focus = super::LibraryFocus::Projects;
+        let mut current = None;
+
+        handle_library_key(&mut library, &mut current, KeyCode::Enter).unwrap();
+
+        assert!(current.is_none());
+        assert_eq!(
+            library.message.as_deref(),
+            Some("Wait for separation to finish before opening this project")
+        );
+    }
+
+    #[test]
     fn completed_chrome_login_updates_status_without_exposing_the_cookie() {
         let sandbox = tempfile::tempdir().unwrap();
         let music = sandbox.path().join("music");
@@ -3842,12 +4215,12 @@ mod tests {
                 .is_some_and(|panel| panel.chrome_login_job.is_none())
         );
         assert_eq!(
-            library.message.as_deref(),
+            library.netease_message.as_deref(),
             Some("Logged in to NetEase as Singer via Chrome")
         );
         assert!(
             !library
-                .message
+                .netease_message
                 .as_deref()
                 .unwrap()
                 .contains("must-not-appear")
@@ -3923,7 +4296,7 @@ mod tests {
         assert!(store.load().unwrap().is_none());
         assert!(library.netease.as_ref().unwrap().modal.is_none());
         assert_eq!(
-            library.message.as_deref(),
+            library.netease_message.as_deref(),
             Some("NetEase session expired · press c to import Chrome login · i for QR")
         );
     }
@@ -3976,7 +4349,7 @@ mod tests {
         assert!(panel.modal.is_none());
         assert_eq!(panel.download_queue.front(), Some(&pending));
         assert_eq!(
-            library.message.as_deref(),
+            library.netease_message.as_deref(),
             Some("NetEase session expired · press c to import Chrome login · i for QR")
         );
     }
