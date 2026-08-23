@@ -24,6 +24,8 @@ pub enum NeteaseError {
     Protocol(String),
     #[error("NetEase login is required")]
     LoginRequired,
+    #[error("cannot import NetEase login from Chrome: {0}")]
+    ChromeLogin(String),
     #[error("cannot write NetEase audio metadata: {0}")]
     Metadata(String),
 }
@@ -221,6 +223,66 @@ pub struct AccountProfile {
     nickname: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BrowserCookie {
+    name: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ChromeCookieProfile {
+    id: String,
+}
+
+trait ChromeCookieSource: Send + Sync {
+    fn profiles(&self) -> Result<Vec<ChromeCookieProfile>, NeteaseError>;
+    fn cookies(&self, profile: &ChromeCookieProfile) -> Result<Vec<BrowserCookie>, NeteaseError>;
+}
+
+struct RookieChromeCookieSource;
+
+impl ChromeCookieSource for RookieChromeCookieSource {
+    fn profiles(&self) -> Result<Vec<ChromeCookieProfile>, NeteaseError> {
+        rookie_cookies::chrome_profiles()
+            .map(|descriptors| {
+                descriptors
+                    .into_iter()
+                    .map(|descriptor| ChromeCookieProfile {
+                        id: descriptor.profile.profile_id.to_string(),
+                    })
+                    .collect()
+            })
+            .map_err(|error| {
+                NeteaseError::ChromeLogin(format!("Chrome profiles could not be read: {error}"))
+            })
+    }
+
+    fn cookies(&self, profile: &ChromeCookieProfile) -> Result<Vec<BrowserCookie>, NeteaseError> {
+        let report =
+            rookie_cookies::chrome_profile(&profile.id, Some(vec!["music.163.com".to_owned()]))
+                .map_err(|error| {
+                    NeteaseError::ChromeLogin(format!(
+                        "a Chrome profile could not be read: {error}"
+                    ))
+                })?;
+        Ok(report
+            .profiles
+            .into_iter()
+            .flat_map(|profile| profile.sources)
+            .filter(|source| {
+                source.selected
+                    && source.status == rookie_cookies::report::SourceStatusCode::succeeded()
+            })
+            .flat_map(|source| source.cookies)
+            .filter(|cookie| matches!(cookie.name.as_str(), "MUSIC_U" | "__csrf"))
+            .map(|cookie| BrowserCookie {
+                name: cookie.name,
+                value: cookie.value,
+            })
+            .collect())
+    }
+}
+
 trait NeteaseProvider: Send + Sync {
     fn begin_login(&self) -> Result<LoginTicket, NeteaseError>;
     fn poll_login(&self, key: &str) -> Result<LoginPoll, NeteaseError>;
@@ -260,6 +322,16 @@ trait NeteaseProvider: Send + Sync {
         Err(NeteaseError::Protocol(
             "this NetEase provider cannot fetch media".into(),
         ))
+    }
+    fn fetch_audio(
+        &self,
+        url: &str,
+        destination: &Path,
+        maximum: usize,
+    ) -> Result<u64, NeteaseError> {
+        let audio = self.fetch_bytes(url, None, maximum)?;
+        write_bytes(destination, &audio)?;
+        Ok(audio.len() as u64)
     }
 }
 
@@ -307,14 +379,55 @@ impl NeteaseClient {
             LoginPoll::Expired => Ok(LoginStatus::Expired),
             LoginPoll::Authorized(authorized) => {
                 let profile = self.provider.account(&authorized.cookie)?;
-                self.session_store.save(&NeteaseSession {
-                    cookie: authorized.cookie,
-                    user_id: profile.user_id,
-                    nickname: profile.nickname,
-                })?;
+                self.save_authenticated_session(authorized.cookie, profile)?;
                 Ok(LoginStatus::LoggedIn)
             }
         }
+    }
+
+    pub fn import_chrome_session(&self) -> Result<NeteaseSession, NeteaseError> {
+        self.import_chrome_session_from(&RookieChromeCookieSource)
+    }
+
+    fn import_chrome_session_from(
+        &self,
+        source: &dyn ChromeCookieSource,
+    ) -> Result<NeteaseSession, NeteaseError> {
+        let profiles = source.profiles()?;
+        let mut candidates_found = 0_usize;
+        for profile in profiles {
+            let cookies = source.cookies(&profile)?;
+            let Some(cookie) = chrome_cookie_header(&cookies) else {
+                continue;
+            };
+            candidates_found += 1;
+            let account = match self.provider.account(&cookie) {
+                Ok(account) => account,
+                Err(NeteaseError::LoginRequired) => continue,
+                Err(error) => return Err(error),
+            };
+            return self.save_authenticated_session(cookie, account);
+        }
+        let message = if candidates_found == 0 {
+            "no usable music.163.com login cookie was found; sign in with Chrome first"
+        } else {
+            "Chrome login cookies were found but NetEase rejected them; refresh the Chrome login and retry"
+        };
+        Err(NeteaseError::ChromeLogin(message.into()))
+    }
+
+    fn save_authenticated_session(
+        &self,
+        cookie: String,
+        account: AccountProfile,
+    ) -> Result<NeteaseSession, NeteaseError> {
+        let session = NeteaseSession {
+            cookie,
+            user_id: account.user_id,
+            nickname: account.nickname,
+        };
+        self.session_store.save(&session)?;
+        Ok(session)
     }
 
     pub fn session(&self) -> Result<Option<NeteaseSession>, NeteaseError> {
@@ -380,7 +493,7 @@ impl NeteaseClient {
             });
         }
         let paths = DownloadPaths::new(&output_root, song, &source, &decision);
-        self.fetch_and_tag(&session.cookie, song, &source, &paths.temporary)?;
+        self.fetch_and_tag(song, &source, &paths.temporary)?;
         commit_download(&mut index, song, &source, &paths)?;
         Ok(DownloadOutcome::Downloaded {
             path: paths.destination,
@@ -405,40 +518,64 @@ impl NeteaseClient {
 
     fn fetch_and_tag(
         &self,
-        cookie: &str,
         song: &Song,
         source: &AudioSource,
         temporary: &Path,
     ) -> Result<(), NeteaseError> {
-        let maximum = usize::try_from(source.size)
-            .unwrap_or(usize::MAX)
-            .saturating_add(1_048_576)
-            .clamp(16 * 1_024 * 1_024, 1_024 * 1_024 * 1_024);
-        let audio = retry_transient(|| {
-            self.provider
-                .fetch_bytes(&source.url, Some(cookie), maximum)
-        })?;
-        if audio.is_empty() || (source.size > 0 && audio.len() as u64 != source.size) {
-            return Err(NeteaseError::Protocol(format!(
-                "downloaded audio size for song {} did not match the response",
-                song.id
-            )));
-        }
-        write_bytes(temporary, &audio)?;
+        let result = (|| {
+            let maximum = usize::try_from(source.size)
+                .unwrap_or(usize::MAX)
+                .saturating_add(1_048_576)
+                .clamp(16 * 1_024 * 1_024, 1_024 * 1_024 * 1_024);
+            let downloaded =
+                retry_transient(|| self.provider.fetch_audio(&source.url, temporary, maximum))?;
+            if downloaded == 0 || (source.size > 0 && downloaded != source.size) {
+                return Err(NeteaseError::Protocol(format!(
+                    "downloaded audio size for song {} did not match the response",
+                    song.id
+                )));
+            }
 
-        let cover = song.cover_url.as_deref().map(|url| {
-            retry_transient(|| self.provider.fetch_bytes(url, None, 20 * 1_024 * 1_024))
-        });
-        let cover = match cover {
-            Some(result) => Some(result?),
-            None => None,
-        };
-        if let Err(error) = tag_audio(temporary, song, cover.as_deref()) {
+            let cover = song.cover_url.as_deref().map(|url| {
+                retry_transient(|| self.provider.fetch_bytes(url, None, 20 * 1_024 * 1_024))
+            });
+            let cover = match cover {
+                Some(result) => Some(result?),
+                None => None,
+            };
+            tag_audio(temporary, song, cover.as_deref())
+        })();
+        if result.is_err() {
             let _ = fs::remove_file(temporary);
-            return Err(error);
         }
-        Ok(())
+        result
     }
+}
+
+fn chrome_cookie_header(cookies: &[BrowserCookie]) -> Option<String> {
+    const COOKIE_NAMES: [&str; 2] = ["MUSIC_U", "__csrf"];
+
+    let mut values = BTreeMap::new();
+    for cookie in cookies {
+        if COOKIE_NAMES.contains(&cookie.name.as_str()) && safe_cookie_value(&cookie.value) {
+            values.insert(cookie.name.as_str(), cookie.value.as_str());
+        }
+    }
+    values.get("MUSIC_U")?;
+    Some(
+        COOKIE_NAMES
+            .into_iter()
+            .filter_map(|name| values.get(name).map(|value| format!("{name}={value}")))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
+fn safe_cookie_value(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte > b' ' && byte != b';' && byte != 0x7f)
 }
 
 struct DownloadPaths {
@@ -456,20 +593,28 @@ impl DownloadPaths {
         source: &AudioSource,
         decision: &DownloadDecision,
     ) -> Self {
-        let mut filename = download_filename(
+        let base_filename = download_filename(
             song.primary_artist(),
             &song.title,
             &source.extension,
             song.id,
         );
+        let mut filename = base_filename.clone();
         let previous = match decision {
             DownloadDecision::Upgrade(path) => Some(output_root.join(path)),
             DownloadDecision::Download | DownloadDecision::Skip => None,
         };
         let mut destination = output_root.join(&filename);
-        if destination.exists() && previous.as_ref() != Some(&destination) {
-            filename = filename_with_id(&filename, song.id);
+        if !download_destination_available(&destination, previous.as_ref()) {
+            let filename_with_id = filename_with_id(&base_filename, song.id);
+            filename.clone_from(&filename_with_id);
             destination = output_root.join(&filename);
+            let mut collision = 2;
+            while !download_destination_available(&destination, previous.as_ref()) {
+                filename = filename_with_collision_index(&filename_with_id, collision);
+                destination = output_root.join(&filename);
+                collision += 1;
+            }
         }
         Self {
             filename,
@@ -484,6 +629,10 @@ impl DownloadPaths {
             backup: output_root.join(format!(".{}-{}.backup", std::process::id(), song.id)),
         }
     }
+}
+
+fn download_destination_available(destination: &Path, previous: Option<&PathBuf>) -> bool {
+    !destination.exists() || previous.is_some_and(|path| path == destination)
 }
 
 fn commit_download(
@@ -923,6 +1072,49 @@ impl NeteaseProvider for WebNeteaseProvider {
             .read_to_vec()
             .map_err(body_error)
     }
+
+    fn fetch_audio(
+        &self,
+        url: &str,
+        destination: &Path,
+        maximum: usize,
+    ) -> Result<u64, NeteaseError> {
+        let mut response = self
+            .agent
+            .get(url)
+            .header("User-Agent", NETEASE_USER_AGENT)
+            .header("Referer", NETEASE_BASE_URL)
+            .call()
+            .map_err(http_error)?;
+        let mut reader = response
+            .body_mut()
+            .with_config()
+            .limit(maximum.saturating_add(1) as u64)
+            .reader();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(destination)?;
+        let mut buffer = vec![0_u8; 64 * 1_024].into_boxed_slice();
+        let mut downloaded = 0_u64;
+        loop {
+            let count = io::Read::read(&mut reader, &mut buffer)
+                .map_err(|error| NeteaseError::Http(error.to_string()))?;
+            if count == 0 {
+                break;
+            }
+            downloaded = downloaded.saturating_add(count as u64);
+            if downloaded > maximum as u64 {
+                return Err(NeteaseError::Protocol(format!(
+                    "media response exceeded {maximum} bytes"
+                )));
+            }
+            file.write_all(&buffer[..count])?;
+        }
+        file.sync_all()?;
+        Ok(downloaded)
+    }
 }
 
 impl WebNeteaseProvider {
@@ -1202,6 +1394,19 @@ fn filename_with_id(filename: &str, id: u64) -> String {
     format!("{stem}[{id}].{extension}")
 }
 
+fn filename_with_collision_index(filename: &str, collision: usize) -> String {
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Song");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("mp3");
+    format!("{stem}-{collision}.{extension}")
+}
+
 fn retry_transient<T>(
     mut operation: impl FnMut() -> Result<T, NeteaseError>,
 ) -> Result<T, NeteaseError> {
@@ -1311,13 +1516,16 @@ fn write_private_json<T: Serialize>(path: &Path, value: &T) -> Result<(), Neteas
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountProfile, AudioSource, AuthorizedLogin, DownloadDecision, DownloadIndex,
-        DownloadOutcome, DownloadRecord, LoginPoll, LoginStatus, LoginTicket, NeteaseClient,
-        NeteaseError, NeteaseProvider, NeteaseSession, Quality, SessionStore, Song, SongPage,
-        download_filename,
+        AccountProfile, AudioSource, AuthorizedLogin, BrowserCookie, ChromeCookieProfile,
+        ChromeCookieSource, DownloadDecision, DownloadIndex, DownloadOutcome, DownloadPaths,
+        DownloadRecord, LoginPoll, LoginStatus, LoginTicket, NeteaseClient, NeteaseError,
+        NeteaseProvider, NeteaseSession, Quality, SessionStore, Song, SongPage, download_filename,
     };
-    use std::fs;
-    use std::sync::Arc;
+    use std::{
+        fs,
+        path::Path,
+        sync::{Arc, Mutex},
+    };
 
     struct LoginProvider;
 
@@ -1337,6 +1545,91 @@ mod tests {
                 user_id: 42,
                 nickname: "Singer".into(),
             })
+        }
+    }
+
+    struct ChromeLoginProvider {
+        accepted_cookie: String,
+        seen_cookies: Mutex<Vec<String>>,
+    }
+
+    impl NeteaseProvider for ChromeLoginProvider {
+        fn begin_login(&self) -> Result<LoginTicket, NeteaseError> {
+            unreachable!()
+        }
+
+        fn poll_login(&self, _key: &str) -> Result<LoginPoll, NeteaseError> {
+            unreachable!()
+        }
+
+        fn account(&self, cookie: &str) -> Result<AccountProfile, NeteaseError> {
+            self.seen_cookies.lock().unwrap().push(cookie.to_owned());
+            if cookie != self.accepted_cookie {
+                return Err(NeteaseError::LoginRequired);
+            }
+            Ok(AccountProfile {
+                user_id: 42,
+                nickname: "Singer".into(),
+            })
+        }
+    }
+
+    struct FakeChromeCookieSource {
+        profiles: Vec<(ChromeCookieProfile, Vec<BrowserCookie>)>,
+    }
+
+    impl ChromeCookieSource for FakeChromeCookieSource {
+        fn profiles(&self) -> Result<Vec<ChromeCookieProfile>, NeteaseError> {
+            Ok(self
+                .profiles
+                .iter()
+                .map(|(profile, _)| ChromeCookieProfile {
+                    id: profile.id.clone(),
+                })
+                .collect())
+        }
+
+        fn cookies(
+            &self,
+            profile: &ChromeCookieProfile,
+        ) -> Result<Vec<BrowserCookie>, NeteaseError> {
+            Ok(self
+                .profiles
+                .iter()
+                .find(|(candidate, _)| candidate.id == profile.id)
+                .map_or_else(Vec::new, |(_, cookies)| cookies.clone()))
+        }
+    }
+
+    fn chrome_profile(
+        name: &str,
+        cookies: &[(&str, &str)],
+    ) -> (ChromeCookieProfile, Vec<BrowserCookie>) {
+        (
+            ChromeCookieProfile { id: name.into() },
+            cookies
+                .iter()
+                .map(|(name, value)| BrowserCookie {
+                    name: (*name).into(),
+                    value: (*value).into(),
+                })
+                .collect(),
+        )
+    }
+
+    struct OfflineAccountProvider;
+
+    impl NeteaseProvider for OfflineAccountProvider {
+        fn begin_login(&self) -> Result<LoginTicket, NeteaseError> {
+            unreachable!()
+        }
+
+        fn poll_login(&self, _key: &str) -> Result<LoginPoll, NeteaseError> {
+            unreachable!()
+        }
+
+        fn account(&self, _cookie: &str) -> Result<AccountProfile, NeteaseError> {
+            Err(NeteaseError::Http("offline".into()))
         }
     }
 
@@ -1428,9 +1721,13 @@ mod tests {
         fn fetch_bytes(
             &self,
             url: &str,
-            _cookie: Option<&str>,
+            cookie: Option<&str>,
             _maximum: usize,
         ) -> Result<Vec<u8>, NeteaseError> {
+            assert!(
+                cookie.is_none(),
+                "media requests must not receive the login cookie"
+            );
             match url {
                 "https://example.test/audio" => Ok(self.audio.clone()),
                 "https://example.test/cover.jpg" => Ok(vec![
@@ -1468,6 +1765,50 @@ mod tests {
             _quality: Quality,
         ) -> Result<Option<AudioSource>, NeteaseError> {
             Ok(None)
+        }
+    }
+
+    struct FailingStreamProvider {
+        attempts: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl NeteaseProvider for FailingStreamProvider {
+        fn begin_login(&self) -> Result<LoginTicket, NeteaseError> {
+            unreachable!()
+        }
+
+        fn poll_login(&self, _key: &str) -> Result<LoginPoll, NeteaseError> {
+            unreachable!()
+        }
+
+        fn account(&self, _cookie: &str) -> Result<AccountProfile, NeteaseError> {
+            unreachable!()
+        }
+
+        fn audio_source(
+            &self,
+            _cookie: &str,
+            _song_id: u64,
+            quality: Quality,
+        ) -> Result<Option<AudioSource>, NeteaseError> {
+            Ok((quality == Quality::Lossless).then(|| AudioSource {
+                url: "https://example.test/audio".into(),
+                quality,
+                extension: "wav".into(),
+                size: 100,
+            }))
+        }
+
+        fn fetch_audio(
+            &self,
+            _url: &str,
+            destination: &Path,
+            _maximum: usize,
+        ) -> Result<u64, NeteaseError> {
+            self.attempts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            fs::write(destination, b"partial audio")?;
+            Err(NeteaseError::Http("stream interrupted".into()))
         }
     }
 
@@ -1534,6 +1875,72 @@ mod tests {
     }
 
     #[test]
+    fn download_paths_keep_both_existing_collision_candidates_intact() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let output_root = sandbox.path();
+        let base = output_root.join("Beyond-Song.wav");
+        let with_id = output_root.join("Beyond-Song[7].wav");
+        fs::write(&base, b"base file").unwrap();
+        fs::write(&with_id, b"id file").unwrap();
+        let source = AudioSource {
+            url: "https://example.test/audio".into(),
+            quality: Quality::Lossless,
+            extension: "wav".into(),
+            size: 1,
+        };
+
+        let paths = DownloadPaths::new(
+            output_root,
+            &song(7, "Song"),
+            &source,
+            &DownloadDecision::Download,
+        );
+
+        assert_eq!(
+            paths.destination.file_name().unwrap(),
+            "Beyond-Song[7]-2.wav"
+        );
+        assert_eq!(fs::read(base).unwrap(), b"base file");
+        assert_eq!(fs::read(with_id).unwrap(), b"id file");
+        assert!(!paths.destination.exists());
+    }
+
+    #[test]
+    fn failed_stream_retries_and_removes_the_partial_audio_file() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(sandbox.path().join("session.json"));
+        store
+            .save(&NeteaseSession {
+                cookie: "MUSIC_U=secret".into(),
+                user_id: 42,
+                nickname: "Singer".into(),
+            })
+            .unwrap();
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let client = NeteaseClient::with_provider(
+            Arc::new(FailingStreamProvider {
+                attempts: Arc::clone(&attempts),
+            }),
+            store,
+        );
+        let music_root = sandbox.path().join("music");
+
+        assert!(matches!(
+            client.download_song(&music_root, &song(7, "Song")),
+            Err(NeteaseError::Http(message)) if message == "stream interrupted"
+        ));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 4);
+        let output_root = music_root.join("NetEase");
+        assert!(fs::read_dir(output_root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".part.")
+        }));
+    }
+
+    #[test]
     fn unavailable_audio_revalidates_the_session_before_reporting_rights_failure() {
         let sandbox = tempfile::tempdir().unwrap();
         let store = SessionStore::at(sandbox.path().join("session.json"));
@@ -1597,6 +2004,79 @@ mod tests {
         assert_eq!(client.session().unwrap().unwrap().nickname, "Singer");
         assert!(!format!("{:?}", client.session().unwrap().unwrap()).contains("secret"));
         assert!(store.path().is_file());
+    }
+
+    #[test]
+    fn chrome_login_filters_credentials_validates_profiles_and_persists_the_first_valid_one() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(sandbox.path().join("session.json"));
+        let provider = Arc::new(ChromeLoginProvider {
+            accepted_cookie: "MUSIC_U=valid; __csrf=token".into(),
+            seen_cookies: Mutex::new(Vec::new()),
+        });
+        let client = NeteaseClient::with_provider(provider.clone(), store.clone());
+        let source = FakeChromeCookieSource {
+            profiles: vec![
+                chrome_profile("Profile 1", &[("MUSIC_U", "expired")]),
+                chrome_profile(
+                    "Default",
+                    &[
+                        ("tracking_cookie", "must-not-leave-browser"),
+                        ("__csrf", "token"),
+                        ("MUSIC_U", "valid"),
+                    ],
+                ),
+            ],
+        };
+
+        let session = client.import_chrome_session_from(&source).unwrap();
+
+        assert_eq!(session.nickname(), "Singer");
+        assert_eq!(
+            provider.seen_cookies.lock().unwrap().as_slice(),
+            ["MUSIC_U=expired", "MUSIC_U=valid; __csrf=token"]
+        );
+        assert_eq!(store.load().unwrap(), Some(session));
+    }
+
+    #[test]
+    fn chrome_login_rejects_unsafe_cookie_values_without_contacting_netease() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(sandbox.path().join("session.json"));
+        let provider = Arc::new(ChromeLoginProvider {
+            accepted_cookie: "never".into(),
+            seen_cookies: Mutex::new(Vec::new()),
+        });
+        let client = NeteaseClient::with_provider(provider.clone(), store.clone());
+        let source = FakeChromeCookieSource {
+            profiles: vec![chrome_profile(
+                "Default",
+                &[("MUSIC_U", "secret\r\nInjected: value")],
+            )],
+        };
+
+        assert!(matches!(
+            client.import_chrome_session_from(&source),
+            Err(NeteaseError::ChromeLogin(_))
+        ));
+        assert!(provider.seen_cookies.lock().unwrap().is_empty());
+        assert_eq!(store.load().unwrap(), None);
+    }
+
+    #[test]
+    fn chrome_login_preserves_account_service_failures_instead_of_calling_them_rejections() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(sandbox.path().join("session.json"));
+        let client = NeteaseClient::with_provider(Arc::new(OfflineAccountProvider), store.clone());
+        let source = FakeChromeCookieSource {
+            profiles: vec![chrome_profile("Default", &[("MUSIC_U", "valid")])],
+        };
+
+        assert!(matches!(
+            client.import_chrome_session_from(&source),
+            Err(NeteaseError::Http(message)) if message == "offline"
+        ));
+        assert_eq!(store.load().unwrap(), None);
     }
 
     #[test]
