@@ -489,6 +489,18 @@ impl MediaLibrary {
         self.launch_import(request);
         Some(path)
     }
+
+    fn enqueue_downloaded_source(&mut self, path: &Path) -> bool {
+        let source = library::source_entry_for_path(&self.config, path);
+        if source.imported
+            || self.job.as_ref().is_some_and(|job| job.source == path)
+            || self.queue.iter().any(|request| request.source.path == path)
+        {
+            return false;
+        }
+        self.queue.push_back(SeparationRequest { source });
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1696,21 +1708,25 @@ fn poll_netease_catalog(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>
 }
 
 fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error>> {
-    let Some(panel) = &mut library.netease else {
-        return Ok(());
-    };
-    let download_outcome = match panel.download_job.as_ref().map(|job| job.result.try_recv()) {
-        Some(Ok(result)) => Some(result),
-        Some(Err(TryRecvError::Disconnected)) => Some(Err(NeteaseError::Protocol(
-            "download task exited unexpectedly".into(),
-        ))),
-        Some(Err(TryRecvError::Empty)) | None => None,
-    };
-    if let Some(outcome) = download_outcome {
+    let (downloaded_path, downloads_finished) = {
+        let Some(panel) = &mut library.netease else {
+            return Ok(());
+        };
+        let download_outcome = match panel.download_job.as_ref().map(|job| job.result.try_recv()) {
+            Some(Ok(result)) => Some(result),
+            Some(Err(TryRecvError::Disconnected)) => Some(Err(NeteaseError::Protocol(
+                "download task exited unexpectedly".into(),
+            ))),
+            Some(Err(TryRecvError::Empty)) | None => None,
+        };
+        let Some(outcome) = download_outcome else {
+            return Ok(());
+        };
         let job = panel
             .download_job
             .take()
             .expect("download outcome has a job");
+        let mut downloaded_path = None;
         match outcome {
             Ok(DownloadOutcome::Downloaded { path, quality }) => {
                 panel.download_summary.completed += 1;
@@ -1719,10 +1735,11 @@ fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error
                     panel.download_summary.downgraded += 1;
                 }
                 library.message = Some(format!(
-                    "Downloaded {} · {quality}: {}",
+                    "Downloaded {} · {quality}: {} · project queued",
                     job.song.title,
                     path.display()
                 ));
+                downloaded_path = Some(path);
             }
             Ok(DownloadOutcome::Skipped { quality, .. }) => {
                 panel.download_summary.skipped += 1;
@@ -1749,49 +1766,63 @@ fn poll_netease_download(library: &mut MediaLibrary) -> Result<(), Box<dyn Error
                 library.message = Some(format!("Download failed {}: {error}", job.song.title));
             }
         }
-        if panel.download_queue.is_empty() {
-            let failed = panel.download_summary.failed.len();
-            let qualities = panel
-                .download_summary
-                .qualities
-                .iter()
-                .map(|(quality, count)| format!("{quality} {count}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut failure_details = panel
-                .download_summary
-                .failed
-                .iter()
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" | ");
-            if failed > 3 {
-                let _ = write!(failure_details, " | +{} more", failed - 3);
-            }
-            library.message = Some(format!(
-                "NetEase downloads complete · {} downloaded · {} skipped · {failed} failed\n\
-                 Actual quality: {} · {} downgraded{}",
-                panel.download_summary.completed,
-                panel.download_summary.skipped,
-                if qualities.is_empty() {
-                    "none"
-                } else {
-                    &qualities
-                },
-                panel.download_summary.downgraded,
-                if failure_details.is_empty() {
-                    String::new()
-                } else {
-                    format!("\nFailures: {failure_details}")
-                }
-            ));
-            library.refresh()?;
-        } else {
-            panel.launch_next_download(&library.config.music_root);
+        (downloaded_path, panel.download_queue.is_empty())
+    };
+
+    if let Some(path) = downloaded_path {
+        library.enqueue_downloaded_source(&path);
+    }
+
+    if downloads_finished {
+        let panel = library.netease.as_ref().expect("source is configured");
+        let mut message = format_netease_download_summary(&panel.download_summary);
+        if let Some(path) = library.start_next_queued() {
+            message.push_str("\nCreating project and separating: ");
+            message.push_str(&display_name(&path));
         }
+        library.message = Some(message);
+        library.refresh()?;
+    } else if let Some(panel) = &mut library.netease {
+        panel.launch_next_download(&library.config.music_root);
     }
     Ok(())
+}
+
+fn format_netease_download_summary(summary: &DownloadSummary) -> String {
+    let failed = summary.failed.len();
+    let qualities = summary
+        .qualities
+        .iter()
+        .map(|(quality, count)| format!("{quality} {count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut failure_details = summary
+        .failed
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if failed > 3 {
+        let _ = write!(failure_details, " | +{} more", failed - 3);
+    }
+    format!(
+        "NetEase downloads complete · {} downloaded · {} skipped · {failed} failed\n\
+         Actual quality: {} · {} downgraded{}",
+        summary.completed,
+        summary.skipped,
+        if qualities.is_empty() {
+            "none"
+        } else {
+            &qualities
+        },
+        summary.downgraded,
+        if failure_details.is_empty() {
+            String::new()
+        } else {
+            format!("\nFailures: {failure_details}")
+        }
+    )
 }
 
 fn open_library_project(config: &LibraryConfig, path: &Path) -> Result<App, Box<dyn Error>> {
@@ -2915,9 +2946,21 @@ fn draw_netease_sources(frame: &mut Frame, area: Rect, library: &MediaLibrary) {
         list_area,
     );
     if let Some(message) = &library.message {
-        let failed = message.contains("failed") || message.contains("Failed");
+        let failed = netease_message_is_failure(message);
         draw_library_source_message(frame, areas[1], message, failed);
     }
+}
+
+fn netease_message_is_failure(message: &str) -> bool {
+    [
+        "Chrome login failed:",
+        "NetEase catalog failed:",
+        "Download failed ",
+        "Separation failed:",
+    ]
+    .into_iter()
+    .any(|prefix| message.starts_with(prefix))
+        || message.contains("\nFailures:")
 }
 
 fn netease_song_label(song: &Song, selected: bool) -> String {
@@ -3482,9 +3525,9 @@ mod tests {
         LyricsQueryEditor, MediaLibrary, NeteaseDownloadJob, NeteaseModal, NeteasePanel,
         NeteaseView, PlaybackState, PlaybackTrack, TrackKind, effect_preset_for_key,
         fit_source_name, format_duration, handle_library_source_key, load_lyrics, lyric_countdown,
-        lyric_seek_target, lyric_window, mode_allows_footer_action, netease_sign_in_hint,
-        netease_song_label, poll_import_job, poll_netease_catalog, poll_netease_chrome_login,
-        poll_netease_download, should_handle_key,
+        lyric_seek_target, lyric_window, mode_allows_footer_action, netease_message_is_failure,
+        netease_sign_in_hint, netease_song_label, poll_import_job, poll_netease_catalog,
+        poll_netease_chrome_login, poll_netease_download, should_handle_key,
     };
     use crate::{
         lyrics_download::LyricsChoice,
@@ -3551,6 +3594,131 @@ mod tests {
         assert_eq!(
             netease_sign_in_hint(),
             "Press c to import Chrome login · i for QR"
+        );
+    }
+
+    #[test]
+    fn netease_zero_failed_summary_is_a_status_not_an_error() {
+        assert!(!netease_message_is_failure(
+            "NetEase downloads complete · 1 downloaded · 0 skipped · 0 failed\n\
+             Actual quality: lossless 1 · 0 downgraded"
+        ));
+        assert!(netease_message_is_failure(
+            "NetEase downloads complete · 1 downloaded · 0 skipped · 1 failed\n\
+             Actual quality: lossless 1 · 0 downgraded\nFailures: Song: network error"
+        ));
+        assert!(netease_message_is_failure(
+            "Download failed Song: network error"
+        ));
+    }
+
+    #[test]
+    fn completed_netease_download_is_queued_for_project_separation() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        let downloaded = music.join("NetEase/Artist-Song.flac");
+        fs::create_dir_all(downloaded.parent().unwrap()).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(&downloaded, b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let panel = library.netease.as_mut().unwrap();
+        let completed = Song {
+            id: 7,
+            title: "Song".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        };
+        let next = Song {
+            id: 8,
+            title: "Next".into(),
+            ..completed.clone()
+        };
+        let (sender, result) = mpsc::channel();
+        panel.download_job = Some(NeteaseDownloadJob {
+            song: completed,
+            result,
+        });
+        panel.download_queue.push_back(next);
+        sender
+            .send(Ok(crate::netease::DownloadOutcome::Downloaded {
+                path: downloaded.clone(),
+                quality: Quality::Lossless,
+            }))
+            .unwrap();
+
+        poll_netease_download(&mut library).unwrap();
+
+        assert_eq!(library.queue.len(), 1);
+        assert_eq!(library.queue[0].source.path, downloaded);
+        assert!(!library.queue[0].source.imported);
+    }
+
+    #[test]
+    fn final_netease_download_starts_project_creation_and_separation() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        let downloaded = music.join("NetEase/Artist-Song.flac");
+        fs::create_dir_all(downloaded.parent().unwrap()).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(&downloaded, b"audio").unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {
+                "worker": "/bin/false",
+                "log_dir": sandbox.path().join("logs")
+            },
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let panel = library.netease.as_mut().unwrap();
+        let song = Song {
+            id: 7,
+            title: "Song".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        };
+        let (sender, result) = mpsc::channel();
+        panel.download_job = Some(NeteaseDownloadJob { song, result });
+        sender
+            .send(Ok(crate::netease::DownloadOutcome::Downloaded {
+                path: downloaded.clone(),
+                quality: Quality::Lossless,
+            }))
+            .unwrap();
+
+        poll_netease_download(&mut library).unwrap();
+
+        let job = library.job.take().expect("separation should start");
+        assert_eq!(job.source, downloaded);
+        assert!(
+            library
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("Creating project and separating")
+        );
+        assert!(
+            job.result
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .is_err()
         );
     }
 

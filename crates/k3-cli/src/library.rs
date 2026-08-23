@@ -145,6 +145,22 @@ pub struct SourceEntry {
     pub imported: bool,
 }
 
+pub(crate) fn source_entry_for_path(config: &LibraryConfig, source: &Path) -> SourceEntry {
+    let repository = FileProjectRepository;
+    let project_path = project_path_for_source(&config.projects_root, source);
+    let downloaded_identity = source_identity(source);
+    let imported = repository
+        .open(&project_path)
+        .ok()
+        .and_then(|project| source_identity(&project.source_path()))
+        .is_some_and(|project_identity| Some(project_identity) == downloaded_identity);
+    SourceEntry {
+        path: source.to_path_buf(),
+        project_path,
+        imported,
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LibrarySnapshot {
     pub projects: Vec<ProjectEntry>,
