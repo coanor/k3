@@ -846,3 +846,108 @@ fn logical_dimension(value: u32) -> f32 {
 fn saved_dimension(value: f32, minimum: f32) -> u32 {
     value.round().clamp(minimum, f32::from(u16::MAX)) as u32
 }
+
+#[cfg(test)]
+mod interaction_tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+    use slint::platform::{
+        Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
+    };
+    use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, SharedString, VecModel};
+
+    use super::{K3Window, ProjectItem};
+
+    thread_local! {
+        static WINDOW: Rc<MinimalSoftwareWindow> =
+            MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    }
+
+    struct TestPlatform;
+
+    impl Platform for TestPlatform {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+            Ok(WINDOW.with(Clone::clone))
+        }
+    }
+
+    fn setup_window() -> Rc<MinimalSoftwareWindow> {
+        let _ = slint::platform::set_platform(Box::new(TestPlatform));
+        let window = WINDOW.with(Clone::clone);
+        window.set_size(PhysicalSize::new(1280, 800));
+        window
+    }
+
+    fn click(ui: &K3Window, position: LogicalPosition) {
+        ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        });
+        ui.window().dispatch_event(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Left,
+        });
+    }
+
+    #[test]
+    fn custom_buttons_activate_on_first_click() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_playback_ready(true);
+        ui.set_accompaniment_available(true);
+        ui.set_projects(ModelRc::new(VecModel::from(vec![ProjectItem {
+            id: SharedString::from("project-1"),
+            title: SharedString::from("Project one"),
+            path: SharedString::from("/tmp/project-1"),
+            status: SharedString::from("Ready"),
+            selected: false,
+        }])));
+
+        let refresh_clicks = Rc::new(Cell::new(0));
+        let observed_refresh_clicks = Rc::clone(&refresh_clicks);
+        ui.on_refresh_library(move || {
+            observed_refresh_clicks.set(observed_refresh_clicks.get() + 1);
+        });
+
+        let playback_clicks = Rc::new(Cell::new(0));
+        let observed_playback_clicks = Rc::clone(&playback_clicks);
+        ui.on_playback_command(move |command| {
+            assert_eq!(command.as_str(), "toggle");
+            observed_playback_clicks.set(observed_playback_clicks.get() + 1);
+        });
+
+        let track_clicks = Rc::new(Cell::new(0));
+        let observed_track_clicks = Rc::clone(&track_clicks);
+        ui.on_switch_track(move |track| {
+            assert_eq!(track, 1);
+            observed_track_clicks.set(observed_track_clicks.get() + 1);
+        });
+
+        let project_clicks = Rc::new(Cell::new(0));
+        let observed_project_clicks = Rc::clone(&project_clicks);
+        ui.on_open_project(move |project_id| {
+            assert_eq!(project_id.as_str(), "project-1");
+            observed_project_clicks.set(observed_project_clicks.get() + 1);
+        });
+
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+        click(&ui, LogicalPosition::new(268.0, 142.0));
+        click(&ui, LogicalPosition::new(608.0, 759.0));
+        click(&ui, LogicalPosition::new(162.0, 759.0));
+        click(&ui, LogicalPosition::new(150.0, 200.0));
+
+        assert_eq!(
+            (
+                refresh_clicks.get(),
+                playback_clicks.get(),
+                track_clicks.get(),
+                project_clicks.get()
+            ),
+            (1, 1, 1, 1),
+            "the first pointer click must invoke each custom control"
+        );
+    }
+}

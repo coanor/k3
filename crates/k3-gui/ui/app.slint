@@ -78,11 +78,6 @@ component ActionButton inherits Rectangle {
         vertical-alignment: center;
     }
 
-    action-touch := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-
     action-focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
@@ -91,6 +86,14 @@ component ActionButton inherits Rectangle {
                 return accept;
             }
             return reject;
+        }
+    }
+
+    action-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            action-focus.focus();
+            root.clicked();
         }
     }
 }
@@ -120,11 +123,6 @@ component PlayButton inherits Rectangle {
         colorize: Tokens.paper-ink;
     }
 
-    play-touch := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-
     play-focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
@@ -133,6 +131,14 @@ component PlayButton inherits Rectangle {
                 return accept;
             }
             return reject;
+        }
+    }
+
+    play-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            play-focus.focus();
+            root.clicked();
         }
     }
 }
@@ -163,11 +169,6 @@ component TrackPill inherits Rectangle {
         vertical-alignment: center;
     }
 
-    track-touch := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.selected(); }
-    }
-
     track-focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
@@ -176,6 +177,14 @@ component TrackPill inherits Rectangle {
                 return accept;
             }
             return reject;
+        }
+    }
+
+    track-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            track-focus.focus();
+            root.selected();
         }
     }
 }
@@ -492,9 +501,6 @@ export component K3Window inherits Window {
                                     overflow: elide;
                                 }
                             }
-                            project-touch := TouchArea {
-                                clicked => { root.open-project(project.id); }
-                            }
                             project-focus := FocusScope {
                                 key-pressed(event) => {
                                     if (event.text == Key.Return || event.text == " ") {
@@ -502,6 +508,12 @@ export component K3Window inherits Window {
                                         return accept;
                                     }
                                     return reject;
+                                }
+                            }
+                            project-touch := TouchArea {
+                                clicked => {
+                                    project-focus.focus();
+                                    root.open-project(project.id);
                                 }
                             }
                         }
@@ -570,6 +582,7 @@ export component K3Window inherits Window {
                             alignment: center;
                             Text {
                                 text: root.project-state;
+                                visible: root.project-state != "Playing" && root.project-state != "Paused";
                                 color: root.has-error ? Tokens.danger : Tokens.muted;
                                 font-size: 11px;
                                 horizontal-alignment: right;

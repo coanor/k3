@@ -14,6 +14,7 @@ slint = { version = "=1.17.1", default-features = false, features = ["std", "bac
 thiserror.workspace = true
 
 [dev-dependencies]
+slint = { version = "=1.17.1", default-features = false, features = ["renderer-software"] }
 tempfile.workspace = true
 
 [build-dependencies]
