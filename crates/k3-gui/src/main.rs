@@ -16,6 +16,7 @@ use k3_app::{
 use k3_gui::{
     logging::DiagnosticLog,
     settings::{GuiSettings, SettingsWriter, SettingsWriterHandle},
+    ui_text,
 };
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel};
@@ -44,11 +45,11 @@ fn main() {
         if let Some(log) = log {
             log.record(format!("GUI stopped with error: {error}"));
         }
-        eprintln!("K3 GUI could not start: {error}");
+        eprintln!("{}", ui_text::gui_start_failed(error.as_ref()));
         if let Some(log) = log {
-            eprintln!("Diagnostics: {}", log.path().display());
+            eprintln!("{}", ui_text::diagnostics(log.path()));
         }
-        eprintln!("Run `k3 tui` to use the terminal interface instead.");
+        eprintln!("{}", ui_text::TUI_FALLBACK);
         std::process::exit(1);
     }
 }
@@ -57,7 +58,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (settings, settings_writable) = match GuiSettings::load() {
         Ok(settings) => (settings, true),
         Err(error) => {
-            eprintln!("K3 GUI settings could not be loaded and will be preserved: {error}");
+            eprintln!("{}", ui_text::settings_load_failed(&error));
             (GuiSettings::default(), false)
         }
     };
@@ -209,10 +210,7 @@ fn install_library_callbacks(
             let path = PathBuf::from(root.as_str());
             if !path.is_dir() {
                 if let Some(ui) = ui.upgrade() {
-                    show_error(
-                        &ui,
-                        format!("Projects folder is not readable: {}", path.display()),
-                    );
+                    show_error(&ui, ui_text::unreadable_projects_folder(&path));
                 }
                 return;
             }
@@ -291,7 +289,7 @@ fn install_library_callbacks(
                 ui.set_loading(true);
                 ui.set_has_error(false);
                 ui.set_playback_error_visible(false);
-                ui.set_project_state("Loading audio…".into());
+                ui.set_project_state(ui_text::LOADING_AUDIO.into());
             }
             open_project(
                 ui.clone(),
@@ -664,12 +662,19 @@ fn start_snapshot_pump(
     thread::Builder::new()
         .name("k3-gui-snapshots".into())
         .spawn(move || {
+            let mut transitions = PlaybackTransitionTracker::default();
             while running.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(80));
                 if !running.load(Ordering::Acquire) {
                     break;
                 }
                 let result = playback.execute(PlaybackCommand::Refresh);
+                if let Ok(snapshot) = &result
+                    && let Some(message) = transitions.observe(snapshot)
+                    && let Ok(log) = DiagnosticLog::initialize()
+                {
+                    log.record(message);
+                }
                 let _ = ui.upgrade_in_event_loop(move |ui| match result {
                     Ok(snapshot) => apply_snapshot(&ui, &snapshot),
                     Err(error) => show_playback_error(&ui, error.to_string()),
@@ -677,6 +682,60 @@ fn start_snapshot_pump(
             }
         })
         .expect("failed to start GUI snapshot pump")
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PlaybackTransition {
+    status: PlaybackStatus,
+    track: Option<TrackKind>,
+}
+
+#[derive(Default)]
+struct PlaybackTransitionTracker {
+    previous: Option<PlaybackTransition>,
+}
+
+impl PlaybackTransitionTracker {
+    fn observe(&mut self, snapshot: &PlaybackSnapshot) -> Option<String> {
+        let next = PlaybackTransition {
+            status: snapshot.status,
+            track: snapshot.track,
+        };
+        if self.previous == Some(next) {
+            return None;
+        }
+        self.previous = Some(next);
+        Some(format!(
+            "playback state: status={} track={}",
+            playback_status_log_label(next.status),
+            next.track.map_or("none", TrackKind::log_label)
+        ))
+    }
+}
+
+const fn playback_status_log_label(status: PlaybackStatus) -> &'static str {
+    match status {
+        PlaybackStatus::Unavailable => "unavailable",
+        PlaybackStatus::Loading => "loading",
+        PlaybackStatus::Paused => "paused",
+        PlaybackStatus::Playing => "playing",
+        PlaybackStatus::Finished => "finished",
+        PlaybackStatus::Error => "error",
+    }
+}
+
+trait TrackLogLabel {
+    fn log_label(self) -> &'static str;
+}
+
+impl TrackLogLabel for TrackKind {
+    fn log_label(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Accompaniment => "accompaniment",
+            Self::Vocals => "vocals",
+        }
+    }
 }
 
 fn publish_projects(ui: &K3Window, data: &Mutex<AppData>, query: &str) {
@@ -690,9 +749,9 @@ fn publish_projects(ui: &K3Window, data: &Mutex<AppData>, query: &str) {
             title: project.title.as_str().into(),
             path: path_text(&project.path),
             status: if project.source_available {
-                "Ready".into()
+                ui_text::PROJECT_READY.into()
             } else {
-                "Repair needed".into()
+                ui_text::PROJECT_REPAIR_NEEDED.into()
             },
             selected: data
                 .selected_id
@@ -761,12 +820,12 @@ fn apply_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     }
     ui.set_project_state(
         match snapshot.status {
-            PlaybackStatus::Unavailable => "Playback unavailable",
-            PlaybackStatus::Loading => "Loading audio…",
-            PlaybackStatus::Paused => "Paused",
-            PlaybackStatus::Playing => "Playing",
-            PlaybackStatus::Finished => "Finished",
-            PlaybackStatus::Error => "Playback error",
+            PlaybackStatus::Unavailable => ui_text::PLAYBACK_UNAVAILABLE,
+            PlaybackStatus::Loading => ui_text::LOADING_AUDIO,
+            PlaybackStatus::Paused => ui_text::PLAYBACK_PAUSED,
+            PlaybackStatus::Playing => ui_text::PLAYBACK_PLAYING,
+            PlaybackStatus::Finished => ui_text::PLAYBACK_FINISHED,
+            PlaybackStatus::Error => ui_text::PLAYBACK_ERROR,
         }
         .into(),
     );
@@ -849,15 +908,21 @@ fn saved_dimension(value: f32, minimum: f32) -> u32 {
 
 #[cfg(test)]
 mod interaction_tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::Cell,
+        cell::RefCell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
 
     use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
     use slint::platform::{
-        Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
+        Key, Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
     };
     use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, SharedString, VecModel};
 
-    use super::{K3Window, ProjectItem};
+    use super::{K3Window, LyricItem, PlaybackTransitionTracker, ProjectItem};
+    use k3_app::{PlaybackSnapshot, PlaybackStatus, TrackKind};
 
     thread_local! {
         static WINDOW: Rc<MinimalSoftwareWindow> =
@@ -888,6 +953,16 @@ mod interaction_tests {
             position,
             button: PointerEventButton::Left,
         });
+    }
+
+    fn press_key(ui: &K3Window, text: impl Into<SharedString>) {
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+    }
+
+    fn release_key(ui: &K3Window, text: impl Into<SharedString>) {
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
     }
 
     #[test]
@@ -948,6 +1023,190 @@ mod interaction_tests {
             ),
             (1, 1, 1, 1),
             "the first pointer click must invoke each custom control"
+        );
+    }
+
+    #[test]
+    fn global_shortcuts_emit_playback_volume_track_and_refresh_intents() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_playback_ready(true);
+        ui.set_original_available(true);
+        ui.set_accompaniment_available(true);
+        ui.set_vocals_available(true);
+
+        let playback = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_playback = Rc::clone(&playback);
+        ui.on_playback_command(move |command| {
+            observed_playback.borrow_mut().push(command.to_string());
+        });
+        let tracks = Rc::new(RefCell::new(Vec::<i32>::new()));
+        let observed_tracks = Rc::clone(&tracks);
+        ui.on_switch_track(move |track| observed_tracks.borrow_mut().push(track));
+        let volumes = Rc::new(RefCell::new(Vec::<f32>::new()));
+        let observed_volumes = Rc::clone(&volumes);
+        ui.on_set_volume(move |volume| observed_volumes.borrow_mut().push(volume));
+        let refreshes = Rc::new(Cell::new(0));
+        let observed_refreshes = Rc::clone(&refreshes);
+        ui.on_refresh_library(move || observed_refreshes.set(observed_refreshes.get() + 1));
+
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+        press_key(&ui, " ");
+        press_key(&ui, Key::LeftArrow);
+        press_key(&ui, Key::RightArrow);
+        press_key(&ui, Key::UpArrow);
+        press_key(&ui, "2");
+        press_key(&ui, Key::Control);
+        press_key(&ui, "r");
+        release_key(&ui, "r");
+        release_key(&ui, Key::Control);
+
+        assert_eq!(playback.borrow().as_slice(), ["toggle", "back", "forward"]);
+        assert_eq!(tracks.borrow().as_slice(), [1]);
+        assert_eq!(volumes.borrow().as_slice(), [1.0]);
+        assert_eq!(refreshes.get(), 1);
+    }
+
+    #[test]
+    fn search_focus_keeps_typing_from_triggering_playback_shortcuts() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_playback_ready(true);
+        let playback = Rc::new(Cell::new(0));
+        let observed_playback = Rc::clone(&playback);
+        ui.on_playback_command(move |_| observed_playback.set(observed_playback.get() + 1));
+
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+        press_key(&ui, Key::Control);
+        press_key(&ui, "f");
+        release_key(&ui, "f");
+        release_key(&ui, Key::Control);
+        press_key(&ui, " ");
+
+        assert_eq!(playback.get(), 0);
+        assert_eq!(ui.get_search_query().as_str(), " ");
+    }
+
+    #[test]
+    fn disabled_track_does_not_emit_a_switch_intent() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_playback_ready(true);
+        ui.set_accompaniment_available(false);
+        let switches = Rc::new(Cell::new(0));
+        let observed_switches = Rc::clone(&switches);
+        ui.on_switch_track(move |_| observed_switches.set(observed_switches.get() + 1));
+
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+        click(&ui, LogicalPosition::new(162.0, 759.0));
+
+        assert_eq!(switches.get(), 0);
+    }
+
+    #[test]
+    fn escape_closes_only_the_topmost_transient_layer() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(true);
+        ui.set_projects_root(SharedString::from("/tmp/projects"));
+        ui.set_confirm_root_change(true);
+        ui.set_show_about(true);
+
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+        press_key(&ui, Key::Escape);
+        assert!(!ui.get_show_about());
+        assert!(ui.get_confirm_root_change());
+        assert!(ui.get_setup_mode());
+
+        press_key(&ui, Key::Escape);
+        assert!(!ui.get_confirm_root_change());
+        assert!(ui.get_setup_mode());
+
+        press_key(&ui, Key::Escape);
+        assert!(!ui.get_setup_mode());
+    }
+
+    #[test]
+    fn major_playback_states_render_without_losing_the_project() {
+        let window = setup_window();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_playback_ready(true);
+        ui.set_song_title(SharedString::from("State fixture"));
+        ui.set_lyrics(ModelRc::new(VecModel::from(vec![LyricItem {
+            text: SharedString::from("Current lyric"),
+            at_seconds: 1.0,
+        }])));
+
+        ui.show().expect("test UI should show");
+        for (playing, has_error, changed) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            ui.set_playing(playing);
+            ui.set_has_error(has_error);
+            ui.set_project_changed(changed);
+            window.request_redraw();
+            window.draw_if_needed(|_| {});
+            assert_eq!(ui.get_song_title().as_str(), "State fixture");
+        }
+    }
+
+    #[test]
+    fn playback_transitions_are_logged_once_per_state_change() {
+        let mut tracker = PlaybackTransitionTracker::default();
+        let mut snapshot = PlaybackSnapshot {
+            status: PlaybackStatus::Paused,
+            track: Some(TrackKind::Accompaniment),
+            ..PlaybackSnapshot::default()
+        };
+
+        assert_eq!(
+            tracker.observe(&snapshot).as_deref(),
+            Some("playback state: status=paused track=accompaniment")
+        );
+        assert_eq!(tracker.observe(&snapshot), None);
+
+        snapshot.status = PlaybackStatus::Playing;
+        assert_eq!(
+            tracker.observe(&snapshot).as_deref(),
+            Some("playback state: status=playing track=accompaniment")
+        );
+    }
+
+    #[test]
+    fn window_and_thousand_project_first_frame_stay_within_budget() {
+        let window = setup_window();
+        let started = Instant::now();
+        let ui = K3Window::new().expect("test UI should construct");
+        ui.set_setup_mode(false);
+        ui.set_projects(ModelRc::new(VecModel::from(
+            (0..1_000)
+                .map(|index| ProjectItem {
+                    id: format!("project-{index:04}").into(),
+                    title: format!("Project {index:04}").into(),
+                    path: format!("/tmp/project-{index:04}").into(),
+                    status: SharedString::from("Ready"),
+                    selected: index == 0,
+                })
+                .collect::<Vec<_>>(),
+        )));
+        ui.show().expect("test UI should show");
+        window.draw_if_needed(|_| {});
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "1000-project first frame took {:?}",
+            started.elapsed()
         );
     }
 }

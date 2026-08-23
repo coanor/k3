@@ -10,6 +10,8 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ui_text;
+
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
 /// Serializes GUI settings writes on one background worker.
@@ -44,7 +46,7 @@ impl SettingsWriter {
                     match message {
                         WriterMessage::Save(settings) => {
                             if let Err(error) = settings.save() {
-                                eprintln!("K3 GUI settings could not be saved: {error}");
+                                eprintln!("{}", ui_text::settings_save_failed(&error));
                             }
                         }
                         WriterMessage::Stop => break,

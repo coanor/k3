@@ -1,4 +1,5 @@
 import { AboutSlint, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
+import { Strings } from "strings.slint";
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export struct ProjectItem {
@@ -110,7 +111,7 @@ component PlayButton inherits Rectangle {
     border-width: 0px;
     opacity: root.enabled ? 1 : 0.35;
     accessible-role: button;
-    accessible-label: root.playing ? "Pause" : "Play";
+    accessible-label: root.playing ? Strings.pause : Strings.play;
     accessible-enabled: root.enabled;
 
     Image {
@@ -191,7 +192,7 @@ component TrackPill inherits Rectangle {
 
 export component K3Window inherits Window {
     init => { Palette.color-scheme = ColorScheme.dark; }
-    title: "K3 — Karaoke stage";
+    title: Strings.window-title;
     background: Tokens.canvas;
     default-font-family: "Source Han Sans CN";
     preferred-width: 1280px;
@@ -211,8 +212,8 @@ export component K3Window inherits Window {
     in-out property <length> lyric-scroll-y: 0px;
     in-out property <int> focus-search-serial: 0;
 
-    in property <string> song-title: "Choose a project";
-    in property <string> project-state: "Library ready";
+    in property <string> song-title: Strings.choose-project;
+    in property <string> project-state: Strings.library-ready;
     in property <string> error-message;
     in property <string> log-path;
     in property <bool> has-error: false;
@@ -331,7 +332,7 @@ export component K3Window inherits Window {
                 HorizontalLayout {
                     height: 30px;
                     Text {
-                        text: "K3";
+                        text: Strings.brand;
                         color: Tokens.cue;
                         font-size: 18px;
                         font-weight: 800;
@@ -340,25 +341,25 @@ export component K3Window inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; }
                     SectionLabel {
-                        text: "REHEARSAL ROOM";
+                        text: Strings.setup-eyebrow;
                         vertical-alignment: center;
                     }
                     if root.projects-root != "": ActionButton {
                         width: 30px;
                         height: 30px;
-                        accessible-name: "Cancel folder selection";
+                        accessible-name: Strings.cancel-folder-selection;
                         icon: @image-url("../assets/close.svg");
                         clicked => { root.setup-mode = false; }
                     }
                 }
                 Text {
-                    text: "Find your songbook";
+                    text: Strings.setup-title;
                     color: Tokens.ink;
                     font-size: 34px;
                     font-weight: 650;
                 }
                 Text {
-                    text: "Choose the folder that contains your K3 projects.\nGUI preferences stay separate from the terminal interface.";
+                    text: Strings.setup-copy;
                     color: Tokens.muted;
                     font-size: 14px;
                     wrap: word-wrap;
@@ -367,13 +368,13 @@ export component K3Window inherits Window {
                     spacing: 10px;
                     LineEdit {
                         text <=> root.projects-root;
-                        placeholder-text: "/path/to/k3-projects";
+                        placeholder-text: Strings.projects-root-placeholder;
                         height: 42px;
                     }
                     ActionButton {
                         width: 42px;
                         height: 42px;
-                        accessible-name: "Browse for projects folder";
+                        accessible-name: Strings.browse-projects-folder;
                         icon: @image-url("../assets/folder.svg");
                         clicked => { root.choose-projects-root(); }
                     }
@@ -388,7 +389,7 @@ export component K3Window inherits Window {
                     height: 42px;
                     ActionButton {
                         width: 42px;
-                        accessible-name: "About K3";
+                        accessible-name: Strings.about-k3;
                         icon: @image-url("../assets/info.svg");
                         clicked => { root.show-about = true; }
                     }
@@ -396,7 +397,7 @@ export component K3Window inherits Window {
                     ActionButton {
                         width: 142px;
                         height: 42px;
-                        label: root.loading ? "Checking…" : "Open songbook";
+                        label: root.loading ? Strings.checking : Strings.open-songbook;
                         primary: true;
                         enabled: !root.loading && root.projects-root != "";
                         clicked => { root.save-projects-root(root.projects-root); }
@@ -426,14 +427,14 @@ export component K3Window inherits Window {
                         VerticalLayout {
                             spacing: 1px;
                             Text {
-                                text: "K3";
+                                text: Strings.brand;
                                 color: Tokens.cue;
                                 font-size: 17px;
                                 font-weight: 800;
                                 letter-spacing: 3px;
                             }
                             Text {
-                                text: "KARAOKE REHEARSAL";
+                                text: Strings.app-eyebrow;
                                 color: Tokens.faint;
                                 font-family: "monospace";
                                 font-size: 8px;
@@ -443,7 +444,7 @@ export component K3Window inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                         ActionButton {
                             width: 36px;
-                            accessible-name: "About K3";
+                            accessible-name: Strings.about-k3;
                             icon: @image-url("../assets/info.svg");
                             clicked => { root.show-about = true; }
                         }
@@ -452,19 +453,19 @@ export component K3Window inherits Window {
                     search-input := LineEdit {
                         property <int> focus-trigger: root.focus-search-serial;
                         text <=> root.search-query;
-                        placeholder-text: "Search projects";
+                        placeholder-text: Strings.search-projects;
                         edited => { root.search(self.text); }
                         changed focus-trigger => { self.focus(); }
                     }
 
                     HorizontalLayout {
                         height: 24px;
-                        SectionLabel { text: "PROJECTS"; vertical-alignment: center; }
+                        SectionLabel { text: Strings.projects; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
                         ActionButton {
                             width: 28px;
                             height: 28px;
-                            accessible-name: "Refresh projects";
+                            accessible-name: Strings.refresh-projects;
                             icon: @image-url("../assets/refresh.svg");
                             clicked => { root.refresh-library(); }
                         }
@@ -496,7 +497,7 @@ export component K3Window inherits Window {
                                 }
                                 Text {
                                     text: project.status;
-                                    color: project.status == "Repair needed" ? Tokens.danger : Tokens.faint;
+                                    color: project.status == Strings.project-repair-needed ? Tokens.danger : Tokens.faint;
                                     font-size: 11px;
                                     overflow: elide;
                                 }
@@ -537,7 +538,7 @@ export component K3Window inherits Window {
                         }
                         ActionButton {
                             width: 36px;
-                            accessible-name: "Change projects folder";
+                            accessible-name: Strings.change-projects-folder;
                             icon: @image-url("../assets/folder.svg");
                             clicked => {
                                 if (root.playing) { root.confirm-root-change = true; }
@@ -564,7 +565,7 @@ export component K3Window inherits Window {
                         VerticalLayout {
                             spacing: 5px;
                             SectionLabel {
-                                text: root.playback-ready ? "NOW REHEARSING" : "READY ROOM";
+                                text: root.playback-ready ? Strings.now-rehearsing : Strings.ready-room;
                                 color: root.playback-ready ? Tokens.cue : Tokens.faint;
                             }
                             Text {
@@ -582,14 +583,14 @@ export component K3Window inherits Window {
                             alignment: center;
                             Text {
                                 text: root.project-state;
-                                visible: root.project-state != "Playing" && root.project-state != "Paused";
+                                visible: root.project-state != Strings.playing && root.project-state != Strings.paused;
                                 color: root.has-error ? Tokens.danger : Tokens.muted;
                                 font-size: 11px;
                                 horizontal-alignment: right;
                                 overflow: elide;
                             }
                             Text {
-                                text: root.playback-ready ? root.format-time(root.position-seconds) + " / " + root.format-time(root.duration-seconds) : "WAITING FOR A SONG";
+                                text: root.playback-ready ? root.format-time(root.position-seconds) + " / " + root.format-time(root.duration-seconds) : Strings.waiting-for-song;
                                 color: root.playback-ready ? Tokens.ink : Tokens.faint;
                                 font-family: "monospace";
                                 font-size: 11px;
@@ -620,7 +621,7 @@ export component K3Window inherits Window {
                             if root.playback-error-visible: ActionButton {
                                 width: 32px;
                                 height: 32px;
-                                accessible-name: "Retry playback";
+                                accessible-name: Strings.retry-playback;
                                 icon: @image-url("../assets/refresh.svg");
                                 clicked => { root.playback-command("retry"); }
                             }
@@ -638,7 +639,7 @@ export component K3Window inherits Window {
                             padding-right: 8px;
                             spacing: 10px;
                             Text {
-                                text: "This project changed on disk. Reload to use the latest version.";
+                                text: Strings.project-changed;
                                 color: Tokens.ink;
                                 font-size: 12px;
                                 vertical-alignment: center;
@@ -648,7 +649,7 @@ export component K3Window inherits Window {
                             ActionButton {
                                 width: 32px;
                                 height: 32px;
-                                accessible-name: "Reload project";
+                                accessible-name: Strings.reload-project;
                                 icon: @image-url("../assets/refresh.svg");
                                 clicked => { root.open-project(root.current-project-id); }
                             }
@@ -658,14 +659,14 @@ export component K3Window inherits Window {
                     HorizontalLayout {
                         height: 22px;
                         SectionLabel {
-                            text: "LYRIC CUE";
+                            text: Strings.lyric-cue;
                             vertical-alignment: center;
                         }
                         Rectangle { horizontal-stretch: 1; }
                         if !root.follow-lyrics && root.lyrics.length > 0: ActionButton {
                             width: 142px;
                             height: 28px;
-                            label: "Follow current line";
+                            label: Strings.follow-current-line;
                             clicked => { root.follow-lyrics = true; }
                         }
                     }
@@ -678,14 +679,14 @@ export component K3Window inherits Window {
                             alignment: center;
                             spacing: 8px;
                             Text {
-                                text: root.playback-ready ? "Instrumental rehearsal" : "Choose a song from the left";
+                                text: root.playback-ready ? Strings.instrumental-rehearsal : Strings.choose-song-from-left;
                                 color: Tokens.muted;
                                 font-size: 22px;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                             }
                             Text {
-                                text: root.playback-ready ? "This project has no synced lyrics." : "Its lyrics and playback controls will appear here.";
+                                text: root.playback-ready ? Strings.no-synced-lyrics : Strings.controls-will-appear;
                                 color: Tokens.faint;
                                 font-size: 12px;
                                 horizontal-alignment: center;
@@ -822,24 +823,24 @@ export component K3Window inherits Window {
                             spacing: 6px;
                             TrackPill {
                                 width: 82px;
-                                label: "Original";
-                                unavailable-reason: "Original audio is unavailable";
+                                label: Strings.original;
+                                unavailable-reason: Strings.original-unavailable;
                                 active: root.active-track == 0;
                                 enabled: root.original-available && !root.switching-track;
                                 selected => { root.switch-track(0); }
                             }
                             TrackPill {
                                 width: 102px;
-                                label: "Backing";
-                                unavailable-reason: "Backing track is unavailable";
+                                label: Strings.backing;
+                                unavailable-reason: Strings.backing-unavailable;
                                 active: root.active-track == 1;
                                 enabled: root.accompaniment-available && !root.switching-track;
                                 selected => { root.switch-track(1); }
                             }
                             TrackPill {
                                 width: 82px;
-                                label: "Vocals";
-                                unavailable-reason: "Vocal track is unavailable";
+                                label: Strings.vocals;
+                                unavailable-reason: Strings.vocals-unavailable;
                                 active: root.active-track == 2;
                                 enabled: root.vocals-available && !root.switching-track;
                                 selected => { root.switch-track(2); }
@@ -858,7 +859,7 @@ export component K3Window inherits Window {
                         ActionButton {
                             width: 52px;
                             height: 54px;
-                            label: "−5s";
+                            label: Strings.seek-back;
                             enabled: root.playback-ready;
                             clicked => { root.playback-command("back"); }
                         }
@@ -870,14 +871,14 @@ export component K3Window inherits Window {
                         ActionButton {
                             width: 52px;
                             height: 54px;
-                            label: "+5s";
+                            label: Strings.seek-forward;
                             enabled: root.playback-ready;
                             clicked => { root.playback-command("forward"); }
                         }
                         ActionButton {
                             width: 42px;
                             height: 54px;
-                            accessible-name: "Restart playback";
+                            accessible-name: Strings.restart-playback;
                             icon: @image-url("../assets/restart.svg");
                             enabled: root.playback-ready;
                             clicked => { root.playback-command("restart"); }
@@ -894,7 +895,7 @@ export component K3Window inherits Window {
                             spacing: 6px;
                             ActionButton {
                                 width: 36px;
-                                label: "−";
+                                label: Strings.decrease-key;
                                 enabled: root.playback-ready && root.key-shift > -6;
                                 clicked => { root.set-key(root.key-shift - 1); }
                             }
@@ -915,13 +916,13 @@ export component K3Window inherits Window {
                             }
                             ActionButton {
                                 width: 36px;
-                                label: "+";
+                                label: Strings.increase-key;
                                 enabled: root.playback-ready && root.key-shift < 6;
                                 clicked => { root.set-key(root.key-shift + 1); }
                             }
                             ActionButton {
                                 width: 50px;
-                                label: "Reset";
+                                label: Strings.reset-key;
                                 enabled: root.playback-ready && root.key-shift != 0;
                                 clicked => { root.set-key(0); }
                             }
@@ -944,7 +945,7 @@ export component K3Window inherits Window {
                                 maximum: 1;
                                 step: 0.01;
                                 value: root.volume;
-                                accessible-label: "Volume";
+                                accessible-label: Strings.volume;
                                 changed(value) => { root.set-volume(value); }
                                 released(value) => { root.save-volume(value); }
                             }
@@ -973,7 +974,7 @@ export component K3Window inherits Window {
                 padding: 24px;
                 spacing: 12px;
                 Text {
-                    text: "K3 · Rehearsal room";
+                    text: Strings.about-title;
                     color: Tokens.ink;
                     font-size: 22px;
                     font-weight: 650;
@@ -981,14 +982,14 @@ export component K3Window inherits Window {
                 }
                 AboutSlint { vertical-stretch: 1; }
                 Text {
-                    text: "Diagnostics: " + root.log-path;
+                    text: Strings.diagnostics-prefix + root.log-path;
                     color: Tokens.muted;
                     font-size: 10px;
                     horizontal-alignment: center;
                     overflow: elide;
                 }
                 ActionButton {
-                    label: "Close";
+                    label: Strings.close;
                     clicked => { root.show-about = false; }
                 }
             }
@@ -1010,14 +1011,14 @@ export component K3Window inherits Window {
                 padding: 24px;
                 spacing: 16px;
                 Text {
-                    text: "Change projects folder?";
+                    text: Strings.confirm-folder-title;
                     color: Tokens.ink;
                     font-size: 20px;
                     font-weight: 600;
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: "Playback will remain on the current project until you open another one.";
+                    text: Strings.confirm-folder-copy;
                     color: Tokens.muted;
                     font-size: 12px;
                     horizontal-alignment: center;
@@ -1026,11 +1027,11 @@ export component K3Window inherits Window {
                 HorizontalLayout {
                     spacing: 12px;
                     ActionButton {
-                        label: "Cancel";
+                        label: Strings.cancel;
                         clicked => { root.confirm-root-change = false; }
                     }
                     ActionButton {
-                        label: "Change folder";
+                        label: Strings.change-folder;
                         primary: true;
                         clicked => {
                             root.confirm-root-change = false;
