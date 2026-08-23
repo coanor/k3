@@ -799,13 +799,13 @@ export component K3Window inherits Window {
                 }
 
                 HorizontalLayout {
-                    spacing: 18px;
+                    height: 54px;
 
                     VerticalLayout {
                         width: 284px;
-                        spacing: 7px;
-                        SectionLabel { text: root.switching-track ? "STEM · SWITCHING" : "STEM"; }
+                        Rectangle { vertical-stretch: 1; }
                         HorizontalLayout {
+                            height: 34px;
                             spacing: 6px;
                             TrackPill {
                                 width: 82px;
@@ -832,45 +832,42 @@ export component K3Window inherits Window {
                                 selected => { root.switch-track(2); }
                             }
                         }
+                        Rectangle { vertical-stretch: 1; }
                     }
 
                     Rectangle { horizontal-stretch: 1; }
 
-                    VerticalLayout {
+                    HorizontalLayout {
                         width: 280px;
-                        spacing: 3px;
-                        SectionLabel {
-                            text: root.playing ? "PLAYING" : "TRANSPORT";
-                            color: root.playing ? Tokens.cue : Tokens.muted;
-                            horizontal-alignment: center;
+                        height: 54px;
+                        spacing: 8px;
+                        alignment: center;
+                        ActionButton {
+                            width: 52px;
+                            height: 54px;
+                            label: "−5s";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("back"); }
                         }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: center;
-                            ActionButton {
-                                width: 52px;
-                                label: "−5s";
-                                enabled: root.playback-ready;
-                                clicked => { root.playback-command("back"); }
-                            }
-                            PlayButton {
-                                playing: root.playing;
-                                enabled: root.playback-ready;
-                                clicked => { root.playback-command("toggle"); }
-                            }
-                            ActionButton {
-                                width: 52px;
-                                label: "+5s";
-                                enabled: root.playback-ready;
-                                clicked => { root.playback-command("forward"); }
-                            }
-                            ActionButton {
-                                width: 42px;
-                                accessible-name: "Restart playback";
-                                icon: @image-url("../assets/restart.svg");
-                                enabled: root.playback-ready;
-                                clicked => { root.playback-command("restart"); }
-                            }
+                        PlayButton {
+                            playing: root.playing;
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("toggle"); }
+                        }
+                        ActionButton {
+                            width: 52px;
+                            height: 54px;
+                            label: "+5s";
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("forward"); }
+                        }
+                        ActionButton {
+                            width: 42px;
+                            height: 54px;
+                            accessible-name: "Restart playback";
+                            icon: @image-url("../assets/restart.svg");
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command("restart"); }
                         }
                     }
 
@@ -878,9 +875,9 @@ export component K3Window inherits Window {
 
                     VerticalLayout {
                         width: 298px;
-                        spacing: 7px;
-                        SectionLabel { text: "KEY"; }
+                        Rectangle { vertical-stretch: 1; }
                         HorizontalLayout {
+                            height: 36px;
                             spacing: 6px;
                             ActionButton {
                                 width: 36px;
@@ -915,16 +912,21 @@ export component K3Window inherits Window {
                                 enabled: root.playback-ready && root.key-shift != 0;
                                 clicked => { root.set-key(0); }
                             }
-                            Image {
+                            Rectangle {
                                 width: 16px;
-                                height: 16px;
-                                source: @image-url("../assets/volume.svg");
-                                image-fit: contain;
-                                colorize: Tokens.muted;
-                                vertical-alignment: center;
+                                height: 36px;
+                                Image {
+                                    width: 16px;
+                                    height: 16px;
+                                    y: (parent.height - self.height) / 2;
+                                    source: @image-url("../assets/volume.svg");
+                                    image-fit: contain;
+                                    colorize: Tokens.muted;
+                                }
                             }
                             Slider {
                                 width: 90px;
+                                height: 36px;
                                 minimum: 0;
                                 maximum: 1;
                                 step: 0.01;
@@ -934,6 +936,7 @@ export component K3Window inherits Window {
                                 released(value) => { root.save-volume(value); }
                             }
                         }
+                        Rectangle { vertical-stretch: 1; }
                     }
                 }
             }
