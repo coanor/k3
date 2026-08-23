@@ -4,6 +4,7 @@ mod effects;
 mod library;
 mod lyrics_download;
 mod mix;
+mod netease;
 mod pitch;
 mod python_separator;
 mod recorder;

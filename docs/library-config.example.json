@@ -21,5 +21,8 @@
   "lyrics": {
     "auto_download": true,
     "netease_fallback": false
+  },
+  "netease": {
+    "enabled": false
   }
 }

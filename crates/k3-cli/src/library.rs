@@ -28,6 +28,8 @@ pub struct LibraryConfig {
     pub recording: RecordingConfig,
     #[serde(default)]
     pub lyrics: LyricsConfig,
+    #[serde(default)]
+    pub netease: NeteaseConfig,
 }
 
 impl LibraryConfig {
@@ -109,6 +111,12 @@ pub struct LyricsConfig {
 pub struct RecordingConfig {
     #[serde(default)]
     pub default_effect: VocalEffectPreset,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NeteaseConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl Default for LyricsConfig {
@@ -343,7 +351,11 @@ fn scan_music_paths(
     output: &mut Vec<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
     for entry in fs::read_dir(root)? {
-        let path = entry?.path();
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
         if path.is_dir() && recursive {
             scan_music_paths(&path, true, extensions, output)?;
         } else if path.is_file()
@@ -396,6 +408,7 @@ mod tests {
         fs::create_dir_all(music.join("album")).unwrap();
         fs::create_dir_all(projects.join("existing")).unwrap();
         fs::write(music.join("album/song.flac"), b"audio").unwrap();
+        fs::write(music.join("album/.download.part.flac"), b"partial").unwrap();
         fs::write(music.join("ignore.txt"), b"text").unwrap();
         fs::write(
             projects.join("existing/project.json"),
@@ -439,7 +452,34 @@ mod tests {
         assert_eq!(snapshot.sources[0].project_path, projects.join("existing"));
         assert_eq!(config.recording.default_effect, VocalEffectPreset::Ktv);
         assert!(config.lyrics.netease_fallback);
+        assert!(!config.netease.enabled);
         assert!(config.separation.preserve_backing_vocals);
+    }
+
+    #[test]
+    fn netease_source_is_only_enabled_explicitly() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+
+        let disabled: LibraryConfig = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false", "profile": "fast"}
+        }))
+        .unwrap();
+        assert!(!disabled.netease.enabled);
+
+        let enabled: LibraryConfig = serde_json::from_value(serde_json::json!({
+            "music_root": disabled.music_root,
+            "projects_root": disabled.projects_root,
+            "separation": {"worker": "/bin/false", "profile": "fast"},
+            "netease": {"enabled": true}
+        }))
+        .unwrap();
+        assert!(enabled.netease.enabled);
     }
 
     #[cfg(unix)]

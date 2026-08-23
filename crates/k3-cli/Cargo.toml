@@ -14,13 +14,13 @@ ratatui.workspace = true
 rodio = "0.22.2"
 rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
+qrcode = { version = "0.14.1", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }
 unicode-width = "0.2.1"
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true
