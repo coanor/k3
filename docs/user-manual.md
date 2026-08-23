@@ -158,9 +158,10 @@ printf '%s\n' '{"id":"health","method":"health"}' | \
 bash python/separator/scripts/install-cpu.sh .venv-separator 3.13
 ```
 
-老旧 CPU 建议使用 `fast`、`uvr-mdx-karaoke-2`、`segment_size=64` 或
-`128`，并关闭 autocast。CPU 分离可能明显慢于歌曲时长，不建议运行 quality
-RoFormer。
+老旧 CPU 建议使用 `fast`、`uvr-mdx-karaoke-2`，省略 `segment_size` 并关闭
+autocast。该 MDX 模型的原生分块大小是 `256`；覆盖为 `64` 或 `128` 会把 ONNX
+模型转换为 PyTorch 执行，不但更慢，还可能在不支持较新指令集的 CPU 上导致 worker
+异常退出。CPU 分离可能明显慢于歌曲时长，不建议运行 quality RoFormer。
 
 把 `separate.sh` 和运行包复制到另一台 Linux 机器时，最低要求是 x86-64
 Linux、Bash 4（脚本使用关联数组）、`realpath`、FFmpeg、可执行的 K3 二进制，
@@ -252,7 +253,7 @@ project。启动时扫描到的旧失败 project 也不会显示在左栏。
 | `separation.log_dir` | `K3_LOG_DIR` | 分离日志目录；单个 `separate.log` 每次覆盖 |
 | `separation.profile` | `K3_PROFILE` | `fast` / `balanced` / `quality` / `compatible` |
 | `separation.model` | `K3_MODEL` | 明确指定模型 |
-| `separation.segment_size` | `K3_SEGMENT_SIZE` | 推理分块大小 |
+| `separation.segment_size` | `K3_SEGMENT_SIZE` | 可选的推理分块大小覆盖；通常应省略并使用模型原生值 |
 | `separation.autocast` | `K3_AUTOCAST` | GPU 混合精度开关；CPU 建议设为 `false` |
 | `separation.preserve_backing_vocals` | `K3_PRESERVE_BACKING_VOCALS` | 默认 `true`；设为 `false` 才关闭和声保留 |
 
