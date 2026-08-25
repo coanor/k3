@@ -2998,13 +2998,8 @@ fn draw_netease_sources(frame: &mut Frame, area: Rect, library: &MediaLibrary) {
             .map(|(row, song)| {
                 let label = netease_song_label(song, panel.selected_ids.contains(&song.id));
                 let selected = row == panel.selected_row;
-                if panel.view == NeteaseView::Liked {
-                    fitted_library_row(
-                        &label,
-                        selected,
-                        library.focus == LibraryFocus::Sources,
-                        row_width,
-                    )
+                if panel.view == NeteaseView::Liked && !selected {
+                    fitted_unselected_library_row(&label, row_width)
                 } else {
                     library_row(&label, selected, library.focus == LibraryFocus::Sources)
                 }
@@ -3291,10 +3286,8 @@ fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
     ))
 }
 
-fn fitted_library_row(text: &str, selected: bool, focused: bool, width: usize) -> Line<'static> {
-    let marker = if selected { "▶ " } else { "  " };
-    let text = fit_single_line(format!("{marker}{text}"), width);
-    Line::from(Span::styled(text, library_row_style(selected, focused)))
+fn fitted_unselected_library_row(text: &str, width: usize) -> Line<'static> {
+    Line::from(fit_single_line_middle(format!("  {text}"), width))
 }
 
 fn library_row_style(selected: bool, focused: bool) -> Style {
@@ -3359,11 +3352,24 @@ fn fit_source_name(name: &str, width: usize) -> String {
     format!("{}…{extension}", take_prefix_width(name, prefix_width))
 }
 
-fn fit_single_line(value: String, width: usize) -> String {
+fn fit_single_line_middle(value: String, width: usize) -> String {
     if usize::from(value.as_str().cell_width()) <= width {
         return value;
     }
-    fit_text_with_suffix(&value, width, "...")
+    let omission = "...";
+    let omission_width = usize::from(omission.cell_width());
+    if width <= omission_width {
+        return take_prefix_width(omission, width);
+    }
+    let content_width = width - omission_width;
+    let prefix_width = content_width.div_ceil(2);
+    let suffix_width = content_width - prefix_width;
+    format!(
+        "{}{}{}",
+        take_prefix_width(&value, prefix_width),
+        omission,
+        take_suffix_width(&value, suffix_width)
+    )
 }
 
 fn take_prefix_width(value: &str, maximum_width: usize) -> String {
@@ -3380,6 +3386,25 @@ fn take_prefix_width(value: &str, maximum_width: usize) -> String {
         })
         .map(|grapheme| grapheme.symbol)
         .collect()
+}
+
+fn take_suffix_width(value: &str, maximum_width: usize) -> String {
+    let span = Span::raw(value);
+    let graphemes = span
+        .styled_graphemes(Style::default())
+        .map(|grapheme| grapheme.symbol)
+        .collect::<Vec<_>>();
+    let mut width = 0;
+    let mut start = graphemes.len();
+    for (index, grapheme) in graphemes.iter().enumerate().rev() {
+        let grapheme_width = usize::from(grapheme.cell_width());
+        if width + grapheme_width > maximum_width {
+            break;
+        }
+        width += grapheme_width;
+        start = index;
+    }
+    graphemes[start..].concat()
 }
 
 fn char_index_to_byte(value: &str, index: usize) -> usize {
@@ -3672,7 +3697,7 @@ mod tests {
         App, CatalogJob, ChromeLoginJob, FooterAction, ImportJob, LyricCountdown, LyricsPicker,
         LyricsQueryEditor, MediaLibrary, NeteaseDownloadJob, NeteaseModal, NeteasePanel,
         NeteaseView, PlaybackState, PlaybackTrack, SeparationRequest, TrackKind,
-        draw_library_sources, effect_preset_for_key, fit_single_line, fit_source_name,
+        draw_library_sources, effect_preset_for_key, fit_single_line_middle, fit_source_name,
         format_duration, handle_library_key, handle_library_source_key, handle_netease_modal_key,
         handle_netease_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
         mode_allows_footer_action, netease_message_is_failure, netease_sign_in_hint,
@@ -3750,7 +3775,7 @@ mod tests {
     }
 
     #[test]
-    fn long_netease_song_rows_are_shortened_to_one_line() {
+    fn liked_netease_song_rows_match_local_expansion_style() {
         let sandbox = tempfile::tempdir().unwrap();
         let music = sandbox.path().join("music");
         let projects = sandbox.path().join("projects");
@@ -3784,30 +3809,54 @@ mod tests {
             max_quality: Quality::Lossless,
             available: true,
         });
+        panel.songs.push(Song {
+            id: 8,
+            title: "这是一首非常非常长的歌曲TAIL".into(),
+            artists: vec!["很长的歌手名字".into()],
+            album: "很长的专辑名字".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        });
         library.netease = Some(panel);
         library.music_source = super::MusicSource::Netease;
         library.focus = super::LibraryFocus::Sources;
-        let backend = TestBackend::new(40, 6);
+        let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).unwrap();
 
         terminal
             .draw(|frame| super::draw_netease_sources(frame, frame.area(), &library))
             .unwrap();
 
-        {
-            let buffer = terminal.backend().buffer();
-            let row = |y| {
+        let buffer = terminal.backend().buffer();
+        let rows = (1..buffer.area.height.saturating_sub(1))
+            .map(|y| {
                 (1..buffer.area.width.saturating_sub(1))
                     .filter_map(|x| buffer.cell((x, y)))
                     .map(ratatui::buffer::Cell::symbol)
                     .collect::<String>()
-            };
-            let first = row(1);
-            let second = row(2);
-            assert!(first.contains("..."), "{first}");
-            assert!(!first.contains("TAIL"), "{first}");
-            assert!(second.trim().is_empty(), "{second}");
-        }
+            })
+            .collect::<Vec<_>>();
+        let highlighted = (1..buffer.area.height.saturating_sub(1))
+            .flat_map(|y| {
+                (1..buffer.area.width.saturating_sub(1)).filter_map(move |x| {
+                    buffer.cell((x, y)).and_then(|cell| {
+                        (cell.fg == Color::Yellow && !cell.symbol().trim().is_empty())
+                            .then(|| cell.symbol().to_owned())
+                    })
+                })
+            })
+            .collect::<String>();
+        assert!(highlighted.contains("TAIL"), "{highlighted}");
+        assert!(highlighted.contains("很长的专辑名字"), "{highlighted}");
+        assert!(!highlighted.contains("..."), "{highlighted}");
+        let shortened = rows.iter().find(|row| row.contains("...")).unwrap();
+        let ellipsis = shortened.find("...").unwrap();
+        assert!(shortened[..ellipsis].contains("[ ]"), "{shortened}");
+        assert!(
+            shortened[ellipsis + 3..].contains("lossless"),
+            "{shortened}"
+        );
 
         library.netease.as_mut().unwrap().view = NeteaseView::Search;
         terminal
@@ -3826,27 +3875,18 @@ mod tests {
         assert!(!rows[0].contains("..."), "{}", rows[0]);
         assert!(!rows[1].trim().is_empty(), "{}", rows[1]);
         assert!(rows.join("").contains("TAIL"), "{rows:?}");
-
-        library.netease.as_mut().unwrap().view = NeteaseView::Liked;
-        let backend = TestBackend::new(3, 6);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| super::draw_netease_sources(frame, frame.area(), &library))
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((1, 1)).unwrap().symbol(), ".");
-        assert_eq!(buffer.cell((1, 2)).unwrap().symbol(), " ");
     }
 
     #[test]
     #[allow(clippy::unicode_not_nfc)]
-    fn single_line_fitting_uses_terminal_grapheme_widths() {
-        assert_eq!(fit_single_line("abcdef".into(), 0), "");
-        assert_eq!(fit_single_line("abcdef".into(), 1), ".");
-        assert_eq!(fit_single_line("abcdef".into(), 2), "..");
-        assert_eq!(fit_single_line("abcdef".into(), 3), "...");
-        assert_eq!(fit_single_line("ｶﾞ".into(), 1), ".");
-        assert_eq!(fit_single_line("👨‍👩‍👧‍👦abcd".into(), 5), "👨‍👩‍👧‍👦...");
+    fn middle_fitting_uses_terminal_grapheme_widths() {
+        assert_eq!(fit_single_line_middle("abcdef".into(), 0), "");
+        assert_eq!(fit_single_line_middle("abcdef".into(), 1), ".");
+        assert_eq!(fit_single_line_middle("abcdef".into(), 2), "..");
+        assert_eq!(fit_single_line_middle("abcdef".into(), 3), "...");
+        assert_eq!(fit_single_line_middle("abcdef".into(), 5), "a...f");
+        assert_eq!(fit_single_line_middle("ｶﾞ".into(), 1), ".");
+        assert_eq!(fit_single_line_middle("👨‍👩‍👧‍👦abcde".into(), 6), "👨‍👩‍👧‍👦...e");
     }
 
     #[test]
