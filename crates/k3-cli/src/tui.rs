@@ -27,12 +27,13 @@ use k3_core::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
+    buffer::CellWidth,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     audio::AudioPlayer,
@@ -2989,17 +2990,24 @@ fn draw_netease_sources(frame: &mut Frame, area: Rect, library: &MediaLibrary) {
             separation_spinner_frame()
         ))]
     } else {
+        let row_width = usize::from(list_area.width.saturating_sub(2));
         panel
             .visible_songs()
             .iter()
             .enumerate()
             .map(|(row, song)| {
                 let label = netease_song_label(song, panel.selected_ids.contains(&song.id));
-                library_row(
-                    &label,
-                    row == panel.selected_row,
-                    library.focus == LibraryFocus::Sources,
-                )
+                let selected = row == panel.selected_row;
+                if panel.view == NeteaseView::Liked {
+                    fitted_library_row(
+                        &label,
+                        selected,
+                        library.focus == LibraryFocus::Sources,
+                        row_width,
+                    )
+                } else {
+                    library_row(&label, selected, library.focus == LibraryFocus::Sources)
+                }
             })
             .collect::<Vec<_>>()
     };
@@ -3277,7 +3285,20 @@ fn separation_spinner_frame() -> &'static str {
 
 fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
     let marker = if selected { "▶ " } else { "  " };
-    let style = if selected && focused {
+    Line::from(Span::styled(
+        format!("{marker}{text}"),
+        library_row_style(selected, focused),
+    ))
+}
+
+fn fitted_library_row(text: &str, selected: bool, focused: bool, width: usize) -> Line<'static> {
+    let marker = if selected { "▶ " } else { "  " };
+    let text = fit_single_line(format!("{marker}{text}"), width);
+    Line::from(Span::styled(text, library_row_style(selected, focused)))
+}
+
+fn library_row_style(selected: bool, focused: bool) -> Style {
+    if selected && focused {
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
@@ -3285,8 +3306,7 @@ fn library_row(text: &str, selected: bool, focused: bool) -> Line<'static> {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default()
-    };
-    Line::from(Span::styled(format!("{marker}{text}"), style))
+    }
 }
 
 fn wrapped_list_scroll(rows: &[Line<'_>], selected: usize, width: u16, height: u16) -> u16 {
@@ -3318,7 +3338,7 @@ fn display_name(path: &Path) -> String {
 }
 
 fn fit_source_name(name: &str, width: usize) -> String {
-    if UnicodeWidthStr::width(name) <= width {
+    if usize::from(name.cell_width()) <= width {
         return name.to_owned();
     }
     if width == 0 {
@@ -3332,25 +3352,33 @@ fn fit_source_name(name: &str, width: usize) -> String {
         .extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| format!(".{extension}"))
-        .filter(|extension| UnicodeWidthStr::width(extension.as_str()) + 1 < width)
+        .filter(|extension| usize::from(extension.as_str().cell_width()) + 1 < width)
         .unwrap_or_default();
-    let suffix_width = UnicodeWidthStr::width(extension.as_str());
+    let suffix_width = usize::from(extension.as_str().cell_width());
     let prefix_width = width.saturating_sub(suffix_width + 1);
     format!("{}…{extension}", take_prefix_width(name, prefix_width))
 }
 
+fn fit_single_line(value: String, width: usize) -> String {
+    if usize::from(value.as_str().cell_width()) <= width {
+        return value;
+    }
+    fit_text_with_suffix(&value, width, "...")
+}
+
 fn take_prefix_width(value: &str, maximum_width: usize) -> String {
     let mut width = 0;
-    value
-        .chars()
-        .take_while(|character| {
-            let character_width = UnicodeWidthChar::width(*character).unwrap_or(0);
-            if width + character_width > maximum_width {
+    let span = Span::raw(value);
+    span.styled_graphemes(Style::default())
+        .take_while(|grapheme| {
+            let grapheme_width = usize::from(grapheme.symbol.cell_width());
+            if width + grapheme_width > maximum_width {
                 return false;
             }
-            width += character_width;
+            width += grapheme_width;
             true
         })
+        .map(|grapheme| grapheme.symbol)
         .collect()
 }
 
@@ -3362,16 +3390,22 @@ fn char_index_to_byte(value: &str, index: usize) -> usize {
 }
 
 fn fit_text_end(value: &str, width: usize) -> String {
-    if UnicodeWidthStr::width(value) <= width {
+    if usize::from(value.cell_width()) <= width {
         return value.to_owned();
     }
-    if width == 0 {
-        return String::new();
+    fit_text_with_suffix(value, width, "…")
+}
+
+fn fit_text_with_suffix(value: &str, width: usize, suffix: &str) -> String {
+    let suffix_width = usize::from(suffix.cell_width());
+    if width <= suffix_width {
+        return take_prefix_width(suffix, width);
     }
-    if width == 1 {
-        return "…".into();
-    }
-    format!("{}…", take_prefix_width(value, width - 1))
+    format!(
+        "{}{}",
+        take_prefix_width(value, width - suffix_width),
+        suffix
+    )
 }
 
 fn effect_preset_for_key(key: KeyCode) -> Option<VocalEffectPreset> {
@@ -3638,8 +3672,8 @@ mod tests {
         App, CatalogJob, ChromeLoginJob, FooterAction, ImportJob, LyricCountdown, LyricsPicker,
         LyricsQueryEditor, MediaLibrary, NeteaseDownloadJob, NeteaseModal, NeteasePanel,
         NeteaseView, PlaybackState, PlaybackTrack, SeparationRequest, TrackKind,
-        draw_library_sources, effect_preset_for_key, fit_source_name, format_duration,
-        handle_library_key, handle_library_source_key, handle_netease_modal_key,
+        draw_library_sources, effect_preset_for_key, fit_single_line, fit_source_name,
+        format_duration, handle_library_key, handle_library_source_key, handle_netease_modal_key,
         handle_netease_source_key, load_lyrics, lyric_countdown, lyric_seek_target, lyric_window,
         mode_allows_footer_action, netease_message_is_failure, netease_sign_in_hint,
         netease_song_label, poll_import_job, poll_netease_catalog, poll_netease_chrome_login,
@@ -3647,7 +3681,7 @@ mod tests {
     };
     use crate::{
         lyrics_download::LyricsChoice,
-        netease::{NeteaseError, Quality, RiskStore, SessionStore, Song},
+        netease::{NeteaseError, NeteaseSession, Quality, RiskStore, SessionStore, Song},
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use k3_core::{
@@ -3713,6 +3747,106 @@ mod tests {
             netease_song_label(&song, true),
             "[x] Artist-Song · Album · lossless · unavailable (account or region)"
         );
+    }
+
+    #[test]
+    fn long_netease_song_rows_are_shortened_to_one_line() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {"worker": "/bin/false"}
+        }))
+        .unwrap();
+        let mut library = MediaLibrary::new(config).unwrap();
+        let session_store = SessionStore::at(sandbox.path().join("session.json"));
+        let session: NeteaseSession = serde_json::from_value(serde_json::json!({
+            "cookie": "MUSIC_U=test",
+            "user_id": 42,
+            "nickname": "Singer"
+        }))
+        .unwrap();
+        session_store.save(&session).unwrap();
+        let mut panel = NeteasePanel::new(
+            session_store,
+            RiskStore::at(sandbox.path().join("preferences.json")),
+        );
+        panel.songs.push(Song {
+            id: 7,
+            title: "这是一首非常非常长的歌曲TAIL".into(),
+            artists: vec!["很长的歌手名字".into()],
+            album: "很长的专辑名字".into(),
+            cover_url: None,
+            max_quality: Quality::Lossless,
+            available: true,
+        });
+        library.netease = Some(panel);
+        library.music_source = super::MusicSource::Netease;
+        library.focus = super::LibraryFocus::Sources;
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| super::draw_netease_sources(frame, frame.area(), &library))
+            .unwrap();
+
+        {
+            let buffer = terminal.backend().buffer();
+            let row = |y| {
+                (1..buffer.area.width.saturating_sub(1))
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            };
+            let first = row(1);
+            let second = row(2);
+            assert!(first.contains("..."), "{first}");
+            assert!(!first.contains("TAIL"), "{first}");
+            assert!(second.trim().is_empty(), "{second}");
+        }
+
+        library.netease.as_mut().unwrap().view = NeteaseView::Search;
+        terminal
+            .draw(|frame| super::draw_netease_sources(frame, frame.area(), &library))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rows = (1..buffer.area.height.saturating_sub(1))
+            .map(|y| {
+                (1..buffer.area.width.saturating_sub(1))
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(!rows[0].contains("..."), "{}", rows[0]);
+        assert!(!rows[1].trim().is_empty(), "{}", rows[1]);
+        assert!(rows.join("").contains("TAIL"), "{rows:?}");
+
+        library.netease.as_mut().unwrap().view = NeteaseView::Liked;
+        let backend = TestBackend::new(3, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| super::draw_netease_sources(frame, frame.area(), &library))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer.cell((1, 1)).unwrap().symbol(), ".");
+        assert_eq!(buffer.cell((1, 2)).unwrap().symbol(), " ");
+    }
+
+    #[test]
+    #[allow(clippy::unicode_not_nfc)]
+    fn single_line_fitting_uses_terminal_grapheme_widths() {
+        assert_eq!(fit_single_line("abcdef".into(), 0), "");
+        assert_eq!(fit_single_line("abcdef".into(), 1), ".");
+        assert_eq!(fit_single_line("abcdef".into(), 2), "..");
+        assert_eq!(fit_single_line("abcdef".into(), 3), "...");
+        assert_eq!(fit_single_line("ｶﾞ".into(), 1), ".");
+        assert_eq!(fit_single_line("👨‍👩‍👧‍👦abcd".into(), 5), "👨‍👩‍👧‍👦...");
     }
 
     #[test]
