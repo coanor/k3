@@ -1097,9 +1097,11 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "unicode-width",
  "ureq",
+ "uuid",
 ]
 
 [[package]]

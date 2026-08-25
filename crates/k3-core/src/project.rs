@@ -123,6 +123,46 @@ pub enum SeparationProfile {
     Compatible,
 }
 
+/// Stable output contract requested from a separator.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SeparationOutputLayout {
+    #[default]
+    TwoStem,
+    Karaoke,
+}
+
+/// Durable reference to separation work that may outlive the K3 process.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SeparationOperation {
+    pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_id: Option<String>,
+    pub job_id: String,
+    pub model_id: String,
+    pub profile: SeparationProfile,
+    pub output_layout: SeparationOutputLayout,
+}
+
+impl SeparationOperation {
+    fn validate(&self) -> Result<(), ProjectError> {
+        for (name, value) in [
+            ("adapter", self.adapter.as_str()),
+            ("job ID", self.job_id.as_str()),
+            ("model ID", self.model_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ProjectError::Invalid(format!(
+                    "separation operation {name} cannot be empty"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Exact model identity used to produce cached stems.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ModelProvenance {
@@ -333,6 +373,8 @@ pub struct Project {
     source: ProjectPath,
     lyrics: Option<ProjectPath>,
     separation: SeparationState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    separation_operation: Option<SeparationOperation>,
     takes: Vec<Take>,
     latency_compensation_ms: i32,
     #[serde(default)]
@@ -389,6 +431,59 @@ impl Project {
     #[must_use]
     pub fn separation(&self) -> &SeparationState {
         &self.separation
+    }
+
+    /// Returns durable in-flight separation work, if any.
+    #[must_use]
+    pub fn separation_operation(&self) -> Option<&SeparationOperation> {
+        self.separation_operation.as_ref()
+    }
+
+    /// Records an external operation without replacing the currently playable stems.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] for malformed or overlapping operations.
+    pub fn start_separation_operation(
+        &mut self,
+        operation: SeparationOperation,
+    ) -> Result<(), ProjectError> {
+        operation.validate()?;
+        if self.separation_operation.is_some() {
+            return Err(ProjectError::Invalid(
+                "a separation operation is already in progress".into(),
+            ));
+        }
+        self.separation_operation = Some(operation);
+        Ok(())
+    }
+
+    /// Atomically promotes downloaded stems and clears the external operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Invalid`] if no operation is active or the manifest is invalid.
+    pub fn finish_separation_operation(
+        &mut self,
+        manifest: SeparationManifest,
+    ) -> Result<(), ProjectError> {
+        if self.separation_operation.is_none() {
+            return Err(ProjectError::Invalid(
+                "no separation operation is in progress".into(),
+            ));
+        }
+        manifest.validate().map_err(ProjectError::Invalid)?;
+        self.separation = SeparationState::Ready(manifest);
+        self.separation_operation = None;
+        Ok(())
+    }
+
+    /// Clears a failed external operation while preserving any previously ready stems.
+    pub fn fail_separation_operation(&mut self, message: String) {
+        self.separation_operation = None;
+        if !matches!(self.separation, SeparationState::Ready(_)) {
+            self.separation = SeparationState::Failed { message };
+        }
     }
 
     #[must_use]
@@ -490,6 +585,9 @@ impl Project {
         if let SeparationState::Ready(manifest) = &self.separation {
             manifest.validate().map_err(ProjectError::Invalid)?;
         }
+        if let Some(operation) = &self.separation_operation {
+            operation.validate()?;
+        }
         Ok(())
     }
 }
@@ -563,6 +661,7 @@ impl ProjectRepository for FileProjectRepository {
             source,
             lyrics,
             separation: SeparationState::NotRequested,
+            separation_operation: None,
             takes: Vec::new(),
             latency_compensation_ms: 0,
             key_shift_semitones: 0,

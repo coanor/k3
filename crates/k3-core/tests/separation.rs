@@ -4,7 +4,8 @@ use std::path::Path;
 
 use k3_core::{
     CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure, SeparationManifest,
-    SeparationProfile, SeparationState, SongPreparation, StemSeparator,
+    SeparationOperation, SeparationOutputLayout, SeparationProfile, SeparationState,
+    SongPreparation, StemSeparator,
 };
 
 struct SuccessfulSeparator;
@@ -206,4 +207,28 @@ fn failed_repreparation_restores_the_ready_manifest() {
 
     assert!(error.to_string().contains("model crashed"));
     assert_eq!(project.separation(), &previous);
+}
+
+#[test]
+fn remote_operation_is_recorded_without_hiding_existing_stems() {
+    let mut project = support::project_fixture();
+    SongPreparation::new(SuccessfulSeparator)
+        .prepare(&mut project, SeparationProfile::Quality)
+        .unwrap();
+    let previous = project.separation().clone();
+
+    project
+        .start_separation_operation(SeparationOperation {
+            adapter: "remote".into(),
+            server_profile: Some("studio-gpu".into()),
+            input_id: Some("input_123".into()),
+            job_id: "job_456".into(),
+            model_id: "bs-roformer-viperx-1297".into(),
+            profile: SeparationProfile::Quality,
+            output_layout: SeparationOutputLayout::Karaoke,
+        })
+        .unwrap();
+
+    assert_eq!(project.separation(), &previous);
+    assert_eq!(project.separation_operation().unwrap().job_id, "job_456");
 }

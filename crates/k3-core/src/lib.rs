@@ -9,7 +9,8 @@ pub use lyrics::{LyricsLine, LyricsTimeline};
 pub use project::{
     BackingVocalModelProvenance, CheckpointSha256, CreateProject, FileProjectRepository,
     ModelProvenance, Project, ProjectError, ProjectPath, ProjectRepository, SeparationManifest,
-    SeparationProfile, SeparationState, Take, VocalEffectPreset,
+    SeparationOperation, SeparationOutputLayout, SeparationProfile, SeparationState, Take,
+    VocalEffectPreset,
 };
 pub use recording::{RecordingError, RecordingSession, RecordingState};
 pub use separation::{SeparationFailure, SongPreparation, StemSeparator};

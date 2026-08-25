@@ -1,0 +1,25 @@
+{
+  "music_root": "/Users/example/Music/original",
+  "projects_root": "/Users/example/Music/k3",
+  "scan": {
+    "recursive": true,
+    "extensions": ["mp3", "flac", "wav", "m4a", "aac", "ogg"]
+  },
+  "separation": {
+    "adapter": "remote",
+    "server_profile": "studio-gpu",
+    "server_url": "https://separator.example.com",
+    "token_env": "K3_SEPARATOR_TOKEN",
+    "profile": "quality",
+    "model": "bs-roformer-viperx-1297",
+    "output_layout": "karaoke",
+    "poll_interval_ms": 500
+  },
+  "recording": {
+    "default_effect": "clean"
+  },
+  "lyrics": {
+    "auto_download": true,
+    "netease_fallback": false
+  }
+}

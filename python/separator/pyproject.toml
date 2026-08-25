@@ -13,9 +13,16 @@ dependencies = []
 [project.optional-dependencies]
 gpu = ["audio-separator[gpu]>=0.44.5,<0.45"]
 cpu = ["audio-separator[cpu]>=0.44.5,<0.45"]
+server = [
+  "fastapi>=0.141,<0.142",
+  "uvicorn>=0.52,<0.53",
+]
 
 [project.scripts]
 k3-separator = "k3_separator.worker:main"
+k3-separator-server = "k3_separator.server:main"
+k3-separator-benchmark = "k3_separator.benchmark:main"
+k3-separator-models = "k3_separator.model_admin:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/k3_separator"]

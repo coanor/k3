@@ -1,18 +1,23 @@
 use std::{
     collections::HashMap,
+    env,
     error::Error,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use k3_core::{
-    CreateProject, FileProjectRepository, ProjectRepository, SeparationProfile, SeparationState,
-    SongPreparation, VocalEffectPreset,
+    CreateProject, FileProjectRepository, ProjectRepository, SeparationOutputLayout,
+    SeparationProfile, SeparationState, SongPreparation, VocalEffectPreset,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
+use crate::remote_separator::{
+    RemoteSeparator, RemoteSeparatorConfig, is_terminal_job_error, validate_server_url,
+};
 
 const DEFAULT_EXTENSIONS: [&str; 6] = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
 
@@ -61,6 +66,28 @@ impl LibraryConfig {
         {
             return Err("separation.segment_size must be between 1 and 4096".into());
         }
+        if self.separation.adapter == SeparationAdapter::Remote {
+            let url = self
+                .separation
+                .server_url
+                .as_deref()
+                .ok_or("separation.server_url is required for the remote adapter")?;
+            validate_server_url(url)?;
+            if self
+                .separation
+                .token_env
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                return Err("separation.token_env is required for the remote adapter".into());
+            }
+            if self.separation.model.as_deref().is_none_or(str::is_empty) {
+                return Err("separation.model is required for the remote adapter".into());
+            }
+            if self.separation.profile == SeparationProfile::Compatible {
+                return Err("remote separation does not support the compatible profile".into());
+            }
+        }
         Ok(())
     }
 }
@@ -82,8 +109,19 @@ impl Default for ScanConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SeparationAdapter {
+    #[default]
+    Local,
+    Remote,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SeparationConfig {
+    #[serde(default)]
+    pub adapter: SeparationAdapter,
+    #[serde(default = "default_worker")]
     pub worker: PathBuf,
     pub model_dir: Option<PathBuf>,
     pub log_dir: Option<PathBuf>,
@@ -95,6 +133,16 @@ pub struct SeparationConfig {
     pub autocast: bool,
     #[serde(default = "default_preserve_backing_vocals")]
     pub preserve_backing_vocals: bool,
+    #[serde(default)]
+    pub server_profile: Option<String>,
+    #[serde(default)]
+    pub server_url: Option<String>,
+    #[serde(default)]
+    pub token_env: Option<String>,
+    #[serde(default = "default_output_layout")]
+    pub output_layout: SeparationOutputLayout,
+    #[serde(default = "default_poll_interval_ms")]
+    pub poll_interval_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -122,6 +170,18 @@ impl Default for LyricsConfig {
 
 fn default_preserve_backing_vocals() -> bool {
     true
+}
+
+fn default_worker() -> PathBuf {
+    PathBuf::from("k3-separator")
+}
+
+const fn default_output_layout() -> SeparationOutputLayout {
+    SeparationOutputLayout::Karaoke
+}
+
+const fn default_poll_interval_ms() -> u64 {
+    500
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,6 +321,15 @@ fn separate_into_project(
             title: Some(title),
         })?
     };
+    if config.separation.adapter == SeparationAdapter::Remote {
+        return separate_remotely(config, project, project_root, replacing);
+    }
+    if project.separation_operation().is_some() {
+        return Err(
+            "project has a pending remote separation; use its remote server profile to resume it"
+                .into(),
+        );
+    }
     let separator = PythonStemSeparator::new(PythonSeparatorConfig {
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
@@ -308,6 +377,89 @@ fn separate_into_project(
             project_root.display()
         )
         .into()),
+    }
+}
+
+fn separate_remotely(
+    config: &LibraryConfig,
+    mut project: k3_core::Project,
+    project_root: &Path,
+    replacing: bool,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let separation = &config.separation;
+    let token_env = separation
+        .token_env
+        .as_deref()
+        .ok_or("separation.token_env is required for the remote adapter")?;
+    let token = env::var(token_env)
+        .map_err(|_| format!("separator token environment variable is not set: {token_env}"))?;
+    let server_profile = separation
+        .server_profile
+        .clone()
+        .unwrap_or_else(|| "default".into());
+    let separator = RemoteSeparator::new(RemoteSeparatorConfig {
+        server_profile: server_profile.clone(),
+        server_url: separation
+            .server_url
+            .clone()
+            .ok_or("separation.server_url is required for the remote adapter")?,
+        token,
+        model_id: separation
+            .model
+            .clone()
+            .ok_or("separation.model is required for the remote adapter")?,
+        output_layout: separation.output_layout,
+        poll_interval: Duration::from_millis(separation.poll_interval_ms.max(50)),
+    });
+    let repository = FileProjectRepository;
+    let operation = if let Some(operation) = project.separation_operation() {
+        if operation.adapter != "remote"
+            || operation.server_profile.as_deref() != Some(server_profile.as_str())
+        {
+            return Err(format!(
+                "project separation belongs to server profile {:?}, not {server_profile}",
+                operation.server_profile
+            )
+            .into());
+        }
+        operation.clone()
+    } else {
+        let operation = separator.submit(&project.source_path(), separation.profile)?;
+        project.start_separation_operation(operation.clone())?;
+        repository.save(&project)?;
+        operation
+    };
+
+    match separator.wait_and_download(project.root(), &operation) {
+        Ok(manifest) => {
+            project.finish_separation_operation(manifest)?;
+            repository.save(&project)?;
+            Ok(project_root.to_path_buf())
+        }
+        Err(error) => {
+            if is_terminal_job_error(error.as_ref()) {
+                project.fail_separation_operation(error.to_string());
+                repository.save(&project)?;
+                if !replacing {
+                    let archived = archive_failed_project(&config.projects_root, project_root)?;
+                    return Err(format!(
+                        "{error}; failed project archived at {}; fix the server configuration and retry",
+                        archived.display()
+                    )
+                    .into());
+                }
+                return Err(format!(
+                    "{error}; existing project and stems were preserved: {}",
+                    project_root.display()
+                )
+                .into());
+            }
+            Err(format!(
+                "{error}; remote job {} remains recorded and can be resumed",
+                operation.job_id
+            )
+            .into())
+        }
     }
 }
 
@@ -384,9 +536,48 @@ const fn default_auto_download() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryConfig, import_and_separate, reseparate, scan};
+    use super::{LibraryConfig, SeparationAdapter, import_and_separate, reseparate, scan};
     use k3_core::{FileProjectRepository, ProjectRepository, SeparationState, VocalEffectPreset};
     use std::fs;
+
+    #[test]
+    fn remote_separator_configuration_keeps_tokens_out_of_the_document() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let music = sandbox.path().join("music");
+        let projects = sandbox.path().join("projects");
+        fs::create_dir_all(&music).unwrap();
+        fs::create_dir_all(&projects).unwrap();
+        let config: LibraryConfig = serde_json::from_value(serde_json::json!({
+            "music_root": music,
+            "projects_root": projects,
+            "separation": {
+                "adapter": "remote",
+                "server_profile": "studio-gpu",
+                "server_url": "https://separator.example.test",
+                "token_env": "K3_SEPARATOR_TOKEN",
+                "profile": "quality",
+                "model": "bs-roformer-viperx-1297",
+                "output_layout": "karaoke"
+            }
+        }))
+        .unwrap();
+        config.validate().unwrap();
+
+        assert_eq!(SeparationAdapter::Remote, config.separation.adapter);
+        assert_eq!(
+            "studio-gpu",
+            config.separation.server_profile.as_deref().unwrap()
+        );
+        assert_eq!(
+            "K3_SEPARATOR_TOKEN",
+            config.separation.token_env.as_deref().unwrap()
+        );
+        assert!(
+            !serde_json::to_string(&config)
+                .unwrap()
+                .contains("secret-token")
+        );
+    }
 
     #[test]
     fn scans_projects_and_supported_music_files() {

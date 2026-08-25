@@ -7,18 +7,20 @@ mod mix;
 mod pitch;
 mod python_separator;
 mod recorder;
+mod remote_separator;
 mod tui;
 
-use std::{error::Error, path::PathBuf};
+use std::{env, error::Error, path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
     CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationFailure,
-    SeparationProfile, SongPreparation,
+    SeparationOutputLayout, SeparationProfile, SeparationState, SongPreparation,
 };
 
 use crate::mix::render_take_preview;
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
+use crate::remote_separator::{RemoteSeparator, RemoteSeparatorConfig, is_terminal_job_error};
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -72,6 +74,18 @@ enum Command {
         /// Disable the default second pass that keeps backing vocals in accompaniment.
         #[arg(long)]
         no_preserve_backing_vocals: bool,
+        /// Remote separator base URL. When set, the local Python worker is not used.
+        #[arg(long)]
+        server_url: Option<String>,
+        /// Environment variable containing the remote bearer token.
+        #[arg(long, requires = "server_url")]
+        token_env: Option<String>,
+        /// Stable name persisted with a remote job for later resume.
+        #[arg(long, default_value = "default")]
+        server_profile: String,
+        /// Stem contract requested from a remote separator.
+        #[arg(long, value_enum, default_value = "karaoke")]
+        output_layout: OutputLayoutArgument,
     },
     /// Rebuild a recorded take preview with a vocal-effect preset.
     Effect {
@@ -123,6 +137,21 @@ enum EffectArgument {
     Church,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OutputLayoutArgument {
+    TwoStem,
+    Karaoke,
+}
+
+impl From<OutputLayoutArgument> for SeparationOutputLayout {
+    fn from(value: OutputLayoutArgument) -> Self {
+        match value {
+            OutputLayoutArgument::TwoStem => Self::TwoStem,
+            OutputLayoutArgument::Karaoke => Self::Karaoke,
+        }
+    }
+}
+
 impl From<EffectArgument> for k3_core::VocalEffectPreset {
     fn from(value: EffectArgument) -> Self {
         match value {
@@ -161,19 +190,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             song,
             lyrics,
             title,
-        } => {
-            let project = repository.create(CreateProject {
-                root,
-                song,
-                lyrics,
-                title,
-            })?;
-            println!("{}", project.root().display());
-        }
-        Command::Show { project } => {
-            let project = repository.open(&project)?;
-            print_summary(&project);
-        }
+        } => create_project(repository, root, song, lyrics, title)?,
+        Command::Show { project } => show_project(repository, &project)?,
         Command::Separate {
             project,
             profile,
@@ -184,8 +202,39 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             segment_size,
             no_autocast,
             no_preserve_backing_vocals,
+            server_url,
+            token_env,
+            server_profile,
+            output_layout,
         } => {
             let mut project = repository.open(&project)?;
+            if let Some(server_url) = server_url {
+                let token_env = token_env.ok_or("--token-env is required with --server-url")?;
+                let token = env::var(&token_env).map_err(|_| {
+                    format!("separator token environment variable is not set: {token_env}")
+                })?;
+                let remote = RemoteSeparatorConfig {
+                    server_profile,
+                    server_url,
+                    token,
+                    model_id: model
+                        .or_else(|| {
+                            project
+                                .separation_operation()
+                                .map(|operation| operation.model_id.clone())
+                        })
+                        .ok_or("--model is required when creating a remote job")?,
+                    output_layout: output_layout.into(),
+                    poll_interval: Duration::from_millis(500),
+                };
+                return run_remote_separation(
+                    repository,
+                    &mut project,
+                    remote,
+                    profile.into(),
+                    overwrite,
+                );
+            }
             let separator = PythonStemSeparator::new(PythonSeparatorConfig {
                 worker,
                 model_dir,
@@ -207,24 +256,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             project,
             take,
             preset,
-        } => {
-            let mut project = repository.open(&project)?;
-            let take_id = if take == "latest" {
-                project
-                    .takes()
-                    .last()
-                    .ok_or("project has no recorded takes")?
-                    .id()
-                    .to_owned()
-            } else {
-                take
-            };
-            let preset = preset.into();
-            let rendered = render_take_preview(&project, &take_id, preset)?;
-            project.set_take_render(&take_id, preset, rendered.relative_path)?;
-            repository.save(&project)?;
-            println!("{}", rendered.path.display());
-        }
+        } => run_effect(repository, &project, take, preset)?,
         Command::Tui {
             project,
             config,
@@ -250,6 +282,104 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    Ok(())
+}
+
+fn create_project(
+    repository: FileProjectRepository,
+    root: PathBuf,
+    song: PathBuf,
+    lyrics: Option<PathBuf>,
+    title: Option<String>,
+) -> Result<(), Box<dyn Error>> {
+    let project = repository.create(CreateProject {
+        root,
+        song,
+        lyrics,
+        title,
+    })?;
+    println!("{}", project.root().display());
+    Ok(())
+}
+
+fn show_project(
+    repository: FileProjectRepository,
+    project_path: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    let project = repository.open(project_path)?;
+    print_summary(&project);
+    Ok(())
+}
+
+fn run_remote_separation(
+    repository: FileProjectRepository,
+    project: &mut Project,
+    config: RemoteSeparatorConfig,
+    profile: SeparationProfile,
+    overwrite: bool,
+) -> Result<(), Box<dyn Error>> {
+    if matches!(project.separation(), SeparationState::Ready(_))
+        && !overwrite
+        && project.separation_operation().is_none()
+    {
+        return Err("project already has stems; pass --overwrite to replace them".into());
+    }
+    let server_profile = config.server_profile.clone();
+    let separator = RemoteSeparator::new(config);
+    let operation = if let Some(operation) = project.separation_operation() {
+        if operation.server_profile.as_deref() != Some(server_profile.as_str()) {
+            return Err("pending separation uses a different server profile".into());
+        }
+        operation.clone()
+    } else {
+        let operation = separator.submit(&project.source_path(), profile)?;
+        project.start_separation_operation(operation.clone())?;
+        repository.save(project)?;
+        operation
+    };
+    match separator.wait_and_download(project.root(), &operation) {
+        Ok(manifest) => project.finish_separation_operation(manifest)?,
+        Err(error) => {
+            let terminal = is_terminal_job_error(error.as_ref());
+            if terminal {
+                project.fail_separation_operation(error.to_string());
+                repository.save(project)?;
+            }
+            let recovery = if terminal {
+                "remote job ended and cannot be resumed"
+            } else {
+                "remote job remains recorded and can be resumed"
+            };
+            return Err(format!("{error}; {recovery}: {}", operation.job_id).into());
+        }
+    }
+    repository.save(project)?;
+    print_summary(project);
+    Ok(())
+}
+
+fn run_effect(
+    repository: FileProjectRepository,
+    project_path: &std::path::Path,
+    take: String,
+    preset: EffectArgument,
+) -> Result<(), Box<dyn Error>> {
+    let mut project = repository.open(project_path)?;
+    let take_id = if take == "latest" {
+        project
+            .takes()
+            .last()
+            .ok_or("project has no recorded takes")?
+            .id()
+            .to_owned()
+    } else {
+        take
+    };
+    let preset = preset.into();
+    let rendered = render_take_preview(&project, &take_id, preset)?;
+    project.set_take_render(&take_id, preset, rendered.relative_path)?;
+    repository.save(&project)?;
+    println!("{}", rendered.path.display());
     Ok(())
 }
 

@@ -16,8 +16,10 @@ rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }
 unicode-width = "0.2.1"
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

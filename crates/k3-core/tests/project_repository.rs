@@ -1,6 +1,9 @@
 use std::fs;
 
-use k3_core::{CreateProject, FileProjectRepository, ProjectPath, ProjectRepository};
+use k3_core::{
+    CreateProject, FileProjectRepository, ProjectPath, ProjectRepository, SeparationOperation,
+    SeparationOutputLayout, SeparationProfile,
+};
 
 #[test]
 fn user_can_create_and_reopen_a_project_with_local_media() {
@@ -97,4 +100,40 @@ fn project_key_is_validated_and_persisted() {
     assert_eq!(repository.open(&root).unwrap().key_shift_semitones(), 3);
     assert!(project.set_key_shift_semitones(7).is_err());
     assert_eq!(project.key_shift_semitones(), 3);
+}
+
+#[test]
+fn pending_remote_separation_survives_project_reopen() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let song = sandbox.path().join("song.wav");
+    fs::write(&song, b"audio").unwrap();
+    let root = sandbox.path().join("remote-song");
+    let repository = FileProjectRepository;
+    let mut project = repository
+        .create(CreateProject {
+            root: root.clone(),
+            song,
+            lyrics: None,
+            title: None,
+        })
+        .unwrap();
+    project
+        .start_separation_operation(SeparationOperation {
+            adapter: "remote".into(),
+            server_profile: Some("home-gpu".into()),
+            input_id: Some("input_1".into()),
+            job_id: "job_1".into(),
+            model_id: "model_1".into(),
+            profile: SeparationProfile::Quality,
+            output_layout: SeparationOutputLayout::Karaoke,
+        })
+        .unwrap();
+
+    repository.save(&project).unwrap();
+    let reopened = repository.open(&root).unwrap();
+
+    assert_eq!(
+        reopened.separation_operation(),
+        project.separation_operation()
+    );
 }

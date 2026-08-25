@@ -245,6 +245,13 @@ project。启动时扫描到的旧失败 project 也不会显示在左栏。
 目录改名不会让右栏重复导入：K3 会用 project 中的源文件名和文件大小识别已导入
 歌曲。配置中的分离参数与 `separate.sh`、`separate.ps1` 对应如下：
 
+分离也可以交给另一台机器上的 separator server。复制
+[`library-config.remote.example.json`](library-config.remote.example.json)，设置
+`separation.adapter` 为 `remote`、server URL/profile、模型、质量和输出布局，并在启动
+K3 前设置 `token_env` 所指向的环境变量。远程 job ID 会先持久化；网络中断后再次按
+`s` 会恢复同一任务，重新分离期间旧 stem 仍可播放。部署步骤和 GPU 并发基准见
+[`separator-server.md`](separator-server.md)。
+
 | JSON 字段 | 脚本环境变量 | 作用 |
 |---|---|---|
 | `separation.worker` | `K3_PYTHON`（脚本模式） | worker 可执行文件；脚本模式下为 Python 解释器 |

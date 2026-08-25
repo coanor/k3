@@ -69,6 +69,20 @@ python -m k3_separator --model-dir ~/.cache/k3/models
 成功分离一定会写入 `vocals.wav` 和 `accompaniment.wav`，并返回它们的绝对路径
 及准确的模型 provenance。只有明确请求 `"overwrite": true` 才会覆盖已有输出。
 
+## 远程 Separator Server
+
+同一套模型 runtime 也可以作为独立 HTTP/WebSocket 服务运行，让 K3 从其他机器上传
+原始歌曲。安装、token、CPU/macOS、GPU、容量基准与 K3 配置见
+[`docs/separator-server.md`](../../docs/separator-server.md)。最小协议测试命令：
+
+```bash
+export K3_SEPARATOR_TOKEN='development-only-token'
+k3-separator-server \
+  --data-dir ./separator-data \
+  --runtime fake \
+  --token-env test-client=K3_SEPARATOR_TOKEN
+```
+
 ## 保留和声模式
 
 `preserve_backing_vocals` 默认为 `true`。worker 会先用选定的主模型分离全部人声，

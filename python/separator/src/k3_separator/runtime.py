@@ -42,22 +42,22 @@ class SeparationRuntime(Protocol):
 class AudioSeparatorRuntime:
     """Runs any allow-listed audio-separator checkpoint and emits two WAV stems."""
 
-    def __init__(self, model_dir: Path) -> None:
+    def __init__(self, model_dir: Path, backend: str = "auto") -> None:
         self._model_dir = model_dir.expanduser().resolve()
         self._model_dir.mkdir(parents=True, exist_ok=True)
+        self._backend = self._resolve_backend(backend)
         os.environ.setdefault("TORCH_HOME", str(self._model_dir / "torch"))
         self._configure_ffmpeg()
 
     def status(self) -> dict[str, Any]:
         audio_separator_installed = False
         audio_separator_error = None
-        if importlib.util.find_spec("audio_separator") is not None:
-            try:
-                from audio_separator.separator import Separator  # noqa: F401
+        try:
+            from audio_separator.separator import Separator  # noqa: F401
 
-                audio_separator_installed = True
-            except Exception as error:  # health must expose broken transitive installs
-                audio_separator_error = f"{type(error).__name__}: {error}"
+            audio_separator_installed = True
+        except Exception as error:  # noqa: BLE001 - report broken optional installs
+            audio_separator_error = f"{type(error).__name__}: {error}"
         torch_installed = importlib.util.find_spec("torch") is not None
         cuda_available = False
         device = None
@@ -68,7 +68,7 @@ class AudioSeparatorRuntime:
                 cuda_available = bool(torch.cuda.is_available())
                 if cuda_available:
                     device = torch.cuda.get_device_name(0)
-            except Exception:  # status must remain usable with a broken GPU install
+            except Exception:  # noqa: BLE001, S110 - status survives broken GPU installs
                 pass
         return {
             "audio_separator_installed": audio_separator_installed,
@@ -78,7 +78,42 @@ class AudioSeparatorRuntime:
             "device": device,
             "ffmpeg": shutil.which("ffmpeg"),
             "model_dir": str(self._model_dir),
+            "backend": self._backend,
         }
+
+    @staticmethod
+    def _resolve_backend(requested: str) -> str:
+        if requested not in {"auto", "cpu", "cuda", "coreml"}:
+            raise WorkerError("runtime_unavailable", f"unknown backend: {requested}")
+        if requested == "cpu":
+            return requested
+        try:
+            import torch
+
+            if requested == "cuda":
+                if not torch.cuda.is_available():
+                    raise WorkerError(
+                        "runtime_unavailable", "CUDA was requested but is unavailable"
+                    )
+                return "cuda"
+            mps = getattr(torch.backends, "mps", None)
+            if requested == "coreml":
+                if mps is None or not mps.is_available():
+                    raise WorkerError(
+                        "runtime_unavailable",
+                        "CoreML/MPS was requested but is unavailable",
+                    )
+                return "coreml"
+            if torch.cuda.is_available():
+                return "cuda"
+            if mps is not None and mps.is_available():
+                return "coreml"
+        except WorkerError:
+            raise
+        except Exception as error:
+            if requested != "auto":
+                raise WorkerError("runtime_unavailable", str(error)) from error
+        return "cpu"
 
     def _configure_ffmpeg(self) -> None:
         if shutil.which("ffmpeg") is not None:
@@ -103,6 +138,17 @@ class AudioSeparatorRuntime:
         temporary_link.symlink_to(executable)
         os.replace(temporary_link, link)
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    def install_model(self, model: SeparationModel) -> Path:
+        """Download and verify a registry-pinned primary checkpoint."""
+
+        if model.expected_sha256 is None or model.download_url is None:
+            raise WorkerError(
+                "checkpoint_unavailable",
+                f"model {model.id} has no registry-pinned download; place {model.filename} in {self._model_dir}",
+            )
+        self._prepare_primary_artifact(model)
+        return self._model_dir / model.filename
 
     @staticmethod
     def _copy_windows_ffmpeg(executable: Path, destination: Path) -> None:
@@ -182,7 +228,9 @@ class AudioSeparatorRuntime:
             # WAV, which libsndfile rejects. FFmpeg normalizes every supported
             # input format to a valid PCM WAV before outputs are committed.
             "use_soundfile": False,
-            "use_autocast": bool(settings.pop("autocast", True)),
+            "use_autocast": bool(settings.pop("autocast", True))
+            and self._backend == "cuda",
+            "use_cpu": self._backend == "cpu",
         }
         if model.architecture in {"bs-roformer", "mel-band-roformer"}:
             common["mdxc_params"] = {
@@ -209,13 +257,16 @@ class AudioSeparatorRuntime:
             }
         if settings:
             raise WorkerError(
-                "invalid_request", f"unsupported runtime options: {', '.join(sorted(settings))}"
+                "invalid_request",
+                f"unsupported runtime options: {', '.join(sorted(settings))}",
             )
 
         try:
             separator = Separator(**common)
             separator.load_model(model_filename=model.filename)
-            output_names = {stem: self._output_name(stem) for stem in model.output_stems}
+            output_names = {
+                stem: self._output_name(stem) for stem in model.output_stems
+            }
             separator.separate(str(input_path), output_names)
             vocals = scratch_dir / "vocals.wav"
             accompaniment = scratch_dir / "accompaniment.wav"
@@ -247,14 +298,16 @@ class AudioSeparatorRuntime:
             request = urllib.request.Request(
                 model.download_url, headers={"User-Agent": "k3-separator/0.1"}
             )
-            with urllib.request.urlopen(request, timeout=60) as response:
-                with tempfile.NamedTemporaryFile(
+            with (
+                urllib.request.urlopen(request, timeout=60) as response,
+                tempfile.NamedTemporaryFile(
                     prefix=f".{model.filename}.", dir=self._model_dir, delete=False
-                ) as temporary:
-                    temporary_name = temporary.name
-                    _copy_stream(response, temporary)
-                    temporary.flush()
-                    os.fsync(temporary.fileno())
+                ) as temporary,
+            ):
+                temporary_name = temporary.name
+                _copy_stream(response, temporary)
+                temporary.flush()
+                os.fsync(temporary.fileno())
             temporary_path = Path(temporary_name)
             self._verify_primary_artifact(model, temporary_path)
             os.replace(temporary_path, destination)
@@ -288,7 +341,9 @@ class AudioSeparatorRuntime:
     @staticmethod
     def _validate_audio(path: Path, label: str) -> None:
         if not path.is_file() or path.stat().st_size == 0:
-            raise WorkerError("separation_failed", f"runtime did not produce {label} WAV")
+            raise WorkerError(
+                "separation_failed", f"runtime did not produce {label} WAV"
+            )
 
     @staticmethod
     def _mix_accompaniment(
@@ -308,7 +363,8 @@ class AudioSeparatorRuntime:
             import soundfile as sf
         except ImportError as error:
             raise WorkerError(
-                "runtime_unavailable", "numpy and soundfile are required for multi-stem models"
+                "runtime_unavailable",
+                "numpy and soundfile are required for multi-stem models",
             ) from error
         if not inputs or any(not path.is_file() for path in inputs):
             raise WorkerError(
@@ -325,18 +381,26 @@ class AudioSeparatorRuntime:
             if sample_rate is None:
                 sample_rate, shape = current_rate, audio.shape
             elif current_rate != sample_rate or audio.shape != shape:
-                raise WorkerError("separation_failed", "accompaniment stems do not align")
+                raise WorkerError(
+                    "separation_failed", "accompaniment stems do not align"
+                )
             audio_parts.append(audio)
         sf.write(destination, np.sum(audio_parts, axis=0), sample_rate, subtype="FLOAT")
 
     def _checkpoint_digest(self, model: SeparationModel) -> str:
         patterns = model.artifact_globs or (f"**/{model.filename}",)
         artifacts = sorted(
-            {path for pattern in patterns for path in self._model_dir.glob(pattern) if path.is_file()}
+            {
+                path
+                for pattern in patterns
+                for path in self._model_dir.glob(pattern)
+                if path.is_file()
+            }
         )
         if not artifacts:
             raise WorkerError(
-                "checkpoint_unverifiable", f"cannot locate cached artifacts for {model.id}"
+                "checkpoint_unverifiable",
+                f"cannot locate cached artifacts for {model.id}",
             )
         if len(artifacts) == 1:
             digest = _hash_file(artifacts[0])

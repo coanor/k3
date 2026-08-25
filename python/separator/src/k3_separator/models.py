@@ -29,6 +29,7 @@ class SeparationModel:
     expected_sha256: str | None = None
     artifact_globs: tuple[str, ...] = ()
     runtime_options: dict[str, Any] = field(default_factory=dict)
+    preset_options: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> SeparationModel:
@@ -40,12 +41,23 @@ class SeparationModel:
             )
         filename = str(value["filename"])
         if Path(filename).name != filename:
-            raise WorkerError("invalid_registry", "filename must not contain directories")
+            raise WorkerError(
+                "invalid_registry", "filename must not contain directories"
+            )
         profiles = tuple(value["profiles"])
         unknown = sorted(set(profiles) - set(PROFILES))
         if unknown:
             raise WorkerError(
                 "invalid_registry", f"unknown profiles: {', '.join(unknown)}"
+            )
+        preset_options = value.get("preset_options", {})
+        if not isinstance(preset_options, dict) or any(
+            profile not in profiles or not isinstance(options, dict)
+            for profile, options in preset_options.items()
+        ):
+            raise WorkerError(
+                "invalid_registry",
+                "preset_options must map declared profiles to option objects",
             )
         digest = value.get("expected_sha256")
         if digest is not None and (
@@ -53,7 +65,9 @@ class SeparationModel:
             or len(digest) != 64
             or not all(character in "0123456789abcdefABCDEF" for character in digest)
         ):
-            raise WorkerError("invalid_registry", "expected_sha256 must be 64 hex characters")
+            raise WorkerError(
+                "invalid_registry", "expected_sha256 must be 64 hex characters"
+            )
         stems = tuple(value.get("output_stems", ("Vocals", "Instrumental")))
         if "Vocals" not in stems or len(stems) < 2:
             raise WorkerError(
@@ -76,7 +90,19 @@ class SeparationModel:
             expected_sha256=digest.lower() if digest else None,
             artifact_globs=tuple(value.get("artifact_globs", ())),
             runtime_options=dict(value.get("runtime_options", {})),
+            preset_options={
+                str(profile): dict(options)
+                for profile, options in preset_options.items()
+            },
         )
+
+    def options_for(self, profile: str) -> dict[str, Any]:
+        if profile not in self.profiles:
+            raise WorkerError(
+                "model_not_allowed",
+                f"model {self.id} is not registered for profile {profile}",
+            )
+        return {**self.runtime_options, **self.preset_options.get(profile, {})}
 
     def public_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -171,10 +197,14 @@ class ModelRegistry:
                 raise WorkerError("invalid_registry", str(error)) from error
             entries = document.get("models") if isinstance(document, dict) else None
             if not isinstance(entries, list):
-                raise WorkerError("invalid_registry", "registry must contain a models array")
+                raise WorkerError(
+                    "invalid_registry", "registry must contain a models array"
+                )
             for entry in entries:
                 if not isinstance(entry, dict):
-                    raise WorkerError("invalid_registry", "each model must be an object")
+                    raise WorkerError(
+                        "invalid_registry", "each model must be an object"
+                    )
                 model = SeparationModel.from_dict(entry)
                 models[model.id] = model
         return cls(tuple(models.values()))
@@ -182,13 +212,17 @@ class ModelRegistry:
     def list(self) -> list[dict[str, Any]]:
         return [self._models[key].public_dict() for key in sorted(self._models)]
 
+    def get(self, model_id: str) -> SeparationModel:
+        model = self._models.get(model_id)
+        if model is None:
+            raise WorkerError("model_not_found", f"unknown model: {model_id}")
+        return model
+
     def select(self, profile: str, model_id: str | None = None) -> SeparationModel:
         if profile not in PROFILES:
             raise WorkerError("invalid_request", f"unknown profile: {profile}")
         if model_id is not None:
-            model = self._models.get(model_id)
-            if model is None:
-                raise WorkerError("model_not_found", f"unknown model: {model_id}")
+            model = self.get(model_id)
             if profile not in model.profiles:
                 raise WorkerError(
                     "model_not_allowed",
@@ -198,4 +232,6 @@ class ModelRegistry:
         for model in self._models.values():
             if profile in model.profiles:
                 return model
-        raise WorkerError("model_not_found", f"no model registered for profile {profile}")
+        raise WorkerError(
+            "model_not_found", f"no model registered for profile {profile}"
+        )

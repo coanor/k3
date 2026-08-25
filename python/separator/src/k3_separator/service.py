@@ -53,9 +53,11 @@ class SeparationService:
         output_dir = _required_path(params, "output_dir")
         profile = params.get("profile", "balanced")
         model_id = params.get("model_id")
-        if not isinstance(profile, str) or (model_id is not None and not isinstance(model_id, str)):
+        if not isinstance(profile, str) or (
+            model_id is not None and not isinstance(model_id, str)
+        ):
             raise WorkerError("invalid_request", "profile and model_id must be strings")
-        options = _validated_options(params.get("options", {}))
+        requested_options = _validated_options(params.get("options", {}))
         overwrite = params.get("overwrite", False)
         if not isinstance(overwrite, bool):
             raise WorkerError("invalid_request", "overwrite must be a boolean")
@@ -66,6 +68,7 @@ class SeparationService:
             )
 
         model = self._registry.select(profile, model_id)
+        options = {**model.options_for(profile), **requested_options}
         backing_vocals_model = (
             self._registry.select("fast", BACKING_VOCALS_MODEL_ID)
             if preserve_backing_vocals
@@ -80,7 +83,9 @@ class SeparationService:
             destinations["backing_vocals"] = output_dir / "backing-vocals.wav"
         existing = [str(path) for path in destinations.values() if path.exists()]
         if existing and not overwrite:
-            raise WorkerError("output_exists", f"refusing to overwrite: {', '.join(existing)}")
+            raise WorkerError(
+                "output_exists", f"refusing to overwrite: {', '.join(existing)}"
+            )
 
         scratch = Path(tempfile.mkdtemp(prefix=".k3-separate-", dir=output_dir))
         moved: list[Path] = []
@@ -94,7 +99,8 @@ class SeparationService:
                 and result.backing_vocals_checkpoint_sha256 is None
             ):
                 raise WorkerError(
-                    "separation_failed", "runtime omitted backing-vocal model provenance"
+                    "separation_failed",
+                    "runtime omitted backing-vocal model provenance",
                 )
             sources = {
                 "vocals": result.vocals,
@@ -140,7 +146,7 @@ class SeparationService:
             "profile": profile,
             "license": model.license,
             "source_url": model.source_url,
-            "runtime_options": {**model.runtime_options, **options},
+            "runtime_options": options,
         }
         if backing_vocals_model is not None:
             provenance["backing_vocals_model"] = {
@@ -183,13 +189,17 @@ def _validated_options(value: Any) -> dict[str, Any]:
         or isinstance(value["batch_size"], bool)
         or not 1 <= value["batch_size"] <= 16
     ):
-        raise WorkerError("invalid_request", "batch_size must be an integer from 1 to 16")
+        raise WorkerError(
+            "invalid_request", "batch_size must be an integer from 1 to 16"
+        )
     if "segment_size" in value and (
         not isinstance(value["segment_size"], int)
         or isinstance(value["segment_size"], bool)
         or not 1 <= value["segment_size"] <= 4096
     ):
-        raise WorkerError("invalid_request", "segment_size must be an integer from 1 to 4096")
+        raise WorkerError(
+            "invalid_request", "segment_size must be an integer from 1 to 4096"
+        )
     for name in ("autocast", "enable_denoise"):
         if name in value and not isinstance(value[name], bool):
             raise WorkerError("invalid_request", f"{name} must be a boolean")
