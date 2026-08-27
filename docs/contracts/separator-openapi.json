@@ -1,17 +1,465 @@
 {
   "components": {
     "schemas": {
-      "HTTPValidationError": {
+      "ApiErrorDetail": {
         "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
           }
         },
-        "title": "HTTPValidationError",
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ArtifactResponse": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "role",
+          "artifact_id",
+          "media_type",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "ArtifactResponse",
+        "type": "object"
+      },
+      "CancelledJobResponse": {
+        "properties": {
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_layout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layout"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "resolved_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Spec"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "const": "cancelled",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "CancelledJobResponse",
+        "type": "object"
+      },
+      "CapabilitiesResponse": {
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "features": {
+            "$ref": "#/components/schemas/FeatureSet"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ServerLimits"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolVersion"
+          },
+          "server_id": {
+            "title": "Server Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "protocol",
+          "features",
+          "backend",
+          "device",
+          "limits"
+        ],
+        "title": "CapabilitiesResponse",
+        "type": "object"
+      },
+      "CompletedJobResponse": {
+        "properties": {
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_layout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layout"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "resolved_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Spec"
+          },
+          "result": {
+            "$ref": "#/components/schemas/JobResultResponse"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "const": "completed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "result"
+        ],
+        "title": "CompletedJobResponse",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FailedJobResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          },
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_layout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layout"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "resolved_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Spec"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "const": "failed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "error"
+        ],
+        "title": "FailedJobResponse",
+        "type": "object"
+      },
+      "FeatureSet": {
+        "properties": {
+          "cancellation": {
+            "title": "Cancellation",
+            "type": "boolean"
+          },
+          "http_polling": {
+            "title": "Http Polling",
+            "type": "boolean"
+          },
+          "result_cache": {
+            "title": "Result Cache",
+            "type": "boolean"
+          },
+          "websocket_progress": {
+            "title": "Websocket Progress",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "websocket_progress",
+          "http_polling",
+          "cancellation",
+          "result_cache"
+        ],
+        "title": "FeatureSet",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "InputListItem": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "input_id": {
+            "title": "Input Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InputStatus"
+          }
+        },
+        "required": [
+          "input_id",
+          "size_bytes",
+          "sha256",
+          "status",
+          "created_at"
+        ],
+        "title": "InputListItem",
         "type": "object"
       },
       "InputRequest": {
@@ -38,6 +486,75 @@
           "sha256"
         ],
         "title": "InputRequest",
+        "type": "object"
+      },
+      "InputResponse": {
+        "properties": {
+          "input_id": {
+            "title": "Input Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InputStatus"
+          },
+          "upload_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Required"
+          }
+        },
+        "required": [
+          "input_id",
+          "status"
+        ],
+        "title": "InputResponse",
+        "type": "object"
+      },
+      "InputStatus": {
+        "enum": [
+          "uploading",
+          "ready"
+        ],
+        "title": "InputStatus",
+        "type": "string"
+      },
+      "InputsResponse": {
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputListItem"
+            },
+            "title": "Inputs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs"
+        ],
+        "title": "InputsResponse",
+        "type": "object"
+      },
+      "JobReferenceResponse": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "JobReferenceResponse",
         "type": "object"
       },
       "JobRequest": {
@@ -77,44 +594,426 @@
         "title": "JobRequest",
         "type": "object"
       },
-      "ValidationError": {
+      "JobResultResponse": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
+          "artifacts": {
             "items": {
-              "anyOf": [
+              "$ref": "#/components/schemas/ArtifactResponse"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "artifacts",
+          "provenance"
+        ],
+        "title": "JobResultResponse",
+        "type": "object"
+      },
+      "JobStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "cancelling",
+          "cancelled",
+          "completed",
+          "failed"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      },
+      "JobsResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "cancelled": "#/components/schemas/CancelledJobResponse",
+                  "cancelling": "#/components/schemas/RunningJobResponse",
+                  "completed": "#/components/schemas/CompletedJobResponse",
+                  "failed": "#/components/schemas/FailedJobResponse",
+                  "queued": "#/components/schemas/QueuedJobResponse",
+                  "running": "#/components/schemas/RunningJobResponse"
+                },
+                "propertyName": "status"
+              },
+              "oneOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/QueuedJobResponse"
                 },
                 {
-                  "type": "integer"
+                  "$ref": "#/components/schemas/RunningJobResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/CompletedJobResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/FailedJobResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/CancelledJobResponse"
                 }
               ]
             },
-            "title": "Location",
+            "title": "Jobs",
             "type": "array"
-          },
-          "msg": {
-            "title": "Message",
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "JobsResponse",
+        "type": "object"
+      },
+      "ModelResponse": {
+        "properties": {
+          "architecture": {
+            "title": "Architecture",
             "type": "string"
           },
-          "type": {
-            "title": "Error Type",
+          "backends": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Backends",
+            "type": "array"
+          },
+          "checkpoint_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Sha256"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "output_layouts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Output Layouts",
+            "type": "array"
+          },
+          "presets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Presets",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
             "type": "string"
           }
         },
         "required": [
-          "loc",
-          "msg",
-          "type"
+          "id",
+          "display_name",
+          "provider",
+          "architecture",
+          "checkpoint_sha256",
+          "status",
+          "backends",
+          "presets",
+          "output_layouts"
         ],
-        "title": "ValidationError",
+        "title": "ModelResponse",
+        "type": "object"
+      },
+      "ModelsResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelResponse"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "ModelsResponse",
+        "type": "object"
+      },
+      "ProtocolVersion": {
+        "properties": {
+          "major": {
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "ProtocolVersion",
+        "type": "object"
+      },
+      "QueuedJobResponse": {
+        "properties": {
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_layout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layout"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "resolved_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Spec"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "const": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "QueuedJobResponse",
+        "type": "object"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "backend"
+        ],
+        "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RunningJobResponse": {
+        "properties": {
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_layout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layout"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "resolved_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Spec"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "cancelling"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "RunningJobResponse",
+        "type": "object"
+      },
+      "ServerLimits": {
+        "properties": {
+          "max_concurrent_jobs": {
+            "title": "Max Concurrent Jobs",
+            "type": "integer"
+          },
+          "max_duration_seconds": {
+            "title": "Max Duration Seconds",
+            "type": "integer"
+          },
+          "max_input_channels": {
+            "title": "Max Input Channels",
+            "type": "integer"
+          },
+          "max_queued_jobs": {
+            "title": "Max Queued Jobs",
+            "type": "integer"
+          },
+          "max_upload_bytes": {
+            "title": "Max Upload Bytes",
+            "type": "integer"
+          },
+          "min_free_bytes": {
+            "title": "Min Free Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_concurrent_jobs",
+          "max_queued_jobs",
+          "max_upload_bytes",
+          "max_duration_seconds",
+          "max_input_channels",
+          "min_free_bytes"
+        ],
+        "title": "ServerLimits",
         "type": "object"
       }
     }
@@ -133,15 +1032,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Health Healthz Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Health"
@@ -181,13 +1096,23 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Metrics"
@@ -201,13 +1126,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Readiness Readyz Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Readiness"
@@ -256,11 +1199,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Download Artifact"
@@ -292,9 +1245,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Capabilities V1 Capabilities Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
                 }
               }
             },
@@ -304,11 +1255,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Capabilities"
@@ -340,9 +1301,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Inputs V1 Inputs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InputsResponse"
                 }
               }
             },
@@ -352,11 +1311,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "List Inputs"
@@ -396,9 +1365,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Input V1 Inputs Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InputResponse"
                 }
               }
             },
@@ -408,11 +1375,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Create Input"
@@ -456,11 +1433,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Delete Input"
@@ -501,9 +1488,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Upload Input V1 Inputs  Input Id  Content Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InputResponse"
                 }
               }
             },
@@ -513,11 +1498,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Upload Input"
@@ -549,9 +1544,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Jobs V1 Jobs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/JobsResponse"
                 }
               }
             },
@@ -561,11 +1554,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "List Jobs"
@@ -614,9 +1617,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Job V1 Jobs Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/JobReferenceResponse"
                 }
               }
             },
@@ -626,11 +1627,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Create Job"
@@ -671,9 +1682,35 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Job V1 Jobs  Job Id  Get",
-                  "type": "object"
+                  "discriminator": {
+                    "mapping": {
+                      "cancelled": "#/components/schemas/CancelledJobResponse",
+                      "cancelling": "#/components/schemas/RunningJobResponse",
+                      "completed": "#/components/schemas/CompletedJobResponse",
+                      "failed": "#/components/schemas/FailedJobResponse",
+                      "queued": "#/components/schemas/QueuedJobResponse",
+                      "running": "#/components/schemas/RunningJobResponse"
+                    },
+                    "propertyName": "status"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/QueuedJobResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunningJobResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CompletedJobResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FailedJobResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CancelledJobResponse"
+                    }
+                  ],
+                  "title": "Response Get Job V1 Jobs  Job Id  Get"
                 }
               }
             },
@@ -683,11 +1720,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Get Job"
@@ -731,11 +1778,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Delete Job Artifacts"
@@ -776,9 +1833,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Job V1 Jobs  Job Id  Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/JobReferenceResponse"
                 }
               }
             },
@@ -788,11 +1843,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Cancel Job"
@@ -824,9 +1889,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Models V1 Models Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ModelsResponse"
                 }
               }
             },
@@ -836,11 +1899,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Machine-readable API error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Machine-readable API error"
           }
         },
         "summary": "Models"

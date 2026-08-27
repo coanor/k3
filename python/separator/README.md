@@ -134,9 +134,13 @@ k3-separator-server \
 
 ## 测试
 
-测试使用进程内 fake runtime，不会下载模型：
+测试使用进程内 fake runtime，不会下载模型。FastAPI 0.141 的测试客户端来自
+`httpx2`，因此不要再注入旧 `httpx` 适配层。下面的命令显式建立隔离测试环境：
 
 ```bash
-PYTHONPATH=python/separator/src \
+uv run --no-project --with-editable python/separator \
+  --with 'fastapi>=0.141,<0.142' --with httpx2 \
+  --with 'uvicorn>=0.52,<0.53' \
+  --with numpy --with soundfile \
   python -m unittest discover -s python/separator/tests -v
 ```

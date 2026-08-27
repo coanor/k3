@@ -218,17 +218,16 @@ fn remote_operation_is_recorded_without_hiding_existing_stems() {
     let previous = project.separation().clone();
 
     project
-        .start_separation_operation(SeparationOperation {
-            adapter: "remote".into(),
-            server_profile: Some("studio-gpu".into()),
-            input_id: Some("input_123".into()),
-            job_id: "job_456".into(),
-            model_id: "bs-roformer-viperx-1297".into(),
-            profile: SeparationProfile::Quality,
-            output_layout: SeparationOutputLayout::Karaoke,
-        })
+        .start_separation_operation(SeparationOperation::remote(
+            "studio-gpu".into(),
+            "input_123".into(),
+            "job_456".into(),
+            "bs-roformer-viperx-1297".into(),
+            SeparationProfile::Quality,
+            SeparationOutputLayout::Karaoke,
+        ))
         .unwrap();
 
     assert_eq!(project.separation(), &previous);
-    assert_eq!(project.separation_operation().unwrap().job_id, "job_456");
+    assert_eq!(project.separation_operation().unwrap().job_id(), "job_456");
 }

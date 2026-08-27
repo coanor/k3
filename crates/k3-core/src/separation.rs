@@ -46,7 +46,6 @@ impl<S: StemSeparator> SongPreparation<S> {
                 project.separation()
             )));
         }
-        project.set_separation(SeparationState::Running);
         let result = self
             .separator
             .separate(&project.source_path(), profile)
@@ -80,16 +79,10 @@ impl<S: StemSeparator> SongPreparation<S> {
         project: &mut Project,
         profile: SeparationProfile,
     ) -> Result<(), SeparationFailure> {
-        if matches!(project.separation(), SeparationState::Running) {
-            return Err(SeparationFailure::InvalidState(
-                "cannot restart a running separation".into(),
-            ));
-        }
         if matches!(project.separation(), SeparationState::NotRequested) {
             return self.prepare(project, profile);
         }
         let previous = project.separation().clone();
-        project.set_separation(SeparationState::Running);
         let result = self
             .separator
             .separate(&project.source_path(), profile)

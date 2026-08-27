@@ -132,26 +132,99 @@ pub enum SeparationOutputLayout {
     Karaoke,
 }
 
-/// Durable reference to separation work that may outlive the K3 process.
+/// Durable reference to remote separation work that may outlive the K3 process.
+///
+/// The tagged variant deliberately makes every remote identity field mandatory. A
+/// project can no longer persist an arbitrary adapter name or a half-populated
+/// remote operation.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct SeparationOperation {
-    pub adapter: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_profile: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_id: Option<String>,
-    pub job_id: String,
-    pub model_id: String,
-    pub profile: SeparationProfile,
-    pub output_layout: SeparationOutputLayout,
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum SeparationOperation {
+    Remote {
+        server_profile: String,
+        input_id: String,
+        job_id: String,
+        model_id: String,
+        profile: SeparationProfile,
+        output_layout: SeparationOutputLayout,
+    },
 }
 
 impl SeparationOperation {
+    #[must_use]
+    pub fn remote(
+        server_profile: String,
+        input_id: String,
+        job_id: String,
+        model_id: String,
+        profile: SeparationProfile,
+        output_layout: SeparationOutputLayout,
+    ) -> Self {
+        Self::Remote {
+            server_profile,
+            input_id,
+            job_id,
+            model_id,
+            profile,
+            output_layout,
+        }
+    }
+
+    #[must_use]
+    pub fn server_profile(&self) -> &str {
+        match self {
+            Self::Remote { server_profile, .. } => server_profile,
+        }
+    }
+
+    #[must_use]
+    pub fn input_id(&self) -> &str {
+        match self {
+            Self::Remote { input_id, .. } => input_id,
+        }
+    }
+
+    #[must_use]
+    pub fn job_id(&self) -> &str {
+        match self {
+            Self::Remote { job_id, .. } => job_id,
+        }
+    }
+
+    #[must_use]
+    pub fn model_id(&self) -> &str {
+        match self {
+            Self::Remote { model_id, .. } => model_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> SeparationProfile {
+        match self {
+            Self::Remote { profile, .. } => *profile,
+        }
+    }
+
+    #[must_use]
+    pub const fn output_layout(&self) -> SeparationOutputLayout {
+        match self {
+            Self::Remote { output_layout, .. } => *output_layout,
+        }
+    }
+
     fn validate(&self) -> Result<(), ProjectError> {
+        let Self::Remote {
+            server_profile,
+            input_id,
+            job_id,
+            model_id,
+            ..
+        } = self;
         for (name, value) in [
-            ("adapter", self.adapter.as_str()),
-            ("job ID", self.job_id.as_str()),
-            ("model ID", self.model_id.as_str()),
+            ("server profile", server_profile.as_str()),
+            ("input ID", input_id.as_str()),
+            ("job ID", job_id.as_str()),
+            ("model ID", model_id.as_str()),
         ] {
             if value.trim().is_empty() {
                 return Err(ProjectError::Invalid(format!(
@@ -237,7 +310,6 @@ impl SeparationManifest {
 pub enum SeparationState {
     #[default]
     NotRequested,
-    Running,
     Ready(SeparationManifest),
     Failed {
         message: String,
@@ -248,7 +320,6 @@ impl fmt::Display for SeparationState {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let label = match self {
             Self::NotRequested => "not requested",
-            Self::Running => "running",
             Self::Ready(_) => "ready",
             Self::Failed { .. } => "failed",
         };

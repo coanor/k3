@@ -118,15 +118,14 @@ fn pending_remote_separation_survives_project_reopen() {
         })
         .unwrap();
     project
-        .start_separation_operation(SeparationOperation {
-            adapter: "remote".into(),
-            server_profile: Some("home-gpu".into()),
-            input_id: Some("input_1".into()),
-            job_id: "job_1".into(),
-            model_id: "model_1".into(),
-            profile: SeparationProfile::Quality,
-            output_layout: SeparationOutputLayout::Karaoke,
-        })
+        .start_separation_operation(SeparationOperation::remote(
+            "home-gpu".into(),
+            "input_1".into(),
+            "job_1".into(),
+            "model_1".into(),
+            SeparationProfile::Quality,
+            SeparationOutputLayout::Karaoke,
+        ))
         .unwrap();
 
     repository.save(&project).unwrap();
@@ -135,5 +134,24 @@ fn pending_remote_separation_survives_project_reopen() {
     assert_eq!(
         reopened.separation_operation(),
         project.separation_operation()
+    );
+}
+
+#[test]
+fn incomplete_remote_operations_and_running_state_are_not_representable() {
+    let incomplete = serde_json::json!({
+        "adapter": "remote",
+        "server_profile": "home-gpu",
+        "job_id": "job_1",
+        "model_id": "model_1",
+        "profile": "quality",
+        "output_layout": "karaoke"
+    });
+    assert!(serde_json::from_value::<SeparationOperation>(incomplete).is_err());
+    assert!(
+        serde_json::from_value::<k3_core::SeparationState>(
+            serde_json::json!({"status": "running"})
+        )
+        .is_err()
     );
 }

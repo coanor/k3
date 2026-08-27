@@ -3,14 +3,15 @@ use std::{
     fmt,
     fs::{self, File},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     thread,
     time::Duration,
 };
 
 use k3_core::{
-    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, ProjectPath,
-    SeparationManifest, SeparationOperation, SeparationOutputLayout, SeparationProfile,
+    BackingVocalModelProvenance, CheckpointSha256, FileProjectRepository, ModelProvenance, Project,
+    ProjectPath, ProjectRepository, SeparationManifest, SeparationOperation,
+    SeparationOutputLayout, SeparationProfile, SeparationState,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,19 +19,33 @@ use uuid::Uuid;
 
 const PROTOCOL_MAJOR: u16 = 1;
 
-#[derive(Debug)]
-struct TerminalJobError(String);
+pub(crate) enum RemoteJobError {
+    Terminal(String),
+    Retryable(Box<dyn Error>),
+}
 
-impl fmt::Display for TerminalJobError {
+impl fmt::Debug for RemoteJobError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        fmt::Display::fmt(self, formatter)
     }
 }
 
-impl Error for TerminalJobError {}
+impl fmt::Display for RemoteJobError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Terminal(message) => formatter.write_str(message),
+            Self::Retryable(error) => fmt::Display::fmt(error, formatter),
+        }
+    }
+}
 
-pub(crate) fn is_terminal_job_error(error: &(dyn Error + 'static)) -> bool {
-    error.downcast_ref::<TerminalJobError>().is_some()
+impl Error for RemoteJobError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Terminal(_) => None,
+            Self::Retryable(error) => Some(error.as_ref()),
+        }
+    }
 }
 
 pub(crate) fn validate_server_url(url: &str) -> Result<(), Box<dyn Error>> {
@@ -74,6 +89,83 @@ pub(crate) struct RemoteSeparatorConfig {
 pub(crate) struct RemoteSeparator {
     config: RemoteSeparatorConfig,
     api: Box<dyn SeparatorApi>,
+}
+
+/// Owns the complete durable remote-separation transition: resume-or-submit,
+/// checkpoint the operation, wait, publish, and checkpoint the final state.
+pub(crate) struct RemoteSeparationCoordinator {
+    separator: RemoteSeparator,
+    repository: FileProjectRepository,
+}
+
+impl RemoteSeparationCoordinator {
+    pub(crate) fn new(config: RemoteSeparatorConfig) -> Self {
+        Self {
+            separator: RemoteSeparator::new(config),
+            repository: FileProjectRepository,
+        }
+    }
+
+    pub(crate) fn run(
+        &self,
+        project: &mut Project,
+        profile: SeparationProfile,
+        overwrite: bool,
+    ) -> Result<(), RemoteJobError> {
+        if matches!(project.separation(), SeparationState::Ready(_))
+            && !overwrite
+            && project.separation_operation().is_none()
+        {
+            return Err(RemoteJobError::retryable_message(
+                "project already has stems; pass --overwrite to replace them",
+            ));
+        }
+        let operation = if let Some(operation) = project.separation_operation() {
+            if operation.server_profile() != self.separator.config.server_profile {
+                return Err(RemoteJobError::retryable_message(
+                    "pending separation uses a different server profile",
+                ));
+            }
+            operation.clone()
+        } else {
+            let operation = self
+                .separator
+                .submit(&project.source_path(), profile)
+                .map_err(RemoteJobError::Retryable)?;
+            project
+                .start_separation_operation(operation.clone())
+                .map_err(|error| RemoteJobError::Retryable(Box::new(error)))?;
+            self.repository
+                .save(project)
+                .map_err(|error| RemoteJobError::Retryable(Box::new(error)))?;
+            operation
+        };
+        match self.separator.wait_and_download(project.root(), &operation) {
+            Ok(manifest) => {
+                project
+                    .finish_separation_operation(manifest)
+                    .map_err(|error| RemoteJobError::Retryable(Box::new(error)))?;
+                self.repository
+                    .save(project)
+                    .map_err(|error| RemoteJobError::Retryable(Box::new(error)))?;
+                Ok(())
+            }
+            Err(error @ RemoteJobError::Terminal(_)) => {
+                project.fail_separation_operation(error.to_string());
+                self.repository
+                    .save(project)
+                    .map_err(|error| RemoteJobError::Retryable(Box::new(error)))?;
+                Err(error)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl RemoteJobError {
+    fn retryable_message(message: impl Into<String>) -> Self {
+        Self::Retryable(Box::new(std::io::Error::other(message.into())))
+    }
 }
 
 impl RemoteSeparator {
@@ -128,51 +220,47 @@ impl RemoteSeparator {
                 force: false,
             },
         )?;
-        Ok(SeparationOperation {
-            adapter: "remote".into(),
-            server_profile: Some(self.config.server_profile.clone()),
-            input_id: Some(created.input_id),
-            job_id: job.job_id,
-            model_id: self.config.model_id.clone(),
+        Ok(SeparationOperation::remote(
+            self.config.server_profile.clone(),
+            created.input_id,
+            job.job_id,
+            self.config.model_id.clone(),
             profile,
-            output_layout: self.config.output_layout,
-        })
+            self.config.output_layout,
+        ))
     }
 
     pub(crate) fn wait_and_download(
         &self,
         project_root: &Path,
         operation: &SeparationOperation,
-    ) -> Result<SeparationManifest, Box<dyn Error>> {
-        validate_server_url(&self.config.server_url)?;
+    ) -> Result<SeparationManifest, RemoteJobError> {
+        validate_server_url(&self.config.server_url).map_err(RemoteJobError::Retryable)?;
         loop {
-            let job = self.api.get_job(&operation.job_id)?;
-            match job.status.as_str() {
-                "queued" | "running" | "cancelling" => {
+            let job = self
+                .api
+                .get_job(operation.job_id())
+                .map_err(RemoteJobError::Retryable)?;
+            match job {
+                JobResponse::Queued | JobResponse::Running | JobResponse::Cancelling => {
                     thread::sleep(self.config.poll_interval);
                 }
-                "completed" => {
-                    let result = job
-                        .result
-                        .ok_or("completed separator job omitted its result")?;
-                    return self.download_result(project_root, operation, &result);
+                JobResponse::Completed { result } => {
+                    return self
+                        .download_result(project_root, operation, &result)
+                        .map_err(RemoteJobError::Retryable);
                 }
-                "cancelled" => {
-                    return Err(Box::new(TerminalJobError(
+                JobResponse::Cancelled => {
+                    return Err(RemoteJobError::Terminal(
                         "separator job was cancelled".into(),
-                    )));
+                    ));
                 }
-                "failed" => {
-                    let detail = job.error.map_or_else(
+                JobResponse::Failed { error } => {
+                    let detail = error.map_or_else(
                         || "separator job failed without an error".to_owned(),
                         |error| format!("{}: {}", error.code, error.message),
                     );
-                    return Err(Box::new(TerminalJobError(detail)));
-                }
-                status => {
-                    return Err(Box::new(TerminalJobError(format!(
-                        "unknown separator job status: {status}"
-                    ))));
+                    return Err(RemoteJobError::Terminal(detail));
                 }
             }
         }
@@ -184,16 +272,17 @@ impl RemoteSeparator {
         operation: &SeparationOperation,
         result: &JobResult,
     ) -> Result<SeparationManifest, Box<dyn Error>> {
-        let manifest = manifest_from_provenance(operation, result.provenance.clone())?;
+        let version = format!("stems/{}", operation.job_id());
+        let manifest = manifest_from_provenance(operation, result.provenance.clone(), &version)?;
         let stems_dir = project_root.join("stems");
         fs::create_dir_all(&stems_dir)?;
-        let staging = stems_dir.join(format!(".remote-{}", operation.job_id));
+        let staging = stems_dir.join(format!(".remote-{}", operation.job_id()));
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
         fs::create_dir(&staging)?;
         let outcome = (|| {
-            let expected_roles: &[(&str, &str)] = match operation.output_layout {
+            let expected_roles: &[(&str, &str)] = match operation.output_layout() {
                 SeparationOutputLayout::TwoStem => &[
                     ("vocals", "vocals.wav"),
                     ("accompaniment", "accompaniment.wav"),
@@ -231,7 +320,7 @@ impl RemoteSeparator {
                 }
                 expected_frames = Some(frames);
             }
-            replace_stems(&stems_dir, &staging, expected_roles, &operation.job_id)?;
+            publish_stem_set(&staging, &project_root.join(&version), expected_roles)?;
             Ok::<(), Box<dyn Error>>(())
         })();
         if outcome.is_err() {
@@ -387,10 +476,14 @@ struct CreatedJob {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct JobResponse {
-    status: String,
-    result: Option<JobResult>,
-    error: Option<ApiError>,
+#[serde(tag = "status", rename_all = "snake_case")]
+enum JobResponse {
+    Queued,
+    Running,
+    Cancelling,
+    Completed { result: JobResult },
+    Cancelled,
+    Failed { error: Option<ApiError> },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -452,6 +545,7 @@ fn layout_name(layout: SeparationOutputLayout) -> &'static str {
 fn manifest_from_provenance(
     operation: &SeparationOperation,
     provenance: Provenance,
+    stem_directory: &str,
 ) -> Result<SeparationManifest, Box<dyn Error>> {
     for (name, value) in [
         ("provider", provenance.provider.as_str()),
@@ -473,7 +567,7 @@ fn manifest_from_provenance(
             }))
         })
         .transpose()?;
-    match (operation.output_layout, backing_vocals_model.is_some()) {
+    match (operation.output_layout(), backing_vocals_model.is_some()) {
         (SeparationOutputLayout::Karaoke, false) => {
             return Err("karaoke result omitted backing-vocal provenance".into());
         }
@@ -483,10 +577,12 @@ fn manifest_from_provenance(
         _ => {}
     }
     Ok(SeparationManifest {
-        vocals: ProjectPath::new("stems/vocals.wav")?,
-        accompaniment: ProjectPath::new("stems/accompaniment.wav")?,
-        backing_vocals: if operation.output_layout == SeparationOutputLayout::Karaoke {
-            Some(ProjectPath::new("stems/backing-vocals.wav")?)
+        vocals: ProjectPath::new(format!("{stem_directory}/vocals.wav"))?,
+        accompaniment: ProjectPath::new(format!("{stem_directory}/accompaniment.wav"))?,
+        backing_vocals: if operation.output_layout() == SeparationOutputLayout::Karaoke {
+            Some(ProjectPath::new(format!(
+                "{stem_directory}/backing-vocals.wav"
+            ))?)
         } else {
             None
         },
@@ -495,7 +591,7 @@ fn manifest_from_provenance(
             architecture: provenance.architecture,
             checkpoint_id: provenance.checkpoint_id,
             checkpoint_sha256: CheckpointSha256::new(provenance.checkpoint_sha256)?,
-            profile: operation.profile,
+            profile: operation.profile(),
             backing_vocals_model,
         },
     })
@@ -541,48 +637,35 @@ fn validate_wav_contract(path: &Path, role: &str) -> Result<u32, Box<dyn Error>>
     Ok(frames)
 }
 
-fn replace_stems(
-    stems_dir: &Path,
+fn publish_stem_set(
     staging: &Path,
+    destination: &Path,
     roles: &[(&str, &str)],
-    job_id: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let mut backups: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let mut installed: Vec<PathBuf> = Vec::new();
-    let result = (|| {
+    if destination.exists() {
         for (_, filename) in roles {
-            let destination = stems_dir.join(filename);
-            if destination.exists() {
-                let backup = stems_dir.join(format!(".{filename}.{job_id}.backup"));
-                fs::rename(&destination, &backup)?;
-                backups.push((destination.clone(), backup));
+            let published = destination.join(filename);
+            if !published.is_file() || hash_file(&published)? != hash_file(&staging.join(filename))?
+            {
+                return Err(format!(
+                    "remote stem version already exists with different content: {}",
+                    destination.display()
+                )
+                .into());
             }
-            fs::rename(staging.join(filename), &destination)?;
-            installed.push(destination);
         }
-        Ok::<(), std::io::Error>(())
-    })();
-    if let Err(error) = result {
-        for destination in installed.iter().rev() {
-            fs::remove_file(destination).ok();
-        }
-        for (destination, backup) in backups.iter().rev() {
-            fs::rename(backup, destination).ok();
-        }
-        return Err(error.into());
+        fs::remove_dir_all(staging)?;
+        return Ok(());
     }
-    for (_, backup) in backups {
-        fs::remove_file(backup).ok();
-    }
-    fs::remove_dir(staging).ok();
+    fs::rename(staging, destination)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiError, Artifact, Capabilities, CreateInputRequest, CreateJobRequest, CreatedInput,
-        CreatedJob, JobResponse, JobResult, ProtocolVersion, Provenance, RemoteSeparator,
+        Artifact, Capabilities, CreateInputRequest, CreateJobRequest, CreatedInput, CreatedJob,
+        JobResponse, JobResult, ProtocolVersion, Provenance, RemoteSeparator,
         RemoteSeparatorConfig, SeparatorApi, validate_wav_contract,
     };
     use k3_core::{SeparationOperation, SeparationOutputLayout, SeparationProfile};
@@ -673,10 +756,16 @@ mod tests {
             .submit(&source, SeparationProfile::Balanced)
             .unwrap();
 
-        assert_eq!(operation.adapter, "remote");
-        assert_eq!(operation.server_profile.as_deref(), Some("test-server"));
-        assert_eq!(operation.input_id.as_deref(), Some("input_test"));
-        assert_eq!(operation.job_id, "job_test");
+        assert_eq!(operation.server_profile(), "test-server");
+        assert_eq!(operation.input_id(), "input_test");
+        assert_eq!(operation.job_id(), "job_test");
+    }
+
+    #[test]
+    fn job_protocol_rejects_unknown_or_incomplete_terminal_statuses() {
+        assert!(serde_json::from_str::<JobResponse>(r#"{"status":"mystery"}"#).is_err());
+        assert!(serde_json::from_str::<JobResponse>(r#"{"status":"completed"}"#).is_err());
+        assert!(serde_json::from_str::<JobResponse>(r#"{"status":"queued"}"#).is_ok());
     }
 
     struct InvalidAudioApi {
@@ -710,9 +799,8 @@ mod tests {
 
         fn get_job(&self, _job_id: &str) -> Result<JobResponse, Box<dyn Error>> {
             let sha256 = format!("{:x}", Sha256::digest(&self.bytes));
-            Ok(JobResponse {
-                status: "completed".into(),
-                result: Some(JobResult {
+            Ok(JobResponse::Completed {
+                result: JobResult {
                     artifacts: ["vocals", "accompaniment"]
                         .into_iter()
                         .map(|role| Artifact {
@@ -730,8 +818,7 @@ mod tests {
                         checkpoint_sha256: self.checkpoint_sha256.clone(),
                         backing_vocals_model: None,
                     },
-                }),
-                error: None::<ApiError>,
+                },
             })
         }
 
@@ -767,15 +854,14 @@ mod tests {
                 checkpoint_sha256: "0".repeat(64),
             }),
         );
-        let operation = SeparationOperation {
-            adapter: "remote".into(),
-            server_profile: Some("test-server".into()),
-            input_id: Some("input_test".into()),
-            job_id: "job_test".into(),
-            model_id: "fake-separator".into(),
-            profile: SeparationProfile::Balanced,
-            output_layout: SeparationOutputLayout::TwoStem,
-        };
+        let operation = SeparationOperation::remote(
+            "test-server".into(),
+            "input_test".into(),
+            "job_test".into(),
+            "fake-separator".into(),
+            SeparationProfile::Balanced,
+            SeparationOutputLayout::TwoStem,
+        );
 
         let error = separator
             .wait_and_download(sandbox.path(), &operation)
@@ -788,6 +874,60 @@ mod tests {
             fs::read(stems.join("accompaniment.wav")).unwrap(),
             b"old music"
         );
+    }
+
+    #[test]
+    fn completed_remote_job_publishes_one_immutable_stem_directory() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let source_wav = sandbox.path().join("valid.wav");
+        let mut writer = hound::WavWriter::create(
+            &source_wav,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: 44_100,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            },
+        )
+        .unwrap();
+        writer.write_sample(0.1_f32).unwrap();
+        writer.write_sample(0.1_f32).unwrap();
+        writer.finalize().unwrap();
+        let wav = fs::read(source_wav).unwrap();
+        let separator = RemoteSeparator::with_api(
+            RemoteSeparatorConfig {
+                server_profile: "test-server".into(),
+                server_url: "http://127.0.0.1:1".into(),
+                token: "test-token".into(),
+                model_id: "fake-separator".into(),
+                output_layout: SeparationOutputLayout::TwoStem,
+                poll_interval: Duration::ZERO,
+            },
+            Box::new(InvalidAudioApi {
+                bytes: wav,
+                checkpoint_sha256: "0".repeat(64),
+            }),
+        );
+        let operation = SeparationOperation::remote(
+            "test-server".into(),
+            "input_test".into(),
+            "job_test".into(),
+            "fake-separator".into(),
+            SeparationProfile::Balanced,
+            SeparationOutputLayout::TwoStem,
+        );
+
+        let manifest = separator
+            .wait_and_download(sandbox.path(), &operation)
+            .unwrap();
+
+        assert_eq!(manifest.vocals.as_str(), "stems/job_test/vocals.wav");
+        assert_eq!(
+            manifest.accompaniment.as_str(),
+            "stems/job_test/accompaniment.wav"
+        );
+        assert!(sandbox.path().join(manifest.vocals.as_str()).is_file());
+        assert!(!sandbox.path().join("stems/vocals.wav").exists());
     }
 
     #[test]
@@ -844,15 +984,14 @@ mod tests {
                 checkpoint_sha256: "invalid".into(),
             }),
         );
-        let operation = SeparationOperation {
-            adapter: "remote".into(),
-            server_profile: Some("test-server".into()),
-            input_id: Some("input_test".into()),
-            job_id: "job_test".into(),
-            model_id: "fake-separator".into(),
-            profile: SeparationProfile::Balanced,
-            output_layout: SeparationOutputLayout::TwoStem,
-        };
+        let operation = SeparationOperation::remote(
+            "test-server".into(),
+            "input_test".into(),
+            "job_test".into(),
+            "fake-separator".into(),
+            SeparationProfile::Balanced,
+            SeparationOutputLayout::TwoStem,
+        );
 
         separator
             .wait_and_download(sandbox.path(), &operation)

@@ -12,11 +12,11 @@ use k3_core::{
     CreateProject, FileProjectRepository, ProjectRepository, SeparationOutputLayout,
     SeparationProfile, SeparationState, SongPreparation, VocalEffectPreset,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
 use crate::remote_separator::{
-    RemoteSeparator, RemoteSeparatorConfig, is_terminal_job_error, validate_server_url,
+    RemoteJobError, RemoteSeparationCoordinator, RemoteSeparatorConfig, validate_server_url,
 };
 
 const DEFAULT_EXTENSIONS: [&str; 6] = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
@@ -61,33 +61,7 @@ impl LibraryConfig {
         if self.scan.extensions.is_empty() {
             return Err("scan.extensions must contain at least one extension".into());
         }
-        if let Some(size) = self.separation.segment_size
-            && !(1..=4_096).contains(&size)
-        {
-            return Err("separation.segment_size must be between 1 and 4096".into());
-        }
-        if self.separation.adapter == SeparationAdapter::Remote {
-            let url = self
-                .separation
-                .server_url
-                .as_deref()
-                .ok_or("separation.server_url is required for the remote adapter")?;
-            validate_server_url(url)?;
-            if self
-                .separation
-                .token_env
-                .as_deref()
-                .is_none_or(str::is_empty)
-            {
-                return Err("separation.token_env is required for the remote adapter".into());
-            }
-            if self.separation.model.as_deref().is_none_or(str::is_empty) {
-                return Err("separation.model is required for the remote adapter".into());
-            }
-            if self.separation.profile == SeparationProfile::Compatible {
-                return Err("remote separation does not support the compatible profile".into());
-            }
-        }
+        self.separation.validate()?;
         Ok(())
     }
 }
@@ -117,10 +91,21 @@ pub enum SeparationAdapter {
     Remote,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SeparationConfig {
-    #[serde(default)]
-    pub adapter: SeparationAdapter,
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum SeparationConfig {
+    Local {
+        #[serde(flatten)]
+        settings: LocalSeparationConfig,
+    },
+    Remote {
+        #[serde(flatten)]
+        settings: RemoteLibrarySeparationConfig,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LocalSeparationConfig {
     #[serde(default = "default_worker")]
     pub worker: PathBuf,
     pub model_dir: Option<PathBuf>,
@@ -133,16 +118,112 @@ pub struct SeparationConfig {
     pub autocast: bool,
     #[serde(default = "default_preserve_backing_vocals")]
     pub preserve_backing_vocals: bool,
-    #[serde(default)]
-    pub server_profile: Option<String>,
-    #[serde(default)]
-    pub server_url: Option<String>,
-    #[serde(default)]
-    pub token_env: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RemoteLibrarySeparationConfig {
+    #[serde(default = "default_server_profile")]
+    pub server_profile: String,
+    pub server_url: String,
+    pub token_env: String,
+    pub profile: SeparationProfile,
+    pub model: String,
     #[serde(default = "default_output_layout")]
     pub output_layout: SeparationOutputLayout,
     #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct SeparationConfigDocument {
+    #[serde(default)]
+    adapter: SeparationAdapter,
+    #[serde(default = "default_worker")]
+    worker: PathBuf,
+    model_dir: Option<PathBuf>,
+    log_dir: Option<PathBuf>,
+    #[serde(default)]
+    profile: SeparationProfile,
+    model: Option<String>,
+    segment_size: Option<u32>,
+    #[serde(default = "default_autocast")]
+    autocast: bool,
+    #[serde(default = "default_preserve_backing_vocals")]
+    preserve_backing_vocals: bool,
+    server_profile: Option<String>,
+    server_url: Option<String>,
+    token_env: Option<String>,
+    #[serde(default = "default_output_layout")]
+    output_layout: SeparationOutputLayout,
+    #[serde(default = "default_poll_interval_ms")]
+    poll_interval_ms: u64,
+}
+
+impl<'de> Deserialize<'de> for SeparationConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = SeparationConfigDocument::deserialize(deserializer)?;
+        match document.adapter {
+            SeparationAdapter::Local => Ok(Self::Local {
+                settings: LocalSeparationConfig {
+                    worker: document.worker,
+                    model_dir: document.model_dir,
+                    log_dir: document.log_dir,
+                    profile: document.profile,
+                    model: document.model,
+                    segment_size: document.segment_size,
+                    autocast: document.autocast,
+                    preserve_backing_vocals: document.preserve_backing_vocals,
+                },
+            }),
+            SeparationAdapter::Remote => Ok(Self::Remote {
+                settings: RemoteLibrarySeparationConfig {
+                    server_profile: document
+                        .server_profile
+                        .unwrap_or_else(default_server_profile),
+                    server_url: required_remote(document.server_url, "server_url")?,
+                    token_env: required_remote(document.token_env, "token_env")?,
+                    profile: document.profile,
+                    model: required_remote(document.model, "model")?,
+                    output_layout: document.output_layout,
+                    poll_interval_ms: document.poll_interval_ms,
+                },
+            }),
+        }
+    }
+}
+
+fn required_remote<E: de::Error>(value: Option<String>, name: &str) -> Result<String, E> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            E::custom(format!(
+                "separation.{name} is required for the remote adapter"
+            ))
+        })
+}
+
+impl SeparationConfig {
+    fn validate(&self) -> Result<(), Box<dyn Error>> {
+        match self {
+            Self::Local { settings } => {
+                if let Some(size) = settings.segment_size
+                    && !(1..=4_096).contains(&size)
+                {
+                    return Err("separation.segment_size must be between 1 and 4096".into());
+                }
+            }
+            Self::Remote { settings } => {
+                validate_server_url(&settings.server_url)?;
+                if settings.profile == SeparationProfile::Compatible {
+                    return Err("remote separation does not support the compatible profile".into());
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -170,6 +251,10 @@ impl Default for LyricsConfig {
 
 fn default_preserve_backing_vocals() -> bool {
     true
+}
+
+fn default_server_profile() -> String {
+    "default".into()
 }
 
 fn default_worker() -> PathBuf {
@@ -321,9 +406,12 @@ fn separate_into_project(
             title: Some(title),
         })?
     };
-    if config.separation.adapter == SeparationAdapter::Remote {
-        return separate_remotely(config, project, project_root, replacing);
-    }
+    let settings = match &config.separation {
+        SeparationConfig::Local { settings } => settings,
+        SeparationConfig::Remote { settings } => {
+            return separate_remotely(config, settings, project, project_root, replacing);
+        }
+    };
     if project.separation_operation().is_some() {
         return Err(
             "project has a pending remote separation; use its remote server profile to resume it"
@@ -331,27 +419,26 @@ fn separate_into_project(
         );
     }
     let separator = PythonStemSeparator::new(PythonSeparatorConfig {
-        worker: config.separation.worker.clone(),
-        model_dir: config.separation.model_dir.clone(),
+        worker: settings.worker.clone(),
+        model_dir: settings.model_dir.clone(),
         project_root: project.root().to_path_buf(),
-        log_path: config
-            .separation
+        log_path: settings
             .log_dir
             .as_ref()
             .map_or_else(separation_log_path, |directory| {
                 Ok(directory.join("separate.log"))
             })?,
-        model_id: config.separation.model.clone(),
+        model_id: settings.model.clone(),
         overwrite: replacing,
-        segment_size: config.separation.segment_size,
-        autocast: config.separation.autocast,
-        preserve_backing_vocals: config.separation.preserve_backing_vocals,
+        segment_size: settings.segment_size,
+        autocast: settings.autocast,
+        preserve_backing_vocals: settings.preserve_backing_vocals,
     });
     let mut preparation = SongPreparation::new(separator);
     let result = if replacing {
-        preparation.reprepare(&mut project, config.separation.profile)
+        preparation.reprepare(&mut project, settings.profile)
     } else {
-        preparation.prepare(&mut project, config.separation.profile)
+        preparation.prepare(&mut project, settings.profile)
     };
     if result.is_ok() {
         repository.save(&project)?;
@@ -382,83 +469,40 @@ fn separate_into_project(
 
 fn separate_remotely(
     config: &LibraryConfig,
+    separation: &RemoteLibrarySeparationConfig,
     mut project: k3_core::Project,
     project_root: &Path,
     replacing: bool,
 ) -> Result<PathBuf, Box<dyn Error>> {
-    let separation = &config.separation;
-    let token_env = separation
-        .token_env
-        .as_deref()
-        .ok_or("separation.token_env is required for the remote adapter")?;
+    let token_env = &separation.token_env;
     let token = env::var(token_env)
         .map_err(|_| format!("separator token environment variable is not set: {token_env}"))?;
-    let server_profile = separation
-        .server_profile
-        .clone()
-        .unwrap_or_else(|| "default".into());
-    let separator = RemoteSeparator::new(RemoteSeparatorConfig {
+    let server_profile = separation.server_profile.clone();
+    let coordinator = RemoteSeparationCoordinator::new(RemoteSeparatorConfig {
         server_profile: server_profile.clone(),
-        server_url: separation
-            .server_url
-            .clone()
-            .ok_or("separation.server_url is required for the remote adapter")?,
+        server_url: separation.server_url.clone(),
         token,
-        model_id: separation
-            .model
-            .clone()
-            .ok_or("separation.model is required for the remote adapter")?,
+        model_id: separation.model.clone(),
         output_layout: separation.output_layout,
         poll_interval: Duration::from_millis(separation.poll_interval_ms.max(50)),
     });
-    let repository = FileProjectRepository;
-    let operation = if let Some(operation) = project.separation_operation() {
-        if operation.adapter != "remote"
-            || operation.server_profile.as_deref() != Some(server_profile.as_str())
-        {
-            return Err(format!(
-                "project separation belongs to server profile {:?}, not {server_profile}",
-                operation.server_profile
-            )
-            .into());
-        }
-        operation.clone()
-    } else {
-        let operation = separator.submit(&project.source_path(), separation.profile)?;
-        project.start_separation_operation(operation.clone())?;
-        repository.save(&project)?;
-        operation
-    };
-
-    match separator.wait_and_download(project.root(), &operation) {
-        Ok(manifest) => {
-            project.finish_separation_operation(manifest)?;
-            repository.save(&project)?;
-            Ok(project_root.to_path_buf())
-        }
-        Err(error) => {
-            if is_terminal_job_error(error.as_ref()) {
-                project.fail_separation_operation(error.to_string());
-                repository.save(&project)?;
-                if !replacing {
-                    let archived = archive_failed_project(&config.projects_root, project_root)?;
-                    return Err(format!(
-                        "{error}; failed project archived at {}; fix the server configuration and retry",
-                        archived.display()
-                    )
-                    .into());
-                }
-                return Err(format!(
-                    "{error}; existing project and stems were preserved: {}",
-                    project_root.display()
-                )
-                .into());
-            }
+    match coordinator.run(&mut project, separation.profile, replacing) {
+        Ok(()) => Ok(project_root.to_path_buf()),
+        Err(error @ RemoteJobError::Terminal(_)) if !replacing => {
+            let archived = archive_failed_project(&config.projects_root, project_root)?;
             Err(format!(
-                "{error}; remote job {} remains recorded and can be resumed",
-                operation.job_id
+                "{error}; failed project archived at {}; fix the server configuration and retry",
+                archived.display()
             )
             .into())
+        }
+        Err(error @ RemoteJobError::Terminal(_)) => Err(format!(
+            "{error}; existing project and stems were preserved: {}",
+            project_root.display()
+        )
+        .into()),
+        Err(error @ RemoteJobError::Retryable(_)) => {
+            Err(format!("{error}; remote job remains recorded and can be resumed").into())
         }
     }
 }
@@ -536,7 +580,7 @@ const fn default_auto_download() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryConfig, SeparationAdapter, import_and_separate, reseparate, scan};
+    use super::{LibraryConfig, SeparationConfig, import_and_separate, reseparate, scan};
     use k3_core::{FileProjectRepository, ProjectRepository, SeparationState, VocalEffectPreset};
     use std::fs;
 
@@ -563,15 +607,11 @@ mod tests {
         .unwrap();
         config.validate().unwrap();
 
-        assert_eq!(SeparationAdapter::Remote, config.separation.adapter);
-        assert_eq!(
-            "studio-gpu",
-            config.separation.server_profile.as_deref().unwrap()
-        );
-        assert_eq!(
-            "K3_SEPARATOR_TOKEN",
-            config.separation.token_env.as_deref().unwrap()
-        );
+        let SeparationConfig::Remote { settings: remote } = &config.separation else {
+            panic!("expected remote separation config")
+        };
+        assert_eq!("studio-gpu", remote.server_profile);
+        assert_eq!("K3_SEPARATOR_TOKEN", remote.token_env);
         assert!(
             !serde_json::to_string(&config)
                 .unwrap()
@@ -630,7 +670,10 @@ mod tests {
         assert_eq!(snapshot.sources[0].project_path, projects.join("existing"));
         assert_eq!(config.recording.default_effect, VocalEffectPreset::Ktv);
         assert!(config.lyrics.netease_fallback);
-        assert!(config.separation.preserve_backing_vocals);
+        let SeparationConfig::Local { settings: local } = &config.separation else {
+            panic!("expected local separation config")
+        };
+        assert!(local.preserve_backing_vocals);
     }
 
     #[cfg(unix)]
@@ -765,7 +808,10 @@ print(json.dumps({{"id": r["id"], "ok": True, "result": {{
         fs::write(project_path.join("takes/keep.wav"), b"keep").unwrap();
 
         write_worker("voice-v2", false);
-        config.separation.model = Some("model-v2".into());
+        let SeparationConfig::Local { settings: local } = &mut config.separation else {
+            panic!("expected local separation config")
+        };
+        local.model = Some("model-v2".into());
         reseparate(&config, &song, &project_path).unwrap();
         let replaced = FileProjectRepository.open(&project_path).unwrap();
 

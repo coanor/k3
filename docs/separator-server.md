@@ -74,9 +74,9 @@ curl -H "Authorization: Bearer $K3_SEPARATOR_LAPTOP" \
 ```
 
 数据目录使用 SQLite WAL 保存 inputs、jobs、幂等 key 和 artifact 元数据；原始输入与
-结果按 SHA-256 存放。控制进程是唯一数据库 writer。真实推理由 `spawn` 创建的长期
-process pool 执行，每个 worker 同时只运行一个 job；`--max-jobs N` 同时决定 worker
-数量与模型实例的最大并发数。没有 CUDA 时，fake server 和真实 CPU server 都可启动。
+结果按 SHA-256 存放。单 dispatcher 直接管理 `--max-jobs N` 个 spawned process future，
+不再叠加每槽一个阻塞 scheduler thread。整套 artifact link、job result 和 completed
+状态在同一事务提交。没有 CUDA 时，fake server 和真实 CPU server 都可启动。
 
 ## K3 命令行
 
@@ -102,7 +102,8 @@ k3 separate \
 创建远程 job 后，K3 会先把 `server_profile`、`input_id` 与 `job_id` 写入
 `project.json`，再等待结果。因此进程退出或网络中断不会丢失任务引用；以同一 server
 profile 再次运行命令即可恢复。重新分离期间旧 stem 保持可播放，新文件全部验证通过后
-才一起替换。
+才把整个目录发布为 `stems/{job_id}/`，随后原子更新 project manifest。旧 manifest
+引用的文件不会被就地覆盖。
 
 媒体库模式可使用 [`library-config.remote.example.json`](library-config.remote.example.json)。
 token 的值只从 `token_env` 指定的环境变量读取，不会序列化进 project 或配置文件。

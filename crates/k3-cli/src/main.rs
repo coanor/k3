@@ -15,12 +15,12 @@ use std::{env, error::Error, path::PathBuf, time::Duration};
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
     CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationFailure,
-    SeparationOutputLayout, SeparationProfile, SeparationState, SongPreparation,
+    SeparationOutputLayout, SeparationProfile, SongPreparation,
 };
 
 use crate::mix::render_take_preview;
 use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
-use crate::remote_separator::{RemoteSeparator, RemoteSeparatorConfig, is_terminal_job_error};
+use crate::remote_separator::{RemoteJobError, RemoteSeparationCoordinator, RemoteSeparatorConfig};
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -221,7 +221,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         .or_else(|| {
                             project
                                 .separation_operation()
-                                .map(|operation| operation.model_id.clone())
+                                .map(|operation| operation.model_id().to_owned())
                         })
                         .ok_or("--model is required when creating a remote job")?,
                     output_layout: output_layout.into(),
@@ -312,48 +312,19 @@ fn show_project(
 }
 
 fn run_remote_separation(
-    repository: FileProjectRepository,
+    _repository: FileProjectRepository,
     project: &mut Project,
     config: RemoteSeparatorConfig,
     profile: SeparationProfile,
     overwrite: bool,
 ) -> Result<(), Box<dyn Error>> {
-    if matches!(project.separation(), SeparationState::Ready(_))
-        && !overwrite
-        && project.separation_operation().is_none()
-    {
-        return Err("project already has stems; pass --overwrite to replace them".into());
+    if let Err(error) = RemoteSeparationCoordinator::new(config).run(project, profile, overwrite) {
+        let recovery = match error {
+            RemoteJobError::Terminal(_) => "remote job ended and cannot be resumed",
+            RemoteJobError::Retryable(_) => "remote job remains recorded and can be resumed",
+        };
+        return Err(format!("{error}; {recovery}").into());
     }
-    let server_profile = config.server_profile.clone();
-    let separator = RemoteSeparator::new(config);
-    let operation = if let Some(operation) = project.separation_operation() {
-        if operation.server_profile.as_deref() != Some(server_profile.as_str()) {
-            return Err("pending separation uses a different server profile".into());
-        }
-        operation.clone()
-    } else {
-        let operation = separator.submit(&project.source_path(), profile)?;
-        project.start_separation_operation(operation.clone())?;
-        repository.save(project)?;
-        operation
-    };
-    match separator.wait_and_download(project.root(), &operation) {
-        Ok(manifest) => project.finish_separation_operation(manifest)?,
-        Err(error) => {
-            let terminal = is_terminal_job_error(error.as_ref());
-            if terminal {
-                project.fail_separation_operation(error.to_string());
-                repository.save(project)?;
-            }
-            let recovery = if terminal {
-                "remote job ended and cannot be resumed"
-            } else {
-                "remote job remains recorded and can be resumed"
-            };
-            return Err(format!("{error}; {recovery}: {}", operation.job_id).into());
-        }
-    }
-    repository.save(project)?;
     print_summary(project);
     Ok(())
 }

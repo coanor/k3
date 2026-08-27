@@ -25,9 +25,9 @@ server 可以与 K3 位于不同机器，也可以在同机通过 loopback 使�
 ## 当前实现边界
 
 本次提交完成可运行的第一阶段：HTTP 上传/查询/下载、WebSocket 状态事件、bearer token、
-SQLite 持久任务与重启恢复、结果缓存、fake/CPU/CUDA/CoreML runtime、spawned worker pool、
-模型 allowlist、并发 benchmark，以及 K3 的持久 remote operation、HTTP polling、结果校验与
-原子 stem 替换。现有本地 Python adapter 仍是默认路径。
+SQLite 持久任务与重启恢复、结果缓存、fake/CPU/CUDA/CoreML runtime、单 dispatcher
+有界执行器、模型 allowlist、并发 benchmark，以及 K3 的持久 remote operation、HTTP
+polling、结果校验与版本化 stem 发布。现有本地 Python adapter 仍是默认路径。
 
 以下属于后续强化，不作为本次提交已完成能力：Docker 发布物、TTL/GC、运行中任务的
 graceful/强制 worker 取消、runtime chunk 级进度、K3 WebSocket manager、Range 断点续传、
@@ -67,29 +67,29 @@ K3
           │
           ▼
 Python ASGI control process
-├── HTTP/WebSocket adapter
-├── bearer-token authentication
-├── SQLite job store
-├── content-addressed filesystem
-├── resource-aware scheduler
-└── spawned inference worker pool
+├── server_app：HTTP/WebSocket adapter
+├── server_contracts：类型化请求、响应与状态枚举
+├── server_core：认证、input 与持久资源生命周期
+├── server_catalog：模型发现、readiness 与执行规格解析
+├── server_jobs：单 dispatcher 与有界 inference executor
+└── server_artifacts：content-addressed 文件与整套结果事务发布
           │
           ▼
-每个 worker process 同时执行一个 job
-├── persistent model cache
+每个 executor slot 同时执行一个 job（真实 runtime 为 spawn process）
+├── 每个 job 独立的模型处理状态
 ├── CUDA/CPU/CoreML/fake runtime
-├── request-local processing state
 └── scratch outputs
 ```
 
-ASGI control process 是唯一数据库 writer。Inference workers 通过 Python
-`multiprocessing` 的 `spawn` context 和结构化 queues/pipes 接收
-`run/cancel/shutdown`，返回 `started/progress/completed/failed/heartbeat`。worker
-不打开 SQLite，不发布最终 artifacts，也不在处理任务时访问外网。
+一个 dispatcher 是 job 状态迁移的唯一执行调度者。它直接维护最多 `max-jobs` 个 process
+future，不会为每个并发槽再建立一层阻塞 scheduler thread。fake runtime 使用同形的轻量
+thread executor。推理进程不打开 SQLite 或发布最终 artifacts；只有 dispatcher 收到整套
+已校验输出后，`server_artifacts` 才将所有 artifact link、result JSON 和 `completed`
+状态放进同一个 SQLite 事务。
 
-每个 worker 同时只运行一个 job。并发通过多个长期 worker 实现；同模型并发会加载
-多个模型实例，因此 benchmark 必须包含重复权重成本。worker crash、OOM、强制取消
-只影响一个 job。
+每个 executor slot 同时只运行一个 job。同模型并发仍会产生独立模型实例和重复权重成本，因此
+benchmark 必须覆盖真实模型、preset、歌曲长度与输出布局。未来若引入长期模型 worker，
+它必须替换当前 executor seam，而不能在 dispatcher 外再叠一层并发队列。
 
 ## 公开协议
 
@@ -329,20 +329,20 @@ seam 改为可恢复 operation：
 start → persist operation reference → resume/complete
 ```
 
-Project schema 提升版本，并将当前结果与正在执行的操作拆开：
+Project 将当前可播放结果与正在执行的远程操作拆开；本地同步调用不再持久化第二个
+`running` 状态：
 
 ```text
-current_separation: Option<SeparationManifest>
-separation_operation:
-  idle
-  remote_pending { server_id, input_id, job_id, resolved_spec }
-  downloading { ... }
-  failed { ... }
+separation: not_requested | ready { manifest } | failed { message }
+separation_operation: absent | remote {
+  server_profile, input_id, job_id, model_id, profile, output_layout
+}
 ```
 
 重新分离期间旧 manifest 和 stems 保持可播放。server job completed 但本地未下载完时，
-project 仍不是新的 Ready。K3 将 partial artifacts 保存到项目 scratch，支持 Range
-恢复；全部验证后才备份旧 stems、原子替换并保存新 manifest。
+project 仍不是新的 Ready。K3 将 partial artifacts 保存到 `stems/.remote-{job_id}`；
+全部验证后将整个目录原子 rename 为不可变的 `stems/{job_id}/`，再原子保存引用该版本的
+project manifest。崩溃最多留下未引用版本，不会让旧 manifest 指向被部分覆盖的文件。
 
 K3 retry 规则按 HTTP 操作语义区分：安全 GET 有限指数退避；input PUT 从头重传；
 create job 使用同一 idempotency key；cancel 是幂等请求；认证、checksum 与确定性 4xx
