@@ -52,6 +52,22 @@ fn project_library_revision_changes_with_the_project_document() {
     assert_ne!(before[0].document_revision, after[0].document_revision);
 }
 
+#[test]
+fn project_library_uses_the_revision_from_the_same_repository_read() {
+    let directory = tempfile::tempdir().unwrap();
+    create_project(directory.path(), "one", "Song");
+
+    let summary = ProjectLibrary::scan(directory.path()).unwrap().remove(0);
+    let loaded = FileProjectRepository
+        .open(&directory.path().join("one"))
+        .unwrap();
+
+    assert_eq!(
+        summary.document_revision.unwrap().as_bytes(),
+        loaded.document_revision().unwrap().as_bytes()
+    );
+}
+
 fn create_project(root: &Path, directory: &str, title: &str) {
     let song = root.join(format!("{directory}.wav"));
     fs::write(&song, b"test audio").unwrap();

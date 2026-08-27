@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -12,7 +12,7 @@ use k3_core::LyricsTimeline;
 use k3_core::{FileProjectRepository, ProjectMutation};
 use thiserror::Error;
 
-use crate::{LoadedProject, ProjectTrack, TrackKind};
+use crate::{LoadedProject, ProjectRevision, ProjectTrack, TrackKind};
 
 /// Coarse playback state shared by audio adapters and frontends.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -88,6 +88,7 @@ pub enum PlaybackCommand {
 #[derive(Clone, Debug)]
 pub struct PlaybackSnapshot {
     pub project_id: Option<uuid::Uuid>,
+    pub project_generation: u64,
     pub title: Option<String>,
     pub tracks: Vec<ProjectTrack>,
     pub track: Option<TrackKind>,
@@ -98,7 +99,7 @@ pub struct PlaybackSnapshot {
     pub key_shift_semitones: i8,
     pub lyrics: Option<Arc<LyricsTimeline>>,
     pub error: Option<String>,
-    pub document_revision: Option<Arc<[u8]>>,
+    pub document_revision: Option<ProjectRevision>,
     pub reload_required: bool,
 }
 
@@ -106,6 +107,7 @@ impl Default for PlaybackSnapshot {
     fn default() -> Self {
         Self {
             project_id: None,
+            project_generation: 0,
             title: None,
             tracks: Vec::new(),
             track: None,
@@ -149,38 +151,42 @@ impl PlaybackService {
     ///
     /// # Errors
     ///
-    /// Returns [`PlaybackError::WorkerStopped`] if the playback worker has terminated.
-    pub fn execute(&self, command: PlaybackCommand) -> Result<PlaybackSnapshot, PlaybackError> {
-        self.submit(command)?.recv()
-    }
-
-    /// Queues one user command and returns a response handle without waiting for audio work.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlaybackError::WorkerStopped`] if the playback worker has terminated.
-    pub fn submit(&self, command: PlaybackCommand) -> Result<PlaybackResponse, PlaybackError> {
+    /// Returns [`PlaybackServiceError::WorkerStopped`] if the playback worker has terminated.
+    pub fn execute(
+        &self,
+        command: PlaybackCommand,
+    ) -> Result<PlaybackSnapshot, PlaybackServiceError> {
         let (response, result) = mpsc::sync_channel(1);
         self.sender
             .send(Envelope::Execute(command, response))
-            .map_err(|_| PlaybackError::WorkerStopped)?;
-        Ok(PlaybackResponse { receiver: result })
+            .map_err(|_| PlaybackServiceError::WorkerStopped)?;
+        result
+            .recv()
+            .map_err(|_| PlaybackServiceError::WorkerStopped)
     }
-}
 
-/// A pending playback result that may be awaited away from a frontend's event loop.
-pub struct PlaybackResponse {
-    receiver: Receiver<Result<PlaybackSnapshot, PlaybackError>>,
-}
-
-impl PlaybackResponse {
+    /// Queues one command without creating a per-command response waiter.
+    ///
     /// # Errors
     ///
-    /// Returns [`PlaybackError::WorkerStopped`] if the worker ends before answering.
-    pub fn recv(self) -> Result<PlaybackSnapshot, PlaybackError> {
-        self.receiver
-            .recv()
-            .map_err(|_| PlaybackError::WorkerStopped)?
+    /// Returns [`PlaybackServiceError::WorkerStopped`] if the playback worker has terminated.
+    pub fn dispatch(&self, command: PlaybackCommand) -> Result<(), PlaybackServiceError> {
+        self.sender
+            .send(Envelope::Dispatch(command))
+            .map_err(|_| PlaybackServiceError::WorkerStopped)
+    }
+
+    /// Subscribes to the ordered stream of future playback snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlaybackServiceError::WorkerStopped`] if the playback worker has terminated.
+    pub fn subscribe(&self) -> Result<Receiver<PlaybackSnapshot>, PlaybackServiceError> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender
+            .send(Envelope::Subscribe(sender))
+            .map_err(|_| PlaybackServiceError::WorkerStopped)?;
+        Ok(receiver)
     }
 }
 
@@ -194,37 +200,76 @@ impl Drop for PlaybackService {
 }
 
 enum Envelope {
-    Execute(
-        PlaybackCommand,
-        SyncSender<Result<PlaybackSnapshot, PlaybackError>>,
-    ),
+    Execute(PlaybackCommand, SyncSender<PlaybackSnapshot>),
+    Dispatch(PlaybackCommand),
+    Subscribe(Sender<PlaybackSnapshot>),
     Stop,
 }
 
-struct WorkerState<B> {
-    backend: B,
-    project: Option<LoadedProject>,
-    snapshot: PlaybackSnapshot,
+/// Canonical synchronous playback state machine shared by every frontend.
+pub struct PlaybackEngine<B> {
+    pub(crate) backend: B,
+    pub(crate) project: Option<LoadedProject>,
+    pub(crate) snapshot: PlaybackSnapshot,
 }
 
-fn run_worker(backend: impl PlaybackBackend, receiver: &Receiver<Envelope>) {
-    let mut state = WorkerState {
-        backend,
-        project: None,
-        snapshot: PlaybackSnapshot::default(),
-    };
-    while let Ok(envelope) = receiver.recv() {
-        match envelope {
-            Envelope::Execute(command, response) => {
-                let _ = response.send(Ok(state.execute(command)));
-            }
-            Envelope::Stop => break,
+impl<B: PlaybackBackend> PlaybackEngine<B> {
+    #[must_use]
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend,
+            project: None,
+            snapshot: PlaybackSnapshot::default(),
         }
     }
 }
 
-impl<B: PlaybackBackend> WorkerState<B> {
-    fn execute(&mut self, command: PlaybackCommand) -> PlaybackSnapshot {
+fn run_worker(backend: impl PlaybackBackend, receiver: &Receiver<Envelope>) {
+    let mut state = PlaybackEngine::new(backend);
+    let mut subscribers = Vec::new();
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(80)) {
+            Ok(Envelope::Execute(command, response)) => {
+                publish_command_started(&mut subscribers, &state.snapshot, &command);
+                let snapshot = state.execute(command);
+                let _ = response.send(snapshot.clone());
+                publish_snapshot(&mut subscribers, &snapshot);
+            }
+            Ok(Envelope::Dispatch(command)) => {
+                publish_command_started(&mut subscribers, &state.snapshot, &command);
+                let snapshot = state.execute(command);
+                publish_snapshot(&mut subscribers, &snapshot);
+            }
+            Ok(Envelope::Subscribe(subscriber)) => subscribers.push(subscriber),
+            Ok(Envelope::Stop) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) if state.snapshot.project_id.is_some() => {
+                let snapshot = state.execute(PlaybackCommand::Refresh);
+                publish_snapshot(&mut subscribers, &snapshot);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn publish_command_started(
+    subscribers: &mut Vec<Sender<PlaybackSnapshot>>,
+    current: &PlaybackSnapshot,
+    command: &PlaybackCommand,
+) {
+    if matches!(command, PlaybackCommand::SwitchTrack(_)) {
+        let mut loading = current.clone();
+        loading.status = PlaybackStatus::Loading;
+        loading.error = None;
+        publish_snapshot(subscribers, &loading);
+    }
+}
+
+fn publish_snapshot(subscribers: &mut Vec<Sender<PlaybackSnapshot>>, snapshot: &PlaybackSnapshot) {
+    subscribers.retain(|subscriber| subscriber.send(snapshot.clone()).is_ok());
+}
+
+impl<B: PlaybackBackend> PlaybackEngine<B> {
+    pub fn execute(&mut self, command: PlaybackCommand) -> PlaybackSnapshot {
         if let Err(error) = self.apply_command(command) {
             self.snapshot.status = PlaybackStatus::Error;
             if self.snapshot.error.is_none() {
@@ -234,13 +279,13 @@ impl<B: PlaybackBackend> WorkerState<B> {
         self.snapshot.clone()
     }
 
-    fn apply_command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
+    fn apply_command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackFailure> {
         match command {
             PlaybackCommand::Load(project) => self.load(project, false, Duration::ZERO),
             PlaybackCommand::Toggle | PlaybackCommand::Restart
                 if self.snapshot.status == PlaybackStatus::Finished =>
             {
-                let track = self.snapshot.track.ok_or(PlaybackError::NoProject)?;
+                let track = self.snapshot.track.ok_or(PlaybackFailure::NoProject)?;
                 self.load_track(track, Duration::ZERO, true)
             }
             PlaybackCommand::Toggle => self.audio(AudioCommand::Toggle),
@@ -258,11 +303,11 @@ impl<B: PlaybackBackend> WorkerState<B> {
             }
             PlaybackCommand::SeekTo(position) => self.audio(AudioCommand::SeekTo(position)),
             PlaybackCommand::Restart => self.audio(AudioCommand::SeekTo(Duration::ZERO)),
-            PlaybackCommand::SwitchTrack(kind) => self.switch_track(kind),
+            PlaybackCommand::SwitchTrack(kind) => self.apply_track_switch(kind),
             PlaybackCommand::SetVolume(volume) => {
                 self.audio(AudioCommand::SetVolume(volume.clamp(0.0, 1.0)))
             }
-            PlaybackCommand::SetKeyShift(semitones) => self.set_key_shift(semitones),
+            PlaybackCommand::SetKeyShift(semitones) => self.apply_key_shift(semitones, true),
             PlaybackCommand::Refresh => self.refresh(),
             PlaybackCommand::Retry => self.retry(),
         }
@@ -273,7 +318,8 @@ impl<B: PlaybackBackend> WorkerState<B> {
         project: LoadedProject,
         should_play: bool,
         position: Duration,
-    ) -> Result<(), PlaybackError> {
+    ) -> Result<(), PlaybackFailure> {
+        self.snapshot.project_generation = self.snapshot.project_generation.wrapping_add(1);
         self.project = Some(project);
         self.snapshot.track = None;
         self.snapshot.status = PlaybackStatus::Loading;
@@ -286,12 +332,12 @@ impl<B: PlaybackBackend> WorkerState<B> {
             .project
             .as_ref()
             .and_then(LoadedProject::default_track)
-            .ok_or(PlaybackError::NoPlayableTrack)?;
+            .ok_or(PlaybackFailure::NoPlayableTrack)?;
         self.snapshot.track = Some(track);
         self.load_track(track, position, should_play)
     }
 
-    fn switch_track(&mut self, kind: TrackKind) -> Result<(), PlaybackError> {
+    fn apply_track_switch(&mut self, kind: TrackKind) -> Result<(), PlaybackFailure> {
         let should_play = self.snapshot.status == PlaybackStatus::Playing;
         let position = self.snapshot.position;
         self.load_track(kind, position, should_play)?;
@@ -299,37 +345,42 @@ impl<B: PlaybackBackend> WorkerState<B> {
         Ok(())
     }
 
-    fn set_key_shift(&mut self, semitones: i8) -> Result<(), PlaybackError> {
+    pub(crate) fn apply_key_shift(
+        &mut self,
+        semitones: i8,
+        persist: bool,
+    ) -> Result<(), PlaybackFailure> {
         if !(-6..=6).contains(&semitones) {
-            return Err(PlaybackError::InvalidKeyShift(semitones));
+            return Err(PlaybackFailure::InvalidKeyShift(semitones));
         }
         let Some(track) = self.snapshot.track else {
-            return Err(PlaybackError::NoProject);
+            return Err(PlaybackFailure::NoProject);
         };
-        let project_root = self
-            .project
-            .as_ref()
-            .ok_or(PlaybackError::NoProject)?
-            .root
-            .clone();
-        let expected_revision = self
-            .project
-            .as_ref()
-            .and_then(|project| project.document_revision.clone());
-        let (updated_project, changed_since_load) = FileProjectRepository
-            .apply_checked(
-                &project_root,
-                ProjectMutation::SetKeyShift(semitones),
-                expected_revision.as_deref(),
+        let persisted = if persist {
+            let project = self.project.as_ref().ok_or(PlaybackFailure::NoProject)?;
+            Some(
+                FileProjectRepository
+                    .apply_checked(
+                        &project.root,
+                        ProjectMutation::SetKeyShift(semitones),
+                        project.document_revision.as_ref(),
+                    )
+                    .map_err(|error| PlaybackFailure::Project(error.to_string()))?,
             )
-            .map_err(|error| PlaybackError::Project(error.to_string()))?;
+        } else {
+            None
+        };
         self.snapshot.key_shift_semitones = semitones;
         if let Some(project) = &mut self.project {
             project.key_shift_semitones = semitones;
-            project.document_revision = updated_project.document_revision().map(Arc::from);
+            if let Some((updated_project, _)) = &persisted {
+                project.document_revision = updated_project.document_revision().cloned();
+            }
             self.snapshot.document_revision = project.document_revision.clone();
         }
-        self.snapshot.reload_required |= changed_since_load;
+        if let Some((_, changed_since_load)) = persisted {
+            self.snapshot.reload_required |= changed_since_load;
+        }
         self.load_track(
             track,
             self.snapshot.position,
@@ -337,33 +388,37 @@ impl<B: PlaybackBackend> WorkerState<B> {
         )
     }
 
-    fn retry(&mut self) -> Result<(), PlaybackError> {
-        let track = self.snapshot.track.ok_or(PlaybackError::NoProject)?;
+    fn retry(&mut self) -> Result<(), PlaybackFailure> {
+        let track = self.snapshot.track.ok_or(PlaybackFailure::NoProject)?;
         self.load_track(track, self.snapshot.position, false)
     }
 
-    fn load_track(
+    pub(crate) fn load_track(
         &mut self,
         kind: TrackKind,
         position: Duration,
         should_play: bool,
-    ) -> Result<(), PlaybackError> {
+    ) -> Result<(), PlaybackFailure> {
         let path = self
             .project
             .as_ref()
             .and_then(|project| project.track(kind))
             .filter(|track| track.available())
             .and_then(|track| track.path.clone())
-            .ok_or(PlaybackError::TrackUnavailable(kind))?;
+            .ok_or(PlaybackFailure::TrackUnavailable(kind))?;
         self.audio(AudioCommand::Load {
             path,
             position,
             should_play,
-            key_shift_semitones: self.snapshot.key_shift_semitones,
+            key_shift_semitones: if kind == TrackKind::Take {
+                0
+            } else {
+                self.snapshot.key_shift_semitones
+            },
         })
     }
 
-    fn audio(&mut self, command: AudioCommand) -> Result<(), PlaybackError> {
+    pub(crate) fn audio(&mut self, command: AudioCommand) -> Result<(), PlaybackFailure> {
         match self.backend.execute(command) {
             Ok(audio) => {
                 self.snapshot.status = audio.status;
@@ -376,12 +431,12 @@ impl<B: PlaybackBackend> WorkerState<B> {
             Err(error) => {
                 self.snapshot.status = PlaybackStatus::Error;
                 self.snapshot.error = Some(error.clone());
-                Err(PlaybackError::Audio(error))
+                Err(PlaybackFailure::Audio(error))
             }
         }
     }
 
-    fn refresh(&mut self) -> Result<(), PlaybackError> {
+    fn refresh(&mut self) -> Result<(), PlaybackFailure> {
         let latched_error = self.snapshot.error.clone();
         self.audio(AudioCommand::Refresh)?;
         if let Some(error) = latched_error {
@@ -405,9 +460,7 @@ impl<B: PlaybackBackend> WorkerState<B> {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum PlaybackError {
-    #[error("playback worker stopped unexpectedly")]
-    WorkerStopped,
+pub(crate) enum PlaybackFailure {
     #[error("no project is loaded")]
     NoProject,
     #[error("project has no playable track")]
@@ -420,4 +473,10 @@ pub enum PlaybackError {
     Audio(String),
     #[error("project: {0}")]
     Project(String),
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum PlaybackServiceError {
+    #[error("playback worker stopped unexpectedly")]
+    WorkerStopped,
 }

@@ -3,7 +3,6 @@ mod effects;
 mod library;
 mod lyrics_download;
 mod mix;
-mod pitch;
 mod python_separator;
 mod recorder;
 mod tui;

@@ -69,6 +69,11 @@ impl PlaybackBackend for RodioBackend {
 }
 
 impl RodioBackend {
+    #[must_use]
+    pub(crate) fn player(&self) -> Option<&AudioPlayer> {
+        self.player.as_ref()
+    }
+
     fn snapshot(&self) -> Result<AudioSnapshot, String> {
         let Some(player) = &self.player else {
             return Ok(AudioSnapshot {

@@ -215,7 +215,7 @@ fn handle_playback_key(playback: &mut SessionPlayback, key: KeyCode) -> bool {
         return true;
     }
     if let Some(command) = playback_command_for_key(key) {
-        playback.execute(&command);
+        playback.execute(command);
     } else {
         match key {
             KeyCode::Char('-') => playback.adjust_volume(-0.1),
@@ -632,7 +632,7 @@ impl App {
             self.recording_message = Some("playback is unavailable; cannot seek recording".into());
             return;
         }
-        self.playback.execute(&PlaybackCommand::SeekTo(target));
+        self.playback.execute(PlaybackCommand::SeekTo(target));
         if let Some(error) = self.playback.error() {
             self.recording_message = Some(format!("Lyric seek failed: {error}"));
             return;
@@ -1334,7 +1334,9 @@ fn draw_project(
     };
     let duration = playback.duration;
     let volume = playback.volume;
-    let track = playback.track.label();
+    let track = playback
+        .track
+        .map_or("unavailable", SessionTrackKind::label);
     let current_effect = if app.session.state() == RecordingState::Idle {
         app.selected_take.map_or(app.default_effect, |index| {
             project.takes()[index].effect_preset()

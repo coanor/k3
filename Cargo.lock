@@ -3114,11 +3114,11 @@ dependencies = [
  "crossterm",
  "hound",
  "k3-app",
+ "k3-audio",
  "k3-core",
  "lofty",
  "ratatui",
  "rodio",
- "rodio-wsola",
  "serde",
  "serde_json",
  "tempfile",
@@ -3130,13 +3130,21 @@ dependencies = [
 name = "k3-app"
 version = "0.1.0"
 dependencies = [
+ "k3-audio",
  "k3-core",
  "rodio",
- "rodio-wsola",
  "rtrb",
  "tempfile",
  "thiserror 2.0.19",
  "uuid",
+]
+
+[[package]]
+name = "k3-audio"
+version = "0.1.0"
+dependencies = [
+ "rodio",
+ "rodio-wsola",
 ]
 
 [[package]]
@@ -3163,6 +3171,7 @@ dependencies = [
  "slint-build",
  "tempfile",
  "thiserror 2.0.19",
+ "uuid",
 ]
 
 [[package]]

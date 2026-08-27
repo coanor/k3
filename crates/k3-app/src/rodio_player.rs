@@ -9,11 +9,12 @@ use std::{
     time::Duration,
 };
 
+use k3_audio::PitchShiftSource;
 use rodio::{
     ChannelCount, Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, SampleRate, Source, cpal,
 };
 
-use crate::{audio_config, pitch::PitchShiftSource};
+use crate::audio_config;
 
 /// Owns the operating-system audio stream and one controllable decoded track.
 ///

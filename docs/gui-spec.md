@@ -53,15 +53,16 @@ K3 新增基于 Slint 的 Linux 桌面前端，同时保留现有 CLI 和 TUI。
 ```text
 k3-core       工程与领域模型、工程持久化
 k3-app        UI 无关的应用命令、状态快照和播放模块
+k3-audio      GUI 与 CLI 共用的变调音频 source
 k3-cli        现有 CLI/TUI
 k3-gui        Slint 桌面前端
 ```
 
-`k3-app` 是深模块。其界面只暴露用户命令、只读状态快照、同步 `SessionPlayback` 和明确
+`k3-app` 是深模块。其界面只暴露用户命令、只读状态快照、同步 `PlaybackEngine` 和明确
 错误，不暴露 Slint、Ratatui 类型或工程 JSON 的内部表示。GUI 使用后台
-`PlaybackService`；TUI 使用同一模块提供的播放器、变调、实时监听、播放命令和同步状态机，
-并通过 characterization tests 保持录音和 take 行为。录音、分轨和在线歌词编排仍保留在
-`k3-cli`。
+`PlaybackService` 的快照订阅；TUI 使用同一个 `PlaybackEngine`，并通过薄的录音适配层保留
+实时监听和 take 行为。变调算法只在 `k3-audio` 实现一次，由 GUI 与 CLI 共同复用。录音、
+分轨和在线歌词编排仍保留在 `k3-cli`。
 
 ## 5. 播放模块
 
@@ -77,7 +78,7 @@ k3-gui        Slint 桌面前端
 - 重试当前失败操作；
 - 停止服务。
 
-前端只观察不可变状态快照。快照至少包含当前工程和轨道、可用轨道、播放状态、位置、
+前端只订阅不可变状态快照，不主动轮询，也不为每条命令创建等待线程。快照至少包含当前工程和轨道、可用轨道、播放状态、位置、
 时长、音量、升降调、歌词时间轴和可恢复错误。音频解码、文件扫描和工程 JSON I/O 不得
 在 Slint 事件线程执行。
 

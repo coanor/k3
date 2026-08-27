@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -11,6 +12,23 @@ use uuid::Uuid;
 
 const PROJECT_FILE: &str = "project.json";
 const PROJECT_DIRECTORIES: [&str; 5] = ["source", "stems", "takes", "lyrics", "exports"];
+
+/// Immutable identity of the exact project document read or committed by the repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectRevision(Arc<[u8]>);
+
+impl ProjectRevision {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Vec<u8>> for ProjectRevision {
+    fn from(document: Vec<u8>) -> Self {
+        Self(document.into())
+    }
+}
 
 /// A path stored relative to a project directory.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -330,7 +348,7 @@ pub struct Project {
     #[serde(skip)]
     root: PathBuf,
     #[serde(skip)]
-    loaded_document: Option<Vec<u8>>,
+    loaded_document: Option<ProjectRevision>,
     schema_version: u32,
     id: Uuid,
     title: String,
@@ -352,8 +370,8 @@ impl Project {
 
     /// Returns the exact serialized document revision loaded or committed under the project lock.
     #[must_use]
-    pub fn document_revision(&self) -> Option<&[u8]> {
-        self.loaded_document.as_deref()
+    pub fn document_revision(&self) -> Option<&ProjectRevision> {
+        self.loaded_document.as_ref()
     }
 
     #[must_use]
@@ -571,7 +589,7 @@ impl FileProjectRepository {
         &self,
         project_dir: &Path,
         mutation: ProjectMutation,
-        expected_revision: Option<&[u8]>,
+        expected_revision: Option<&ProjectRevision>,
     ) -> Result<(Project, bool), ProjectError> {
         let root = project_dir.canonicalize()?;
         let lock = OpenOptions::new()
@@ -582,8 +600,8 @@ impl FileProjectRepository {
             .open(root.join(".project.lock"))?;
         lock.lock()?;
         let current_document = fs::read(root.join(PROJECT_FILE))?;
-        let changed_since_load =
-            expected_revision.is_some_and(|expected| expected != current_document);
+        let changed_since_load = expected_revision
+            .is_some_and(|expected| expected.as_bytes() != current_document.as_slice());
         let mut project = self.open(&root)?;
         match mutation {
             ProjectMutation::SetKeyShift(semitones) => {
@@ -648,7 +666,7 @@ impl ProjectRepository for FileProjectRepository {
         let input = fs::read(root.join(PROJECT_FILE))?;
         let mut project: Project = serde_json::from_slice(&input)?;
         project.root = root;
-        project.loaded_document = Some(input);
+        project.loaded_document = Some(input.into());
         project.validate()?;
         Ok(project)
     }
@@ -663,7 +681,7 @@ impl ProjectRepository for FileProjectRepository {
         lock.lock()?;
         let destination = project.root.join(PROJECT_FILE);
         match (&project.loaded_document, fs::read(&destination)) {
-            (Some(expected), Ok(current)) if current != *expected => {
+            (Some(expected), Ok(current)) if current.as_slice() != expected.as_bytes() => {
                 return Err(ProjectError::ConcurrentModification(project.root.clone()));
             }
             (None, Ok(_)) => {
@@ -689,7 +707,7 @@ fn save_unlocked(project: &mut Project) -> Result<(), ProjectError> {
     fs::rename(temporary, destination)?;
     let mut loaded_document = encoded;
     loaded_document.push(b'\n');
-    project.loaded_document = Some(loaded_document);
+    project.loaded_document = Some(loaded_document.into());
     Ok(())
 }
 

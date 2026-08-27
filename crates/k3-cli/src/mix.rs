@@ -4,10 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use k3_audio::PitchShiftSource;
 use k3_core::{Project, ProjectPath, SeparationState, VocalEffectPreset};
 use rodio::{ChannelCount, Decoder, SampleRate, source::UniformSourceIterator};
 
-use crate::{effects::VocalEffect, pitch::PitchShiftSource};
+use crate::effects::VocalEffect;
 
 const VOICE_GAIN: f32 = 4.0;
 const BACKING_GAIN: f32 = 0.65;

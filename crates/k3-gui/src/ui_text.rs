@@ -2,14 +2,6 @@
 
 use std::path::Path;
 
-pub const LOADING_AUDIO: &str = "Loading audio…";
-pub const PROJECT_READY: &str = "Ready";
-pub const PROJECT_REPAIR_NEEDED: &str = "Repair needed";
-pub const PLAYBACK_UNAVAILABLE: &str = "Playback unavailable";
-pub const PLAYBACK_PAUSED: &str = "Paused";
-pub const PLAYBACK_PLAYING: &str = "Playing";
-pub const PLAYBACK_FINISHED: &str = "Finished";
-pub const PLAYBACK_ERROR: &str = "Playback error";
 pub const TUI_FALLBACK: &str = "Run `k3 tui` to use the terminal interface instead.";
 
 #[must_use]

@@ -1,33 +1,28 @@
 //! UI-independent application workflows shared by K3 frontends.
 
-use std::{
-    fs, io,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{fs, io, ops::Range, path::PathBuf, time::Duration};
 
+pub use k3_core::ProjectRevision;
 use k3_core::{
-    FileProjectRepository, LyricsTimeline, ProjectError, ProjectRepository, SeparationState,
+    FileProjectRepository, LyricsTimeline, Project, ProjectError, ProjectRepository,
+    SeparationState,
 };
 use thiserror::Error;
 use uuid::Uuid;
 
 mod audio_config;
-mod pitch;
 mod playback;
 mod rodio_backend;
 mod rodio_player;
 mod session_playback;
 
 pub use playback::{
-    AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackResponse,
-    PlaybackService, PlaybackSnapshot, PlaybackStatus,
+    AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackEngine, PlaybackService,
+    PlaybackServiceError, PlaybackSnapshot, PlaybackStatus,
 };
 pub use rodio_backend::RodioBackend;
 pub use rodio_player::{AudioPlayer, MonitorControl, MonitorTap};
-pub use session_playback::{SessionPlayback, SessionPlaybackSnapshot, SessionTrackKind};
+pub use session_playback::{SessionPlayback, SessionTrackKind};
 
 /// The synchronized lyric rows a frontend should present around the playback position.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,7 +95,7 @@ pub struct ProjectSummary {
     pub title: String,
     pub path: PathBuf,
     pub source_available: bool,
-    pub document_revision: Option<Arc<[u8]>>,
+    pub document_revision: Option<ProjectRevision>,
 }
 
 /// Discovers durable K3 projects without exposing repository details to frontends.
@@ -130,7 +125,7 @@ impl ProjectLibrary {
                 id: project.id(),
                 title: project.title().to_owned(),
                 source_available: project.source_path().is_file(),
-                document_revision: project_document_revision(&path),
+                document_revision: project.document_revision().cloned(),
                 path,
             });
         }
@@ -160,6 +155,7 @@ pub enum TrackKind {
     Original,
     Accompaniment,
     Vocals,
+    Take,
 }
 
 impl TrackKind {
@@ -169,6 +165,7 @@ impl TrackKind {
             Self::Original => "Original",
             Self::Accompaniment => "Accompaniment",
             Self::Vocals => "Vocals",
+            Self::Take => "Take",
         }
     }
 }
@@ -196,7 +193,7 @@ pub struct LoadedProject {
     pub tracks: Vec<ProjectTrack>,
     pub lyrics: Option<LyricsTimeline>,
     pub key_shift_semitones: i8,
-    pub document_revision: Option<Arc<[u8]>>,
+    pub document_revision: Option<ProjectRevision>,
 }
 
 impl LoadedProject {
@@ -207,6 +204,20 @@ impl LoadedProject {
     /// Returns an error when the project, lyrics, or referenced paths cannot be read.
     pub fn open(root: &std::path::Path) -> Result<Self, LoadProjectError> {
         let project = FileProjectRepository.open(root)?;
+        let mut loaded = Self::from_project(&project);
+        loaded.lyrics = project
+            .lyrics()
+            .map(|lyrics| lyrics.resolve(project.root()))
+            .filter(|path| path.is_file())
+            .map(fs::read_to_string)
+            .transpose()?
+            .map(|text| LyricsTimeline::parse(&text));
+        Ok(loaded)
+    }
+
+    /// Builds playback data from an already loaded project without another repository read.
+    #[must_use]
+    pub fn from_project(project: &Project) -> Self {
         let mut tracks = vec![ProjectTrack {
             kind: TrackKind::Original,
             path: Some(project.source_path()),
@@ -226,22 +237,26 @@ impl LoadedProject {
             kind: TrackKind::Vocals,
             path: vocals,
         });
-        let lyrics = project
-            .lyrics()
-            .map(|lyrics| lyrics.resolve(project.root()))
-            .filter(|path| path.is_file())
-            .map(fs::read_to_string)
-            .transpose()?
-            .map(|text| LyricsTimeline::parse(&text));
-        Ok(Self {
+        if let Some(path) = project
+            .takes()
+            .last()
+            .and_then(k3_core::Take::mix_audio)
+            .map(|path| path.resolve(project.root()))
+        {
+            tracks.push(ProjectTrack {
+                kind: TrackKind::Take,
+                path: Some(path),
+            });
+        }
+        Self {
             id: project.id(),
             title: project.title().to_owned(),
             root: project.root().to_path_buf(),
             tracks,
-            lyrics,
+            lyrics: None,
             key_shift_semitones: project.key_shift_semitones(),
-            document_revision: project_document_revision(root),
-        })
+            document_revision: project.document_revision().cloned(),
+        }
     }
 
     #[must_use]
@@ -255,10 +270,6 @@ impl LoadedProject {
             .into_iter()
             .find(|kind| self.track(*kind).is_some_and(ProjectTrack::available))
     }
-}
-
-fn project_document_revision(root: &Path) -> Option<Arc<[u8]>> {
-    fs::read(root.join("project.json")).ok().map(Arc::from)
 }
 
 #[derive(Debug, Error)]

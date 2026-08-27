@@ -7,13 +7,13 @@ license.workspace = true
 [dependencies]
 clap.workspace = true
 crossterm.workspace = true
+k3-audio = { path = "../k3-audio" }
 k3-core = { path = "../k3-core" }
 k3-app = { path = "../k3-app" }
 hound = "3.5.1"
 lofty = "0.24.0"
 ratatui.workspace = true
 rodio = "0.22.2"
-rodio-wsola = "0.2.0"
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }

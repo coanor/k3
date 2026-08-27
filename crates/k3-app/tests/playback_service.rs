@@ -6,10 +6,30 @@ use std::{
 };
 
 use k3_app::{
-    AudioCommand, AudioSnapshot, LoadedProject, PlaybackBackend, PlaybackCommand, PlaybackService,
-    PlaybackStatus, ProjectLibrary, TrackKind,
+    AudioCommand, AudioSnapshot, LoadedProject, PlaybackBackend, PlaybackCommand, PlaybackEngine,
+    PlaybackService, PlaybackStatus, ProjectLibrary, TrackKind,
 };
 use k3_core::{CreateProject, FileProjectRepository, ProjectMutation, ProjectRepository};
+
+#[test]
+fn synchronous_playback_engine_owns_the_complete_transport_state_machine() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let mut engine = PlaybackEngine::new(FakeAudio::default());
+
+    let loaded = engine.execute(PlaybackCommand::Load(project));
+    assert_eq!(loaded.track, Some(TrackKind::Original));
+    assert_eq!(loaded.status, PlaybackStatus::Paused);
+
+    assert_eq!(
+        engine.execute(PlaybackCommand::Toggle).status,
+        PlaybackStatus::Playing
+    );
+    assert_eq!(
+        engine.execute(PlaybackCommand::SeekBy(5)).position,
+        Duration::from_secs(5)
+    );
+}
 
 #[test]
 fn playback_service_loads_paused_then_applies_user_commands() {
@@ -30,6 +50,58 @@ fn playback_service_loads_paused_then_applies_user_commands() {
 
     let moved = service.execute(PlaybackCommand::SeekBy(5)).unwrap();
     assert_eq!(moved.position, Duration::from_secs(5));
+}
+
+#[test]
+fn playback_service_publishes_state_without_frontend_polling() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let service = PlaybackService::start(FakeAudio::default());
+    let states = service.subscribe().unwrap();
+
+    service.dispatch(PlaybackCommand::Load(project)).unwrap();
+    let loaded = states.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(loaded.status, PlaybackStatus::Paused);
+
+    service.dispatch(PlaybackCommand::Toggle).unwrap();
+    let playing = states.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(playing.status, PlaybackStatus::Playing);
+}
+
+#[test]
+fn playback_service_does_not_discard_newer_snapshots_when_commands_burst() {
+    let service = PlaybackService::start(FakeAudio::default());
+    let states = service.subscribe().unwrap();
+
+    service.dispatch(PlaybackCommand::Refresh).unwrap();
+    service.dispatch(PlaybackCommand::Refresh).unwrap();
+    service.execute(PlaybackCommand::Refresh).unwrap();
+
+    for _ in 0..3 {
+        states.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+}
+
+#[test]
+fn track_switch_publishes_loading_before_the_new_track_is_ready() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let service = PlaybackService::start(FakeAudio::default());
+    service.execute(PlaybackCommand::Load(project)).unwrap();
+    let states = service.subscribe().unwrap();
+
+    service
+        .dispatch(PlaybackCommand::SwitchTrack(TrackKind::Original))
+        .unwrap();
+
+    assert_eq!(
+        states.recv_timeout(Duration::from_secs(1)).unwrap().status,
+        PlaybackStatus::Loading
+    );
+    assert_eq!(
+        states.recv_timeout(Duration::from_secs(1)).unwrap().status,
+        PlaybackStatus::Paused
+    );
 }
 
 #[test]
@@ -86,12 +158,16 @@ fn later_external_write_differs_from_the_key_shift_committed_revision() {
 #[test]
 fn playback_commands_can_be_submitted_without_blocking_a_ui_thread() {
     let service = PlaybackService::start(SlowAudio);
+    let states = service.subscribe().unwrap();
 
     let started = Instant::now();
-    let response = service.submit(PlaybackCommand::Refresh).unwrap();
+    service.dispatch(PlaybackCommand::Refresh).unwrap();
 
     assert!(started.elapsed() < Duration::from_millis(50));
-    assert_eq!(response.recv().unwrap().status, PlaybackStatus::Unavailable);
+    assert_eq!(
+        states.recv_timeout(Duration::from_secs(1)).unwrap().status,
+        PlaybackStatus::Unavailable
+    );
 }
 
 #[test]

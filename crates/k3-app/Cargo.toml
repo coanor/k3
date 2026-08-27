@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+k3-audio = { path = "../k3-audio" }
 k3-core = { path = "../k3-core" }
 rodio = "0.22.2"
-rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
 thiserror.workspace = true
 uuid.workspace = true
