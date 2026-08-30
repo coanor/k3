@@ -1,6 +1,5 @@
 mod effects;
 mod library;
-mod lyrics_download;
 mod mix;
 mod python_separator;
 mod tui;

@@ -100,6 +100,23 @@ fn recording_shortcuts_keep_all_rehearsal_controls_available() {
     assert_eq!(keys.borrow().as_slice(), [-1, 0, 0]);
 }
 
+#[test]
+fn lyrics_shortcut_opens_search_for_a_loaded_project() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Paused);
+    let opens = Rc::new(Cell::new(0));
+    let observed_opens = Rc::clone(&opens);
+    ui.on_begin_lyrics_search(move || observed_opens.set(observed_opens.get() + 1));
+
+    ui.show().expect("test UI should show");
+    window.draw_if_needed(|_| {});
+    press_key(&ui, "l");
+
+    assert_eq!(opens.get(), 1);
+}
+
 struct TestPlatform;
 
 impl Platform for TestPlatform {

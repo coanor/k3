@@ -3116,14 +3116,12 @@ dependencies = [
  "k3-app",
  "k3-audio",
  "k3-core",
- "lofty",
  "ratatui",
  "rodio",
  "serde",
  "serde_json",
  "tempfile",
  "unicode-width",
- "ureq",
 ]
 
 [[package]]
@@ -3133,10 +3131,13 @@ dependencies = [
  "hound",
  "k3-audio",
  "k3-core",
+ "lofty",
  "rodio",
  "rtrb",
+ "serde",
  "tempfile",
  "thiserror 2.0.19",
+ "ureq",
  "uuid",
 ]
 

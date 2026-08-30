@@ -15,9 +15,10 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use k3_app::{
-    AudioRecorder, PlaybackCommand, PlaybackStatus, RecordingTimelineAnchor, SessionPlayback,
-    SessionTrackKind, TrackKind as ProjectTrackKind, lyric_countdown, lyric_window,
-    place_recording_on_timeline,
+    AudioRecorder, LyricsChoice, LyricsProgress, LyricsSearch, PlaybackCommand, PlaybackStatus,
+    RecordingTimelineAnchor, SessionPlayback, SessionTrackKind, TrackKind as ProjectTrackKind,
+    default_lyrics_query, find_lyrics_again, find_missing_lyrics, lyric_countdown, lyric_window,
+    place_recording_on_timeline, save_lyrics_choice,
 };
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
@@ -35,10 +36,6 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     library::{self, LibraryConfig, LibrarySnapshot, SourceEntry},
-    lyrics_download::{
-        LyricsChoice, LyricsProgress, LyricsSearch, default_lyrics_query, find_lyrics_again,
-        find_missing_lyrics, save_lyrics_choice,
-    },
     mix::{render_take_mix, render_take_preview},
 };
 
@@ -2149,8 +2146,8 @@ mod tests {
         load_lyrics, lyric_countdown, lyric_seek_target, lyric_window, mode_allows_footer_action,
         playback_command_for_key, poll_import_job, recording_track_for_key, should_handle_key,
     };
-    use crate::lyrics_download::LyricsChoice;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use k3_app::LyricsChoice;
     use k3_app::{
         LyricCountdown, PlaybackCommand, SessionPlayback, SessionTrackKind,
         TrackKind as SharedTrackKind,

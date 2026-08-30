@@ -11,6 +11,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod audio_config;
+mod lyrics_download;
 mod playback;
 mod recorder;
 mod recording;
@@ -18,6 +19,11 @@ mod rodio_backend;
 mod rodio_player;
 mod session_playback;
 
+pub use lyrics_download::{
+    LyricsChoice, LyricsProgress, LyricsSaved, LyricsSearch, default_lyrics_query,
+    default_project_lyrics_query, find_lyrics_again, find_missing_lyrics, find_project_lyrics,
+    save_lyrics_choice, save_project_lyrics,
+};
 pub use playback::{
     AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackEngine, PlaybackService,
     PlaybackServiceError, PlaybackSnapshot, PlaybackStatus,

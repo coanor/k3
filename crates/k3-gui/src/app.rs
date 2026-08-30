@@ -16,9 +16,10 @@ use crate::{
     ui_text,
 };
 use k3_app::{
-    GuiRecordingController, LoadedProject, PlaybackCommand, PlaybackService, PlaybackSnapshot,
-    PlaybackStatus, ProjectLibrary, ProjectRevision, ProjectSummary, RodioBackend, TrackKind,
-    lyric_countdown,
+    GuiRecordingController, LoadedProject, LyricsChoice, LyricsSearch, PlaybackCommand,
+    PlaybackService, PlaybackSnapshot, PlaybackStatus, ProjectLibrary, ProjectRevision,
+    ProjectSummary, RodioBackend, TrackKind, default_project_lyrics_query, find_project_lyrics,
+    lyric_countdown, save_project_lyrics,
 };
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel};
@@ -35,6 +36,8 @@ struct AppData {
     presented_project_generation: u64,
     scan_generation: u64,
     open_generation: u64,
+    lyrics_search_generation: u64,
+    lyrics_choices: Vec<LyricsChoice>,
 }
 
 pub fn launch() {
@@ -97,6 +100,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         presented_project_generation: 0,
         scan_generation: 0,
         open_generation: 0,
+        lyrics_search_generation: 0,
+        lyrics_choices: Vec::new(),
     }));
     let (settings_writer, settings_writer_handle) = SettingsWriter::start()?;
     let playback = Arc::new(PlaybackService::start(RodioBackend::default()));
@@ -191,6 +196,237 @@ fn install_callbacks(
     install_library_callbacks(ui, data, playback, recording, settings_writer);
     install_playback_callbacks(ui, data, playback, recording, settings_writer);
     install_recording_callbacks(ui, data, playback, recording);
+    install_lyrics_callbacks(ui, data, recording);
+}
+
+fn install_lyrics_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    install_begin_lyrics_callback(ui, data, recording);
+    install_search_lyrics_callback(ui, data, recording);
+    install_save_lyrics_callback(ui, data, recording);
+}
+
+fn install_begin_lyrics_callback(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    let ui = ui.as_weak();
+    let data = Arc::clone(data);
+    let recording = Arc::clone(recording);
+    ui.unwrap().on_begin_lyrics_search(move || {
+        if recording
+            .lock()
+            .is_ok_and(|recording| recording.is_recording())
+        {
+            return;
+        }
+        let project_root = selected_project_path(&data);
+        let Some(project_root) = project_root else {
+            return;
+        };
+        let query = default_project_lyrics_query(&project_root).unwrap_or_else(|_| {
+            ui.upgrade()
+                .map_or_else(String::new, |ui| ui.get_song_title().to_string())
+        });
+        if let Ok(mut data) = data.lock() {
+            data.lyrics_choices.clear();
+        }
+        if let Some(ui) = ui.upgrade() {
+            ui.set_lyrics_query(query.into());
+            ui.set_lyrics_candidates(ModelRc::new(VecModel::default()));
+            ui.set_selected_lyrics_candidate(-1);
+            ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+            ui.set_lyrics_panel_message(SharedString::default());
+            ui.set_overlay(Overlay::LyricsSearch);
+        }
+    });
+}
+
+fn install_search_lyrics_callback(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    let ui = ui.as_weak();
+    let data = Arc::clone(data);
+    let recording = Arc::clone(recording);
+    ui.unwrap().on_search_online_lyrics(move |query| {
+        if recording
+            .lock()
+            .is_ok_and(|recording| recording.is_recording())
+        {
+            return;
+        }
+        let query = query.trim().to_owned();
+        if query.is_empty() {
+            return;
+        }
+        let Some(project_root) = selected_project_path(&data) else {
+            return;
+        };
+        let generation = match data.lock() {
+            Ok(mut data) => {
+                data.lyrics_search_generation = data.lyrics_search_generation.wrapping_add(1);
+                data.lyrics_choices.clear();
+                data.lyrics_search_generation
+            }
+            Err(_) => return,
+        };
+        if let Some(ui) = ui.upgrade() {
+            ui.set_lyrics_panel_state(LyricsPanelState::Searching);
+            ui.set_lyrics_panel_message(format!("Searching online lyrics: {query}").into());
+            ui.set_lyrics_candidates(ModelRc::new(VecModel::default()));
+            ui.set_selected_lyrics_candidate(-1);
+        }
+        let ui = ui.clone();
+        let data = Arc::clone(&data);
+        thread::spawn(move || {
+            let progress_ui = ui.clone();
+            let result = find_project_lyrics(&project_root, &query, true, &mut |progress| {
+                let ui = progress_ui.clone();
+                let message = progress.to_string();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui.upgrade()
+                        && ui.get_lyrics_panel_state() == LyricsPanelState::Searching
+                    {
+                        ui.set_lyrics_panel_message(message.into());
+                    }
+                });
+            })
+            .map_err(|error| error.to_string());
+            let _ = slint::invoke_from_event_loop(move || {
+                apply_lyrics_search_result(&ui, &data, generation, result);
+            });
+        });
+    });
+}
+
+fn apply_lyrics_search_result(
+    ui: &slint::Weak<K3Window>,
+    data: &Mutex<AppData>,
+    generation: u64,
+    result: Result<LyricsSearch, String>,
+) {
+    let Some(ui) = ui.upgrade() else {
+        return;
+    };
+    let Ok(mut data) = data.lock() else {
+        return;
+    };
+    if data.lyrics_search_generation != generation {
+        return;
+    }
+    match result {
+        Ok(LyricsSearch::Candidates(choices)) => {
+            let items = choices
+                .iter()
+                .map(|choice| LyricsCandidateItem {
+                    label: choice.label().into(),
+                    origin: choice.origin_label().into(),
+                    preview: choice.preview_lines(3).join("\n").into(),
+                })
+                .collect::<Vec<_>>();
+            let count = items.len();
+            data.lyrics_choices = choices;
+            ui.set_lyrics_candidates(ModelRc::new(VecModel::from(items)));
+            ui.set_selected_lyrics_candidate(0);
+            ui.set_lyrics_panel_state(LyricsPanelState::Results);
+            ui.set_lyrics_panel_message(format!("Found {count} synced lyric versions").into());
+        }
+        Ok(LyricsSearch::NotFound) => {
+            ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+            ui.set_lyrics_panel_message("No duration-matched synced lyrics found".into());
+        }
+        Ok(LyricsSearch::AlreadyPresent) => {
+            ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+            ui.set_lyrics_panel_message("Current lyrics are already available".into());
+        }
+        Err(error) => {
+            ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+            ui.set_lyrics_panel_message(format!("Lyrics search failed: {error}").into());
+        }
+    }
+}
+
+fn install_save_lyrics_callback(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    let ui = ui.as_weak();
+    let data = Arc::clone(data);
+    let recording = Arc::clone(recording);
+    ui.unwrap().on_save_lyrics_candidate(move |index| {
+        if recording
+            .lock()
+            .is_ok_and(|recording| recording.is_recording())
+        {
+            return;
+        }
+        let Some(index) = usize::try_from(index).ok() else {
+            return;
+        };
+        let choice = data
+            .lock()
+            .ok()
+            .and_then(|data| data.lyrics_choices.get(index).cloned());
+        let Some(choice) = choice else {
+            return;
+        };
+        let Some(project_root) = selected_project_path(&data) else {
+            return;
+        };
+        if let Some(ui) = ui.upgrade() {
+            ui.set_lyrics_panel_state(LyricsPanelState::Saving);
+            ui.set_lyrics_panel_message("Saving synchronized lyrics…".into());
+        }
+        let ui = ui.clone();
+        thread::spawn(move || {
+            let result = save_project_lyrics(&project_root, choice, &mut |_| {})
+                .map_err(|error| error.to_string());
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(saved) => {
+                        ui.set_overlay(Overlay::None);
+                        ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+                        ui.set_recording_message(
+                            format!(
+                                "Saved lyrics: {} - {} · {}",
+                                saved.artist, saved.track, saved.origin
+                            )
+                            .into(),
+                        );
+                        let project_id = ui.get_current_project_id();
+                        if !project_id.is_empty() {
+                            ui.invoke_open_project(project_id);
+                        }
+                    }
+                    Err(error) => {
+                        ui.set_lyrics_panel_state(LyricsPanelState::Results);
+                        ui.set_lyrics_panel_message(
+                            format!("Cannot save synchronized lyrics: {error}").into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+}
+
+fn selected_project_path(data: &Mutex<AppData>) -> Option<PathBuf> {
+    let data = data.lock().ok()?;
+    let selected = data.selected_id?;
+    data.projects
+        .iter()
+        .find(|project| project.id == selected)
+        .map(|project| project.path.clone())
 }
 
 fn install_library_callbacks(

@@ -4,13 +4,14 @@ import { ActionButton, PlayButton, SectionLabel, Tokens, TrackPill } from "contr
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export enum ViewMode { setup, rehearsal }
-export enum Overlay { none, about, confirm-root-change }
+export enum Overlay { none, about, confirm-root-change, lyrics-search }
 export enum ErrorKind { none, general, playback }
 export enum PlaybackState { unavailable, loading, paused, playing, finished, error }
 export enum PlaybackAction { toggle, back, forward, restart, retry }
 export enum TrackSelection { original, accompaniment, vocals, take }
 export enum ProjectState { ready, repair-needed }
 export enum RecordingState { idle, starting, recording, stopping }
+export enum LyricsPanelState { idle, searching, results, saving }
 
 export struct ProjectItem {
     id: string,
@@ -25,6 +26,12 @@ export struct LyricItem {
     at-seconds: float,
 }
 
+export struct LyricsCandidateItem {
+    label: string,
+    origin: string,
+    preview: string,
+}
+
 export component K3Window inherits Window {
     init => { Palette.color-scheme = ColorScheme.dark; }
     title: Strings.window-title;
@@ -37,6 +44,7 @@ export component K3Window inherits Window {
 
     in property <[ProjectItem]> projects;
     in property <[LyricItem]> lyrics;
+    in property <[LyricsCandidateItem]> lyrics-candidates;
     in-out property <string> projects-root;
     in-out property <string> search-query;
     in-out property <ViewMode> view-mode: ViewMode.setup;
@@ -70,6 +78,10 @@ export component K3Window inherits Window {
     in-out property <RecordingState> recording-state: RecordingState.idle;
     in-out property <bool> monitoring: false;
     in property <string> recording-message;
+    in-out property <string> lyrics-query;
+    in-out property <LyricsPanelState> lyrics-panel-state: LyricsPanelState.idle;
+    in-out property <string> lyrics-panel-message;
+    in-out property <int> selected-lyrics-candidate: -1;
     property <bool> recording-active: root.recording-state != RecordingState.idle;
 
     callback choose-projects-root;
@@ -86,6 +98,9 @@ export component K3Window inherits Window {
     callback seek-lyric(float);
     callback recording-command(bool);
     callback set-monitoring(bool);
+    callback begin-lyrics-search;
+    callback search-online-lyrics(string);
+    callback save-lyrics-candidate(int);
 
     function format-time(seconds: float) -> string {
         if (seconds <= 0) { return "0:00"; }
@@ -115,6 +130,7 @@ export component K3Window inherits Window {
                 }
                 return reject;
             }
+            if (root.overlay != Overlay.none) { return reject; }
             if (event.text == " " && root.playback-ready) {
                 root.playback-command(PlaybackAction.toggle); return accept;
             }
@@ -137,6 +153,9 @@ export component K3Window inherits Window {
             if (event.text == "," && root.playback-ready && root.key-shift > -6) { root.set-key(root.key-shift - 1); return accept; }
             if (event.text == "." && root.playback-ready && root.key-shift < 6) { root.set-key(root.key-shift + 1); return accept; }
             if (event.text == "/" && root.playback-ready && root.key-shift != 0) { root.set-key(0); return accept; }
+            if (event.text == "l" && root.playback-ready && !root.recording-active) {
+                root.begin-lyrics-search(); return accept;
+            }
             if (event.text == "r" && root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
                 root.recording-command(root.recording-state == RecordingState.idle); return accept;
             }
@@ -548,6 +567,13 @@ export component K3Window inherits Window {
                             label: Strings.follow-current-line;
                             clicked => { root.follow-lyrics = true; }
                         }
+                        ActionButton {
+                            width: 112px;
+                            height: 28px;
+                            label: Strings.search-lyrics;
+                            enabled: root.playback-ready && !root.recording-active;
+                            clicked => { root.begin-lyrics-search(); }
+                        }
                     }
 
                     Rectangle {
@@ -878,6 +904,154 @@ export component K3Window inherits Window {
                 ActionButton {
                     label: Strings.close;
                     clicked => { root.overlay = Overlay.none; }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.lyrics-search: Rectangle {
+        background: #15162bee;
+        Rectangle {
+            width: min(760px, parent.width - 80px);
+            height: min(590px, parent.height - 64px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 10px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    height: 34px;
+                    Text {
+                        text: Strings.online-lyrics-title;
+                        color: Tokens.ink;
+                        font-size: 22px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 34px;
+                        height: 34px;
+                        accessible-name: Strings.close;
+                        icon: @image-url("../assets/close.svg");
+                        enabled: root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.overlay = Overlay.none; }
+                    }
+                }
+
+                Text {
+                    text: Strings.online-lyrics-copy;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    height: 42px;
+                    spacing: 10px;
+                    LineEdit {
+                        text <=> root.lyrics-query;
+                        placeholder-text: Strings.lyrics-query-placeholder;
+                        enabled: root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        accepted => {
+                            if (root.lyrics-query != "") { root.search-online-lyrics(root.lyrics-query); }
+                        }
+                    }
+                    ActionButton {
+                        width: 96px;
+                        height: 42px;
+                        label: root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching : Strings.search;
+                        primary: true;
+                        enabled: root.lyrics-query != "" && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.search-online-lyrics(root.lyrics-query); }
+                    }
+                }
+
+                Text {
+                    height: 20px;
+                    text: root.lyrics-panel-message;
+                    color: Tokens.muted;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Tokens.stage;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Tokens.line;
+
+                    if root.lyrics-candidates.length == 0: Text {
+                        text: root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching-lyrics : Strings.no-lyrics-results;
+                        color: Tokens.faint;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.lyrics-candidates.length > 0: ListView {
+                        for candidate[index] in root.lyrics-candidates: candidate-row := Rectangle {
+                            height: 104px;
+                            background: index == root.selected-lyrics-candidate ? Tokens.raised : candidate-touch.has-hover ? #252742 : transparent;
+                            border-width: index == root.selected-lyrics-candidate ? 1px : 0px;
+                            border-color: Tokens.cue;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 5px;
+                                Text {
+                                    text: candidate.label;
+                                    color: Tokens.ink;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: candidate.origin;
+                                    color: Tokens.cue;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: candidate.preview;
+                                    color: Tokens.muted;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                }
+                            }
+                            candidate-touch := TouchArea {
+                                enabled: root.lyrics-panel-state == LyricsPanelState.results;
+                                clicked => { root.selected-lyrics-candidate = index; }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 38px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 90px;
+                        label: Strings.cancel;
+                        enabled: root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.overlay = Overlay.none; }
+                    }
+                    ActionButton {
+                        width: 132px;
+                        label: root.lyrics-panel-state == LyricsPanelState.saving ? Strings.saving : Strings.use-selected-lyrics;
+                        primary: true;
+                        enabled: root.selected-lyrics-candidate >= 0 && root.lyrics-panel-state == LyricsPanelState.results;
+                        clicked => { root.save-lyrics-candidate(root.selected-lyrics-candidate); }
+                    }
                 }
             }
         }
