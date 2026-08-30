@@ -7,7 +7,7 @@ use std::{
 
 use k3_app::{
     AudioCommand, AudioSnapshot, LoadedProject, PlaybackBackend, PlaybackCommand, PlaybackEngine,
-    PlaybackService, PlaybackStatus, ProjectLibrary, TrackKind,
+    PlaybackService, PlaybackStatus, ProjectLibrary, SessionPlayback, TrackKind,
 };
 use k3_core::{CreateProject, FileProjectRepository, ProjectMutation, ProjectRepository};
 
@@ -50,6 +50,20 @@ fn playback_service_loads_paused_then_applies_user_commands() {
 
     let moved = service.execute(PlaybackCommand::SeekBy(5)).unwrap();
     assert_eq!(moved.position, Duration::from_secs(5));
+}
+
+#[test]
+fn recording_session_playback_keeps_synced_lyrics() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_root = create_project(directory.path());
+    let project = FileProjectRepository.open(&project_root).unwrap();
+
+    let playback = SessionPlayback::open(&project);
+
+    assert_eq!(
+        playback.snapshot().lyrics.as_ref().unwrap().lines()[0].text,
+        "First line",
+    );
 }
 
 #[test]

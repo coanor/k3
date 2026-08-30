@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{
     Key, Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
 };
@@ -14,7 +14,7 @@ use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, SharedStrin
 use super::{
     ErrorKind, K3Window, LyricItem, Overlay, PlaybackAction, PlaybackState,
     PlaybackTransitionTracker, ProjectItem, ProjectState, RecordingState, TrackSelection, ViewMode,
-    should_apply_project_snapshot,
+    begin_project_load, should_apply_project_snapshot, snapshot_matches_pending_open,
 };
 use k3_app::{PlaybackSnapshot, PlaybackStatus, TrackKind};
 use uuid::Uuid;
@@ -146,6 +146,22 @@ fn click(ui: &K3Window, position: LogicalPosition) {
 fn press_key(ui: &K3Window, text: impl Into<SharedString>) {
     ui.window()
         .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+}
+
+fn render_pixels(
+    window: &MinimalSoftwareWindow,
+    previous: Option<&[Rgb565Pixel]>,
+) -> Vec<Rgb565Pixel> {
+    const WIDTH: usize = 1280;
+    const HEIGHT: usize = 800;
+    let mut pixels = previous.map_or_else(
+        || vec![Rgb565Pixel::default(); WIDTH * HEIGHT],
+        <[Rgb565Pixel]>::to_vec,
+    );
+    assert!(window.draw_if_needed(|renderer| {
+        renderer.render(&mut pixels, WIDTH);
+    }));
+    pixels
 }
 
 fn release_key(ui: &K3Window, text: impl Into<SharedString>) {
@@ -401,6 +417,69 @@ fn reloading_the_same_project_refreshes_its_presentation_once() {
         snapshot.project_generation,
         &snapshot,
     ));
+}
+
+#[test]
+fn switching_projects_clears_the_previous_progress_immediately() {
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_position_seconds(93.0);
+    ui.set_duration_seconds(240.0);
+
+    begin_project_load(&ui);
+
+    assert_eq!(ui.get_playback_state(), PlaybackState::Loading);
+    assert!(ui.get_position_seconds().abs() < f32::EPSILON);
+    assert!(ui.get_duration_seconds().abs() < f32::EPSILON);
+}
+
+#[test]
+fn switching_projects_ignores_snapshots_from_the_previous_project() {
+    let previous_project_id = Uuid::new_v4();
+    let pending_project_id = Uuid::new_v4();
+
+    assert!(!snapshot_matches_pending_open(
+        Some(pending_project_id),
+        previous_project_id,
+    ));
+    assert!(snapshot_matches_pending_open(
+        Some(pending_project_id),
+        pending_project_id,
+    ));
+    assert!(snapshot_matches_pending_open(None, previous_project_id));
+}
+
+#[test]
+fn lyric_countdown_dots_are_rendered_above_the_upcoming_line() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Playing);
+    ui.set_lyrics(ModelRc::new(VecModel::from(vec![
+        LyricItem {
+            text: "Current line".into(),
+            at_seconds: 1.0,
+        },
+        LyricItem {
+            text: "Upcoming line".into(),
+            at_seconds: 5.0,
+        },
+    ])));
+    ui.set_active_lyric(0);
+    ui.show().expect("test UI should show");
+    let without_countdown = render_pixels(&window, None);
+
+    ui.set_lyric_countdown_index(1);
+    ui.set_lyric_countdown_dots(3);
+    window.request_redraw();
+    let with_countdown = render_pixels(&window, Some(&without_countdown));
+
+    for (x, y) in [(777, 206), (792, 206), (807, 206)] {
+        let pixel = y * 1280 + x;
+        assert_ne!(
+            with_countdown[pixel], without_countdown[pixel],
+            "countdown dot at ({x}, {y}) was not rendered",
+        );
+    }
 }
 
 #[test]

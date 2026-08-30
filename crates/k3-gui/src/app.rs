@@ -32,6 +32,7 @@ struct AppData {
     settings_writable: bool,
     projects: Vec<ProjectSummary>,
     selected_id: Option<Uuid>,
+    pending_open_id: Option<Uuid>,
     selected_document_revision: Option<ProjectRevision>,
     presented_project_generation: u64,
     scan_generation: u64,
@@ -96,6 +97,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         settings_writable,
         projects: Vec::new(),
         selected_id: None,
+        pending_open_id: None,
         selected_document_revision: None,
         presented_project_generation: 0,
         scan_generation: 0,
@@ -568,6 +570,7 @@ fn install_open_project_callback(
                     .cloned();
                 if project.is_some() {
                     data.open_generation = data.open_generation.wrapping_add(1);
+                    data.pending_open_id = Some(id);
                 }
                 project.map(|project| (project, data.open_generation))
             });
@@ -575,9 +578,7 @@ fn install_open_project_callback(
                 return;
             };
             if let Some(ui) = ui.upgrade() {
-                ui.set_loading(true);
-                ui.set_error_kind(ErrorKind::None);
-                ui.set_playback_state(PlaybackState::Loading);
+                begin_project_load(&ui);
             }
             open_project(
                 ui.clone(),
@@ -588,6 +589,14 @@ fn install_open_project_callback(
             );
         });
     }
+}
+
+fn begin_project_load(ui: &K3Window) {
+    ui.set_loading(true);
+    ui.set_error_kind(ErrorKind::None);
+    ui.set_playback_state(PlaybackState::Loading);
+    ui.set_position_seconds(0.0);
+    ui.set_duration_seconds(0.0);
 }
 
 fn install_recording_callbacks(
@@ -1043,6 +1052,7 @@ fn open_project(
             let loaded = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
+                    clear_pending_open(&data, generation);
                     ui.set_loading(false);
                     show_error(&ui, error.to_string());
                     return;
@@ -1051,6 +1061,7 @@ fn open_project(
             match playback.dispatch(PlaybackCommand::Load(loaded)) {
                 Ok(()) => {}
                 Err(error) => {
+                    clear_pending_open(&data, generation);
                     ui.set_loading(false);
                     show_playback_error(&ui, error.to_string());
                 }
@@ -1062,6 +1073,14 @@ fn open_project(
 fn is_current_open(data: &Mutex<AppData>, generation: u64) -> bool {
     data.lock()
         .is_ok_and(|data| data.open_generation == generation)
+}
+
+fn clear_pending_open(data: &Mutex<AppData>, generation: u64) {
+    if let Ok(mut data) = data.lock()
+        && data.open_generation == generation
+    {
+        data.pending_open_id = None;
+    }
 }
 
 fn dispatch_playback(
@@ -1193,6 +1212,10 @@ fn apply_published_snapshot(
     let mut presentation_changed = false;
     let mut settings = None;
     if let Ok(mut data) = data.lock() {
+        if !snapshot_matches_pending_open(data.pending_open_id, project_id) {
+            return;
+        }
+        data.pending_open_id = None;
         selected_changed = data.selected_id != Some(project_id);
         presentation_changed = should_apply_project_snapshot(
             data.selected_id,
@@ -1223,6 +1246,10 @@ fn apply_published_snapshot(
         }
     }
     apply_snapshot(ui, snapshot);
+}
+
+fn snapshot_matches_pending_open(pending_open_id: Option<Uuid>, snapshot_id: Uuid) -> bool {
+    pending_open_id.is_none_or(|pending_open_id| pending_open_id == snapshot_id)
 }
 
 fn should_apply_project_snapshot(

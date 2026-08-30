@@ -17,7 +17,9 @@ impl PlaybackEngine<RodioBackend> {
     #[must_use]
     pub fn open(project: &Project) -> Self {
         let mut playback = Self::new(RodioBackend::default());
-        playback.execute(PlaybackCommand::Load(LoadedProject::from_project(project)));
+        let loaded = LoadedProject::from_project_with_lyrics(project)
+            .unwrap_or_else(|_| LoadedProject::from_project(project));
+        playback.execute(PlaybackCommand::Load(loaded));
         playback
     }
 

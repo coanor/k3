@@ -216,7 +216,11 @@ impl LoadedProject {
     /// Returns an error when the project, lyrics, or referenced paths cannot be read.
     pub fn open(root: &std::path::Path) -> Result<Self, LoadProjectError> {
         let project = FileProjectRepository.open(root)?;
-        let mut loaded = Self::from_project(&project);
+        Ok(Self::from_project_with_lyrics(&project)?)
+    }
+
+    pub(crate) fn from_project_with_lyrics(project: &Project) -> Result<Self, io::Error> {
+        let mut loaded = Self::from_project(project);
         loaded.lyrics = project
             .lyrics()
             .map(|lyrics| lyrics.resolve(project.root()))
