@@ -18,6 +18,10 @@ if [[ ! -f "$binary_path" ]]; then
     echo "找不到待打包二进制：$binary_path" >&2
     exit 1
 fi
+if [[ "$platform" != "macos" && ( -z "$gui_binary_path" || ! -f "$gui_binary_path" ) ]]; then
+    echo "找不到待打包 GUI 二进制：${gui_binary_path:-<未提供>}" >&2
+    exit 1
+fi
 if [[ ! "$package_name" =~ ^k3-[a-z0-9_-]+$ ]]; then
     echo "无效包名：$package_name" >&2
     exit 1
@@ -46,10 +50,6 @@ copy_separator_worker() {
 mkdir -p "$dist_dir"
 case "$platform" in
     linux)
-        if [[ -z "$gui_binary_path" || ! -f "$gui_binary_path" ]]; then
-            echo "找不到待打包 GUI 二进制：${gui_binary_path:-<未提供>}" >&2
-            exit 1
-        fi
         install -m 0755 "$binary_path" "$package_dir/k3"
         install -m 0755 "$gui_binary_path" "$package_dir/k3-gui"
         install -Dm 0644 "$repo_root/crates/k3-gui/assets/k3.desktop" \
@@ -73,6 +73,7 @@ case "$platform" in
         ;;
     windows)
         cp "$binary_path" "$package_dir/k3.exe"
+        cp "$gui_binary_path" "$package_dir/k3-gui.exe"
         cp "$repo_root/separate.ps1" "$repo_root/install-separator.ps1" "$package_dir/"
         copy_separator_worker
         archive="$dist_dir/$package_name.zip"

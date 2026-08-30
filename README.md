@@ -1,8 +1,8 @@
 # K3
 
 K3 是一个本地优先的 K 歌工作区，目前同时提供 Linux 桌面 GUI、CLI 和 TUI。它可以
-保存歌曲工程、导入 LRC 歌词、调用本地分轨 worker，并播放 Original、Accompaniment
-与 Vocals 音轨。
+保存歌曲工程、导入 LRC 歌词、调用本地分轨 worker，播放 Original、Accompaniment
+与 Vocals 音轨，并在桌面 GUI 中录制默认麦克风和进行实时监听。
 
 安装步骤和完整工作流见[中文用户手册](docs/user-manual.md)。首期桌面界面的范围与
 技术决策见 [GUI 规格](docs/gui-spec.md)，平台与性能证据见

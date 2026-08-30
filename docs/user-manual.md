@@ -74,6 +74,17 @@ target/release/k3-gui
 工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
 回退命令。维护者的平台与性能验收步骤见 [GUI 验收记录](gui-acceptance.md)。
 
+GUI 打开具有伴奏音轨的工程后，可点击右上角的 `Record`，或按 `r`，从头播放伴奏并使用
+系统默认麦克风录音。开始前或录音期间点击 `Monitor off/on` 或按 `m` 可切换实时麦克风监听；建议
+佩戴耳机，避免扬声器回授。再次点击 `Stop` 或按 `r` 会停止并保存录音。录音写入
+`takes/take-<时间>-dry.wav`，同时更新 `project.json`；保存后 GUI 会重新加载工程，点击
+`Take` 或按 `4` 可立即试听最新 dry take。GUI 当前尚不提供 take 列表、删除和效果预设，
+这些操作仍使用 TUI。
+
+录音期间仍可调整进度、暂停或继续、切换音轨、升降调、调整音量和切换监听；工程切换会暂时禁用。若关闭窗口，
+正在进行的录音会被放弃并清理临时文件。伴奏、默认输入设备或输出设备不可用时，GUI 会在
+错误条和诊断日志中显示原因。
+
 ### 2.1 Makefile
 
 仓库根目录提供统一的常用构建入口。Ubuntu/WSL 若尚未安装 GNU Make，先运行
@@ -129,8 +140,8 @@ git push origin v0.1.0
 ```
 
 Windows 包使用静态 MSVC C runtime。Linux 包包含 `k3-gui`、桌面入口、图标和
-`separate.sh`；Windows 包包含
-`separate.ps1` 和 `install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
+`separate.sh`；Windows 包包含 `k3-gui.exe`、`separate.ps1` 和
+`install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
 因此只包含 `k3`、README 和文档，不包含尚未验证的 Python 分离环境。
 
 Linux 包不执行需要 root 权限的安装器。需要在桌面启动器中显示 K3 时，可从解压后的

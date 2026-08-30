@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 mod audio_config;
 mod playback;
+mod recorder;
+mod recording;
 mod rodio_backend;
 mod rodio_player;
 mod session_playback;
@@ -20,6 +22,10 @@ pub use playback::{
     AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackEngine, PlaybackService,
     PlaybackServiceError, PlaybackSnapshot, PlaybackStatus,
 };
+pub use recorder::{
+    AudioRecorder, RecordingSummary, RecordingTimelineAnchor, place_recording_on_timeline,
+};
+pub use recording::{GuiRecordingController, GuiRecordingResult, GuiRecordingStarted};
 pub use rodio_backend::RodioBackend;
 pub use rodio_player::{AudioPlayer, MonitorControl, MonitorTap};
 pub use session_playback::{SessionPlayback, SessionTrackKind};
@@ -240,7 +246,7 @@ impl LoadedProject {
         if let Some(path) = project
             .takes()
             .last()
-            .and_then(k3_core::Take::mix_audio)
+            .map(|take| take.mix_audio().unwrap_or_else(|| take.dry_audio()))
             .map(|path| path.resolve(project.root()))
         {
             tracks.push(ProjectTrack {

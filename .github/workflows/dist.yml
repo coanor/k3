@@ -144,7 +144,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked --target "$BUILD_TARGET" --package k3
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
+          if [[ "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ]]; then
             cargo build --release --locked --target "$BUILD_TARGET" --package k3-gui
           fi
 
@@ -178,6 +178,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           $binary = "target/$env:BUILD_TARGET/release/$env:EXECUTABLE_NAME"
           Copy-Item -LiteralPath $binary -Destination (Join-Path $packageDir "k3.exe")
+          $guiBinary = "target/$env:BUILD_TARGET/release/k3-gui.exe"
+          Copy-Item -LiteralPath $guiBinary -Destination (Join-Path $packageDir "k3-gui.exe")
           Copy-Item "README.md" $packageDir
           Copy-Item "docs" $packageDir -Recurse
           $separatorDir = Join-Path $packageDir "python/separator"

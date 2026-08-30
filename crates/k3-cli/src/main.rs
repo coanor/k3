@@ -1,10 +1,8 @@
-mod audio_config;
 mod effects;
 mod library;
 mod lyrics_download;
 mod mix;
 mod python_separator;
-mod recorder;
 mod tui;
 
 use std::{error::Error, path::PathBuf};

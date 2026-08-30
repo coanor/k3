@@ -13,7 +13,7 @@ use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, SharedStrin
 
 use super::{
     ErrorKind, K3Window, LyricItem, Overlay, PlaybackAction, PlaybackState,
-    PlaybackTransitionTracker, ProjectItem, ProjectState, TrackSelection, ViewMode,
+    PlaybackTransitionTracker, ProjectItem, ProjectState, RecordingState, TrackSelection, ViewMode,
     should_apply_project_snapshot,
 };
 use k3_app::{PlaybackSnapshot, PlaybackStatus, TrackKind};
@@ -22,6 +22,82 @@ use uuid::Uuid;
 thread_local! {
     static WINDOW: Rc<MinimalSoftwareWindow> =
         MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+}
+
+#[test]
+fn recording_shortcuts_keep_all_rehearsal_controls_available() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Paused);
+    ui.set_original_available(true);
+    ui.set_accompaniment_available(true);
+    ui.set_vocals_available(true);
+    ui.set_take_available(true);
+
+    let recording = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let observed_recording = Rc::clone(&recording);
+    ui.on_recording_command(move |start| observed_recording.borrow_mut().push(start));
+    let monitoring = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let observed_monitoring = Rc::clone(&monitoring);
+    ui.on_set_monitoring(move |enabled| observed_monitoring.borrow_mut().push(enabled));
+    let playback = Rc::new(RefCell::new(Vec::<PlaybackAction>::new()));
+    let observed_playback = Rc::clone(&playback);
+    ui.on_playback_command(move |command| observed_playback.borrow_mut().push(command));
+    let volumes = Rc::new(RefCell::new(Vec::<f32>::new()));
+    let observed_volumes = Rc::clone(&volumes);
+    ui.on_set_volume(move |volume| observed_volumes.borrow_mut().push(volume));
+    let tracks = Rc::new(RefCell::new(Vec::<TrackSelection>::new()));
+    let observed_tracks = Rc::clone(&tracks);
+    ui.on_switch_track(move |track| observed_tracks.borrow_mut().push(track));
+    let keys = Rc::new(RefCell::new(Vec::<i32>::new()));
+    let observed_keys = Rc::clone(&keys);
+    ui.on_set_key(move |key| observed_keys.borrow_mut().push(key));
+
+    ui.show().expect("test UI should show");
+    window.draw_if_needed(|_| {});
+    press_key(&ui, "m");
+    press_key(&ui, "r");
+    ui.set_recording_state(RecordingState::Recording);
+    press_key(&ui, " ");
+    press_key(&ui, Key::LeftArrow);
+    press_key(&ui, Key::RightArrow);
+    press_key(&ui, Key::UpArrow);
+    press_key(&ui, Key::DownArrow);
+    press_key(&ui, "1");
+    press_key(&ui, "2");
+    press_key(&ui, "3");
+    press_key(&ui, "4");
+    press_key(&ui, ",");
+    ui.set_key_shift(-1);
+    press_key(&ui, ".");
+    ui.set_key_shift(1);
+    press_key(&ui, "/");
+    press_key(&ui, "m");
+    press_key(&ui, "r");
+
+    assert_eq!(recording.borrow().as_slice(), [true, false]);
+    assert_eq!(monitoring.borrow().as_slice(), [true, false]);
+    assert!(!ui.get_monitoring());
+    assert_eq!(
+        playback.borrow().as_slice(),
+        [
+            PlaybackAction::Toggle,
+            PlaybackAction::Back,
+            PlaybackAction::Forward
+        ]
+    );
+    assert_eq!(volumes.borrow().as_slice(), [1.0, 0.95]);
+    assert_eq!(
+        tracks.borrow().as_slice(),
+        [
+            TrackSelection::Original,
+            TrackSelection::Accompaniment,
+            TrackSelection::Vocals,
+            TrackSelection::Take
+        ]
+    );
+    assert_eq!(keys.borrow().as_slice(), [-1, 0, 0]);
 }
 
 struct TestPlatform;
@@ -105,7 +181,7 @@ fn custom_buttons_activate_on_first_click() {
     ui.show().expect("test UI should show");
     window.draw_if_needed(|_| {});
     click(&ui, LogicalPosition::new(268.0, 142.0));
-    click(&ui, LogicalPosition::new(608.0, 759.0));
+    click(&ui, LogicalPosition::new(630.0, 759.0));
     click(&ui, LogicalPosition::new(162.0, 759.0));
     click(&ui, LogicalPosition::new(150.0, 200.0));
 
@@ -130,6 +206,7 @@ fn global_shortcuts_emit_playback_volume_track_and_refresh_intents() {
     ui.set_original_available(true);
     ui.set_accompaniment_available(true);
     ui.set_vocals_available(true);
+    ui.set_take_available(true);
 
     let playback = Rc::new(RefCell::new(Vec::<PlaybackAction>::new()));
     let observed_playback = Rc::clone(&playback);
@@ -153,6 +230,7 @@ fn global_shortcuts_emit_playback_volume_track_and_refresh_intents() {
     press_key(&ui, Key::RightArrow);
     press_key(&ui, Key::UpArrow);
     press_key(&ui, "2");
+    press_key(&ui, "4");
     press_key(&ui, Key::Control);
     press_key(&ui, "r");
     release_key(&ui, "r");
@@ -166,7 +244,10 @@ fn global_shortcuts_emit_playback_volume_track_and_refresh_intents() {
             PlaybackAction::Forward
         ]
     );
-    assert_eq!(tracks.borrow().as_slice(), [TrackSelection::Accompaniment]);
+    assert_eq!(
+        tracks.borrow().as_slice(),
+        [TrackSelection::Accompaniment, TrackSelection::Take]
+    );
     assert_eq!(volumes.borrow().as_slice(), [1.0]);
     assert_eq!(refreshes.get(), 1);
 }

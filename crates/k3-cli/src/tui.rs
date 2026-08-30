@@ -15,8 +15,9 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use k3_app::{
-    PlaybackCommand, PlaybackStatus, SessionPlayback, SessionTrackKind,
-    TrackKind as ProjectTrackKind, lyric_countdown, lyric_window,
+    AudioRecorder, PlaybackCommand, PlaybackStatus, RecordingTimelineAnchor, SessionPlayback,
+    SessionTrackKind, TrackKind as ProjectTrackKind, lyric_countdown, lyric_window,
+    place_recording_on_timeline,
 };
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
@@ -39,7 +40,6 @@ use crate::{
         find_missing_lyrics, save_lyrics_choice,
     },
     mix::{render_take_mix, render_take_preview},
-    recorder::{AudioRecorder, RecordingTimelineAnchor, place_recording_on_timeline},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

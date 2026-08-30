@@ -3130,6 +3130,7 @@ dependencies = [
 name = "k3-app"
 version = "0.1.0"
 dependencies = [
+ "hound",
  "k3-audio",
  "k3-core",
  "rodio",

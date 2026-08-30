@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+hound = "3.5.1"
 k3-audio = { path = "../k3-audio" }
 k3-core = { path = "../k3-core" }
 rodio = "0.22.2"

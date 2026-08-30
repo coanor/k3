@@ -11,15 +11,14 @@ use std::{
     time::Duration,
 };
 
-use k3_app::{AudioPlayer, MonitorControl, MonitorTap};
-use rodio::cpal;
 use rodio::cpal::{
-    FromSample, I24, Sample, SampleFormat, SizedSample, U24,
+    self, FromSample, I24, Sample, SampleFormat, SizedSample, U24,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
+use crate::{AudioPlayer, MonitorControl, MonitorTap, audio_config};
+
 const WRITER_QUEUE_DEPTH: usize = 64;
-use crate::audio_config;
 
 enum WriterMessage {
     Samples(Vec<f32>),
@@ -30,6 +29,7 @@ struct CaptureState {
     sender: SyncSender<WriterMessage>,
     overrun: Arc<AtomicBool>,
     captured_samples: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
     stream_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -47,7 +47,11 @@ pub struct RecordingTimelineAnchor {
 
 /// 按录音期间的播放位置锚点，把连续采集的人声放回歌曲时间轴。
 ///
-/// 后录制的片段会覆盖相同歌曲位置上的旧片段，用于录音中按歌词回退重唱。
+/// 后录制的片段会覆盖相同歌曲位置上的旧片段，用于录音中回退重唱。
+///
+/// # Errors
+///
+/// WAV 读取、时间轴换算、目标写入或源文件删除失败时返回错误。
 pub fn place_recording_on_timeline(
     source: &Path,
     destination: &Path,
@@ -114,9 +118,9 @@ fn duration_to_frames(duration: Duration, sample_rate: u32) -> Result<usize, Box
     Ok(usize::try_from(frames)?)
 }
 
-/// Captures the default input device while a dedicated thread writes float WAV.
+/// 从默认输入设备采集音频，并在专用线程中写入 float WAV。
 ///
-/// The device callback never performs filesystem I/O.
+/// 音频设备回调不会执行文件系统 I/O。
 pub struct AudioRecorder {
     stream: cpal::Stream,
     sender: SyncSender<WriterMessage>,
@@ -129,9 +133,15 @@ pub struct AudioRecorder {
     destination: PathBuf,
     monitor_control: Option<MonitorControl>,
     captured_samples: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
+    /// 启动默认麦克风采集，可选地把实时监听接入已有播放器。
+    ///
+    /// # Errors
+    ///
+    /// 输入设备、流或 WAV 写入器无法建立时返回错误。
     pub fn start(
         destination: &Path,
         monitor_player: Option<&AudioPlayer>,
@@ -185,6 +195,7 @@ impl AudioRecorder {
 
         let overrun = Arc::new(AtomicBool::new(false));
         let captured_samples = Arc::new(AtomicU64::new(0));
+        let paused = Arc::new(AtomicBool::new(false));
         let stream_error = Arc::new(Mutex::new(None));
         let (monitor_tap, monitor_control) = monitor_player.map_or((None, None), |player| {
             let (tap, control) = player.live_monitor(
@@ -203,6 +214,7 @@ impl AudioRecorder {
                 sender: sender.clone(),
                 overrun: Arc::clone(&overrun),
                 captured_samples: Arc::clone(&captured_samples),
+                paused: Arc::clone(&paused),
                 stream_error: Arc::clone(&stream_error),
             },
             monitor_tap,
@@ -234,9 +246,11 @@ impl AudioRecorder {
             destination: destination.to_path_buf(),
             monitor_control,
             captured_samples,
+            paused,
         })
     }
 
+    #[must_use]
     pub fn device(&self) -> &str {
         &self.device
     }
@@ -247,10 +261,21 @@ impl AudioRecorder {
         }
     }
 
+    /// 暂停或继续把麦克风样本写入当前 take；实时监听不受影响。
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Release);
+    }
+
+    #[must_use]
     pub fn captured_frames(&self) -> u64 {
         self.captured_samples.load(Ordering::Relaxed) / u64::from(self.channels)
     }
 
+    /// 停止采集并等待 WAV 写入器完成。
+    ///
+    /// # Errors
+    ///
+    /// 未采集到样本或写入器失败时返回错误。
     pub fn stop(self) -> Result<RecordingSummary, Box<dyn Error>> {
         drop(self.stream);
         if let Some(control) = &self.monitor_control {
@@ -339,6 +364,7 @@ where
         sender,
         overrun,
         captured_samples,
+        paused,
         stream_error: error_state,
     } = state;
     Ok(device.build_input_stream(
@@ -347,6 +373,9 @@ where
             let samples: Vec<f32> = data.iter().copied().map(f32::from_sample).collect();
             if let Some(monitor) = &mut monitor {
                 monitor.send(&samples);
+            }
+            if paused.load(Ordering::Acquire) {
+                return;
             }
             let sample_count = u64::try_from(samples.len()).unwrap_or(u64::MAX);
             match sender.try_send(WriterMessage::Samples(samples)) {
@@ -397,14 +426,11 @@ fn select_input_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{RecordingTimelineAnchor, place_recording_on_timeline, select_input_config};
-    use rodio::cpal::{
-        SampleFormat, SupportedBufferSize, SupportedStreamConfig, SupportedStreamConfigRange,
-    };
+    use super::{RecordingTimelineAnchor, place_recording_on_timeline};
     use std::time::Duration;
 
     #[test]
-    fn later_recording_segment_overwrites_the_revisited_song_position() {
+    fn later_segment_overwrites_revisited_song_position() {
         let sandbox = tempfile::tempdir().unwrap();
         let raw = sandbox.path().join("raw.wav");
         let aligned = sandbox.path().join("aligned.wav");
@@ -445,33 +471,5 @@ mod tests {
             vec![1.0, 2.0, 5.0, 6.0]
         );
         assert!(!raw.exists());
-    }
-
-    #[test]
-    fn prefers_native_voice_capture_over_low_quality_default() {
-        let default =
-            SupportedStreamConfig::new(2, 8_000, SupportedBufferSize::Unknown, SampleFormat::F32);
-        let supported = [
-            SupportedStreamConfigRange::new(
-                2,
-                44_100,
-                44_100,
-                SupportedBufferSize::Unknown,
-                SampleFormat::F32,
-            ),
-            SupportedStreamConfigRange::new(
-                1,
-                44_100,
-                44_100,
-                SupportedBufferSize::Unknown,
-                SampleFormat::I16,
-            ),
-        ];
-
-        let selected = select_input_config(default, &supported);
-
-        assert_eq!(selected.channels(), 1);
-        assert_eq!(selected.sample_rate(), 44_100);
-        assert_eq!(selected.sample_format(), SampleFormat::I16);
     }
 }

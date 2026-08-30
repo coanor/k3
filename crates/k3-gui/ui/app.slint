@@ -8,8 +8,9 @@ export enum Overlay { none, about, confirm-root-change }
 export enum ErrorKind { none, general, playback }
 export enum PlaybackState { unavailable, loading, paused, playing, finished, error }
 export enum PlaybackAction { toggle, back, forward, restart, retry }
-export enum TrackSelection { original, accompaniment, vocals }
+export enum TrackSelection { original, accompaniment, vocals, take }
 export enum ProjectState { ready, repair-needed }
+export enum RecordingState { idle, starting, recording, stopping }
 
 export struct ProjectItem {
     id: string,
@@ -62,9 +63,14 @@ export component K3Window inherits Window {
     in property <bool> original-available: false;
     in property <bool> accompaniment-available: false;
     in property <bool> vocals-available: false;
+    in property <bool> take-available: false;
     in property <int> active-lyric: -1;
     in property <int> lyric-countdown-index: -1;
     in property <int> lyric-countdown-dots: 0;
+    in-out property <RecordingState> recording-state: RecordingState.idle;
+    in-out property <bool> monitoring: false;
+    in property <string> recording-message;
+    property <bool> recording-active: root.recording-state != RecordingState.idle;
 
     callback choose-projects-root;
     callback save-projects-root(string);
@@ -78,6 +84,8 @@ export component K3Window inherits Window {
     callback set-key(int);
     callback switch-track(TrackSelection);
     callback seek-lyric(float);
+    callback recording-command(bool);
+    callback set-monitoring(bool);
 
     function format-time(seconds: float) -> string {
         if (seconds <= 0) { return "0:00"; }
@@ -125,6 +133,18 @@ export component K3Window inherits Window {
             if (event.text == "1" && root.original-available) { root.switch-track(TrackSelection.original); return accept; }
             if (event.text == "2" && root.accompaniment-available) { root.switch-track(TrackSelection.accompaniment); return accept; }
             if (event.text == "3" && root.vocals-available) { root.switch-track(TrackSelection.vocals); return accept; }
+            if (event.text == "4" && root.take-available) { root.switch-track(TrackSelection.take); return accept; }
+            if (event.text == "," && root.playback-ready && root.key-shift > -6) { root.set-key(root.key-shift - 1); return accept; }
+            if (event.text == "." && root.playback-ready && root.key-shift < 6) { root.set-key(root.key-shift + 1); return accept; }
+            if (event.text == "/" && root.playback-ready && root.key-shift != 0) { root.set-key(0); return accept; }
+            if (event.text == "r" && root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
+                root.recording-command(root.recording-state == RecordingState.idle); return accept;
+            }
+            if (event.text == "m" && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
+                root.monitoring = !root.monitoring;
+                root.set-monitoring(root.monitoring);
+                return accept;
+            }
             return reject;
         }
 
@@ -339,6 +359,7 @@ export component K3Window inherits Window {
                                 }
                             }
                             project-focus := FocusScope {
+                                enabled: !root.recording-active;
                                 key-pressed(event) => {
                                     if (event.text == Key.Return || event.text == " ") {
                                         root.open-project(project.id);
@@ -348,6 +369,7 @@ export component K3Window inherits Window {
                                 }
                             }
                             project-touch := TouchArea {
+                                enabled: !root.recording-active;
                                 clicked => {
                                     project-focus.focus();
                                     root.open-project(project.id);
@@ -376,6 +398,7 @@ export component K3Window inherits Window {
                             width: 36px;
                             accessible-name: Strings.change-projects-folder;
                             icon: @image-url("../assets/folder.svg");
+                            enabled: !root.recording-active;
                             clicked => {
                                 if (root.playing) { root.overlay = Overlay.confirm-root-change; }
                                 else { root.view-mode = ViewMode.setup; }
@@ -413,14 +436,17 @@ export component K3Window inherits Window {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        VerticalLayout {
-                            width: 220px;
-                            spacing: 4px;
-                            alignment: center;
+                        HorizontalLayout {
+                            width: 430px;
+                            spacing: 10px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 4px;
+                                alignment: center;
                             Text {
-                                text: root.playback-state-text();
+                                text: root.recording-message != "" ? root.recording-message : root.playback-state-text();
                                 visible: self.text != "";
-                                color: root.error-kind != ErrorKind.none ? Tokens.danger : Tokens.muted;
+                                color: root.recording-state == RecordingState.recording ? Tokens.cue : root.error-kind != ErrorKind.none ? Tokens.danger : Tokens.muted;
                                 font-size: 11px;
                                 horizontal-alignment: right;
                                 overflow: elide;
@@ -432,6 +458,23 @@ export component K3Window inherits Window {
                                 font-size: 11px;
                                 font-weight: 700;
                                 horizontal-alignment: right;
+                            }
+                            }
+                            ActionButton {
+                                width: 74px;
+                                label: root.recording-state == RecordingState.recording ? Strings.stop-recording : root.recording-state == RecordingState.idle ? Strings.record : Strings.working;
+                                primary: root.recording-state == RecordingState.recording;
+                                enabled: root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording);
+                                clicked => { root.recording-command(root.recording-state == RecordingState.idle); }
+                            }
+                            ActionButton {
+                                width: 76px;
+                                label: root.monitoring ? Strings.monitor-on : Strings.monitor-off;
+                                enabled: root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording;
+                                clicked => {
+                                    root.monitoring = !root.monitoring;
+                                    root.set-monitoring(root.monitoring);
+                                }
                             }
                         }
                     }
@@ -652,13 +695,13 @@ export component K3Window inherits Window {
                     height: 54px;
 
                     VerticalLayout {
-                        width: 284px;
+                        width: 340px;
                         Rectangle { vertical-stretch: 1; }
                         HorizontalLayout {
                             height: 34px;
                             spacing: 6px;
                             TrackPill {
-                                width: 82px;
+                                width: 70px;
                                 label: Strings.original;
                                 unavailable-reason: Strings.original-unavailable;
                                 active: root.active-track == TrackSelection.original;
@@ -666,7 +709,7 @@ export component K3Window inherits Window {
                                 selected => { root.switch-track(TrackSelection.original); }
                             }
                             TrackPill {
-                                width: 102px;
+                                width: 92px;
                                 label: Strings.backing;
                                 unavailable-reason: Strings.backing-unavailable;
                                 active: root.active-track == TrackSelection.accompaniment;
@@ -674,12 +717,20 @@ export component K3Window inherits Window {
                                 selected => { root.switch-track(TrackSelection.accompaniment); }
                             }
                             TrackPill {
-                                width: 82px;
+                                width: 70px;
                                 label: Strings.vocals;
                                 unavailable-reason: Strings.vocals-unavailable;
                                 active: root.active-track == TrackSelection.vocals;
                                 enabled: root.vocals-available;
                                 selected => { root.switch-track(TrackSelection.vocals); }
+                            }
+                            TrackPill {
+                                width: 70px;
+                                label: Strings.take;
+                                unavailable-reason: Strings.take-unavailable;
+                                active: root.active-track == TrackSelection.take;
+                                enabled: root.take-available;
+                                selected => { root.switch-track(TrackSelection.take); }
                             }
                         }
                         Rectangle { vertical-stretch: 1; }

@@ -16,8 +16,9 @@ use crate::{
     ui_text,
 };
 use k3_app::{
-    LoadedProject, PlaybackCommand, PlaybackService, PlaybackSnapshot, PlaybackStatus,
-    ProjectLibrary, ProjectRevision, ProjectSummary, RodioBackend, TrackKind, lyric_countdown,
+    GuiRecordingController, LoadedProject, PlaybackCommand, PlaybackService, PlaybackSnapshot,
+    PlaybackStatus, ProjectLibrary, ProjectRevision, ProjectSummary, RodioBackend, TrackKind,
+    lyric_countdown,
 };
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel};
@@ -99,9 +100,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     }));
     let (settings_writer, settings_writer_handle) = SettingsWriter::start()?;
     let playback = Arc::new(PlaybackService::start(RodioBackend::default()));
+    let recording = Arc::new(Mutex::new(GuiRecordingController::default()));
     let _ = playback.execute(PlaybackCommand::SetVolume(initial_volume));
     let snapshots = playback.subscribe()?;
-    install_callbacks(&ui, &data, &playback, &settings_writer_handle);
+    install_callbacks(&ui, &data, &playback, &recording, &settings_writer_handle);
     install_focus_refresh(&ui, &data, &settings_writer_handle);
 
     let pump_running = Arc::new(AtomicBool::new(true));
@@ -128,6 +130,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let ui_result = ui.run();
+    if let Ok(mut recording) = recording.lock() {
+        recording.abort();
+    }
     pump_running.store(false, Ordering::Release);
     let _ = snapshot_listener.join();
     ui_result?;
@@ -180,23 +185,26 @@ fn install_callbacks(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
     playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
     settings_writer: &SettingsWriterHandle,
 ) {
-    install_library_callbacks(ui, data, playback, settings_writer);
-    install_playback_callbacks(ui, data, playback, settings_writer);
+    install_library_callbacks(ui, data, playback, recording, settings_writer);
+    install_playback_callbacks(ui, data, playback, recording, settings_writer);
+    install_recording_callbacks(ui, data, playback, recording);
 }
 
 fn install_library_callbacks(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
     playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
     settings_writer: &SettingsWriterHandle,
 ) {
     install_choose_root_callback(ui);
     install_save_root_callback(ui, data, settings_writer);
     install_search_callback(ui, data);
     install_refresh_callback(ui, data, settings_writer);
-    install_open_project_callback(ui, data, playback);
+    install_open_project_callback(ui, data, playback, recording);
 }
 
 fn install_choose_root_callback(ui: &K3Window) {
@@ -296,12 +304,23 @@ fn install_open_project_callback(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
     playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
 ) {
     {
         let ui = ui.as_weak();
         let data = Arc::clone(data);
         let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
         ui.unwrap().on_open_project(move |id| {
+            if recording
+                .lock()
+                .is_ok_and(|recording| recording.is_recording())
+            {
+                if let Some(ui) = ui.upgrade() {
+                    show_error(&ui, "Stop the recording before switching projects");
+                }
+                return;
+            }
             let Ok(id) = Uuid::parse_str(id.as_str()) else {
                 return;
             };
@@ -335,16 +354,192 @@ fn install_open_project_callback(
     }
 }
 
+fn install_recording_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    {
+        let ui = ui.as_weak();
+        let data = Arc::clone(data);
+        let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
+        ui.unwrap().on_recording_command(move |start| {
+            if start {
+                start_gui_recording(ui.clone(), &data, &playback, Arc::clone(&recording));
+            } else {
+                stop_gui_recording(ui.clone(), Arc::clone(&recording));
+            }
+        });
+    }
+
+    {
+        let recording = Arc::clone(recording);
+        ui.on_set_monitoring(move |enabled| {
+            if let Ok(recording) = recording.lock() {
+                recording.set_monitoring(enabled);
+            }
+        });
+    }
+}
+
+fn start_gui_recording(
+    ui: slint::Weak<K3Window>,
+    data: &Mutex<AppData>,
+    playback: &PlaybackService,
+    recording: Arc<Mutex<GuiRecordingController>>,
+) {
+    let project_root = data.lock().ok().and_then(|data| {
+        let selected = data.selected_id?;
+        data.projects
+            .iter()
+            .find(|project| project.id == selected)
+            .map(|project| project.path.clone())
+    });
+    let Some(project_root) = project_root else {
+        if let Some(ui) = ui.upgrade() {
+            show_error(&ui, "Choose a project before recording");
+        }
+        return;
+    };
+    let monitoring = ui.upgrade().is_some_and(|ui| ui.get_monitoring());
+    let volume = ui.upgrade().map_or(1.0, |ui| ui.get_volume());
+    if let Some(ui) = ui.upgrade() {
+        ui.set_recording_state(RecordingState::Starting);
+        ui.set_recording_message("Opening microphone…".into());
+        if ui.get_playback_state() == PlaybackState::Playing {
+            let _ = playback.dispatch(PlaybackCommand::Toggle);
+        }
+    }
+    thread::spawn(move || {
+        let result = recording
+            .lock()
+            .map_err(|_| "recording state is unavailable".to_owned())
+            .and_then(|mut recording| {
+                recording
+                    .start(&project_root, monitoring, volume)
+                    .map_err(|error| error.to_string())
+            });
+        let started = result.as_ref().ok().cloned();
+        let event_ui = ui.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = event_ui.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(started) => {
+                    ui.set_recording_state(RecordingState::Recording);
+                    ui.set_recording_message(format!("Recording · {}", started.device).into());
+                    clear_general_error(&ui);
+                }
+                Err(error) => {
+                    ui.set_recording_state(RecordingState::Idle);
+                    ui.set_recording_message(SharedString::default());
+                    show_error(&ui, format!("Cannot start recording: {error}"));
+                }
+            }
+        });
+        if started.is_some() {
+            pump_recording_snapshots(&ui, &recording);
+        }
+    });
+}
+
+fn pump_recording_snapshots(ui: &slint::Weak<K3Window>, recording: &Mutex<GuiRecordingController>) {
+    loop {
+        thread::sleep(Duration::from_millis(80));
+        let snapshot = recording
+            .lock()
+            .ok()
+            .and_then(|mut recording| recording.snapshot());
+        let Some(snapshot) = snapshot else {
+            break;
+        };
+        let ui = ui.clone();
+        if slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui.upgrade()
+                && ui.get_recording_state() == RecordingState::Recording
+            {
+                apply_transport_snapshot(&ui, &snapshot);
+            }
+        })
+        .is_err()
+        {
+            break;
+        }
+    }
+}
+
+fn stop_gui_recording(ui: slint::Weak<K3Window>, recording: Arc<Mutex<GuiRecordingController>>) {
+    if let Some(ui) = ui.upgrade() {
+        ui.set_recording_state(RecordingState::Stopping);
+        ui.set_recording_message("Saving recording…".into());
+    }
+    thread::spawn(move || {
+        let result = recording
+            .lock()
+            .map_err(|_| "recording state is unavailable".to_owned())
+            .and_then(|mut recording| recording.stop().map_err(|error| error.to_string()));
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.set_recording_state(RecordingState::Idle);
+            match result {
+                Ok(saved) => {
+                    let warning = saved
+                        .warning
+                        .map_or_else(String::new, |warning| format!(" · Warning: {warning}"));
+                    ui.set_recording_message(
+                        format!(
+                            "Saved {:.1}s take from {}{}",
+                            saved.duration.as_secs_f32(),
+                            saved.device,
+                            warning
+                        )
+                        .into(),
+                    );
+                    clear_general_error(&ui);
+                    let project_id = ui.get_current_project_id();
+                    if !project_id.is_empty() {
+                        ui.invoke_open_project(project_id);
+                    }
+                }
+                Err(error) => {
+                    ui.set_recording_message(SharedString::default());
+                    show_error(&ui, format!("Cannot save recording: {error}"));
+                }
+            }
+        });
+    });
+}
+
 fn install_playback_callbacks(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
     playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
     settings_writer: &SettingsWriterHandle,
 ) {
+    install_volume_callbacks(ui, data, playback, recording, settings_writer);
+
     {
         let ui = ui.as_weak();
         let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
         ui.unwrap().on_playback_command(move |command| {
+            if recording_controls_active(&ui) {
+                let command = match command {
+                    PlaybackAction::Toggle => PlaybackCommand::Toggle,
+                    PlaybackAction::Back => PlaybackCommand::SeekBy(-5),
+                    PlaybackAction::Forward => PlaybackCommand::SeekBy(5),
+                    PlaybackAction::Restart => PlaybackCommand::Restart,
+                    PlaybackAction::Retry => PlaybackCommand::Retry,
+                };
+                dispatch_recording(&ui, &recording, command);
+                return;
+            }
             let command = match command {
                 PlaybackAction::Toggle => PlaybackCommand::Toggle,
                 PlaybackAction::Back => PlaybackCommand::SeekBy(-5),
@@ -359,30 +554,77 @@ fn install_playback_callbacks(
     {
         let ui = ui.as_weak();
         let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
         ui.unwrap().on_seek_to(move |seconds| {
-            dispatch_playback(
-                &ui,
-                &playback,
-                PlaybackCommand::SeekTo(Duration::from_secs_f32(seconds.max(0.0))),
-            );
+            let command = PlaybackCommand::SeekTo(Duration::from_secs_f32(seconds.max(0.0)));
+            if recording_controls_active(&ui) {
+                dispatch_recording(&ui, &recording, command);
+                return;
+            }
+            dispatch_playback(&ui, &playback, command);
         });
     }
 
     {
         let ui = ui.as_weak();
         let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
         ui.unwrap().on_seek_lyric(move |seconds| {
-            dispatch_playback(
-                &ui,
-                &playback,
-                PlaybackCommand::SeekTo(Duration::from_secs_f32(seconds.max(0.0))),
-            );
+            let command = PlaybackCommand::SeekTo(Duration::from_secs_f32(seconds.max(0.0)));
+            if recording_controls_active(&ui) {
+                dispatch_recording(&ui, &recording, command);
+                return;
+            }
+            dispatch_playback(&ui, &playback, command);
         });
     }
 
     {
         let ui = ui.as_weak();
         let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
+        ui.unwrap().on_set_key(move |semitones| {
+            let Ok(semitones) = i8::try_from(semitones) else {
+                return;
+            };
+            if recording_controls_active(&ui) {
+                dispatch_recording(&ui, &recording, PlaybackCommand::SetKeyShift(semitones));
+                return;
+            }
+            dispatch_playback(&ui, &playback, PlaybackCommand::SetKeyShift(semitones));
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
+        ui.unwrap().on_switch_track(move |track| {
+            let track = match track {
+                TrackSelection::Original => TrackKind::Original,
+                TrackSelection::Accompaniment => TrackKind::Accompaniment,
+                TrackSelection::Vocals => TrackKind::Vocals,
+                TrackSelection::Take => TrackKind::Take,
+            };
+            if recording_controls_active(&ui) {
+                dispatch_recording(&ui, &recording, PlaybackCommand::SwitchTrack(track));
+            }
+            dispatch_playback(&ui, &playback, PlaybackCommand::SwitchTrack(track));
+        });
+    }
+}
+
+fn install_volume_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+    settings_writer: &SettingsWriterHandle,
+) {
+    {
+        let ui = ui.as_weak();
+        let playback = Arc::clone(playback);
+        let recording = Arc::clone(recording);
         let data = Arc::clone(data);
         ui.unwrap().on_set_volume(move |volume| {
             if let Some(ui) = ui.upgrade() {
@@ -391,14 +633,18 @@ fn install_playback_callbacks(
             if let Ok(mut data) = data.lock() {
                 data.settings.volume = volume.clamp(0.0, 1.0);
             }
+            if let Ok(mut recording) = recording.lock() {
+                let _ = recording.execute(PlaybackCommand::SetVolume(volume));
+            }
             dispatch_playback(&ui, &playback, PlaybackCommand::SetVolume(volume));
         });
     }
 
     {
+        let ui = ui.as_weak();
         let data = Arc::clone(data);
         let settings_writer = settings_writer.clone();
-        ui.on_save_volume(move |volume| {
+        ui.unwrap().on_save_volume(move |volume| {
             if let Ok(mut data) = data.lock() {
                 data.settings.volume = volume.clamp(0.0, 1.0);
                 if data.settings_writable {
@@ -407,30 +653,25 @@ fn install_playback_callbacks(
             }
         });
     }
+}
 
-    {
-        let ui = ui.as_weak();
-        let playback = Arc::clone(playback);
-        ui.unwrap().on_set_key(move |semitones| {
-            let Ok(semitones) = i8::try_from(semitones) else {
-                return;
-            };
-            dispatch_playback(&ui, &playback, PlaybackCommand::SetKeyShift(semitones));
-        });
+fn dispatch_recording(
+    ui: &slint::Weak<K3Window>,
+    recording: &Mutex<GuiRecordingController>,
+    command: PlaybackCommand,
+) {
+    let snapshot = recording
+        .lock()
+        .ok()
+        .and_then(|mut recording| recording.execute(command));
+    if let (Some(ui), Some(snapshot)) = (ui.upgrade(), snapshot) {
+        apply_transport_snapshot(&ui, &snapshot);
     }
+}
 
-    {
-        let ui = ui.as_weak();
-        let playback = Arc::clone(playback);
-        ui.unwrap().on_switch_track(move |track| {
-            let track = match track {
-                TrackSelection::Original => TrackKind::Original,
-                TrackSelection::Accompaniment => TrackKind::Accompaniment,
-                TrackSelection::Vocals => TrackKind::Vocals,
-            };
-            dispatch_playback(&ui, &playback, PlaybackCommand::SwitchTrack(track));
-        });
-    }
+fn recording_controls_active(ui: &slint::Weak<K3Window>) -> bool {
+    ui.upgrade()
+        .is_some_and(|ui| ui.get_recording_state() == RecordingState::Recording)
 }
 
 #[derive(Clone, Copy)]
@@ -761,6 +1002,7 @@ fn apply_project_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     ui.set_original_available(track_available(snapshot, TrackKind::Original));
     ui.set_accompaniment_available(track_available(snapshot, TrackKind::Accompaniment));
     ui.set_vocals_available(track_available(snapshot, TrackKind::Vocals));
+    ui.set_take_available(track_available(snapshot, TrackKind::Take));
     let lyrics = snapshot
         .lyrics
         .as_ref()
@@ -790,6 +1032,13 @@ fn apply_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     if snapshot.reload_required {
         ui.set_project_changed(true);
     }
+    if ui.get_recording_state() != RecordingState::Idle {
+        return;
+    }
+    apply_transport_snapshot(ui, snapshot);
+}
+
+fn apply_transport_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     ui.set_position_seconds(snapshot.position.as_secs_f32());
     ui.set_duration_seconds(snapshot.duration.map_or(0.0, |value| value.as_secs_f32()));
     ui.set_volume(snapshot.volume);
@@ -797,9 +1046,10 @@ fn apply_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     ui.set_playback_state(playback_state(snapshot.status));
     if let Some(track) = snapshot.track {
         ui.set_active_track(match track {
-            TrackKind::Original | TrackKind::Take => TrackSelection::Original,
+            TrackKind::Original => TrackSelection::Original,
             TrackKind::Accompaniment => TrackSelection::Accompaniment,
             TrackKind::Vocals => TrackSelection::Vocals,
+            TrackKind::Take => TrackSelection::Take,
         });
     }
     if let Some(error) = &snapshot.error {

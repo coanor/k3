@@ -65,9 +65,10 @@ dist-windows:
 	@if [[ -n "$(LLVM_BIN)" ]]; then export PATH="$(LLVM_BIN):$$PATH"; fi; \
 	RUSTFLAGS='-C target-feature=+crt-static' \
 		$(CARGO) xwin build --release --locked --target x86_64-pc-windows-msvc \
-			--package k3
+			--package k3 --package k3-gui
 	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
-		windows k3-windows-x86_64 target/x86_64-pc-windows-msvc/release/k3.exe
+		windows k3-windows-x86_64 target/x86_64-pc-windows-msvc/release/k3.exe \
+		target/x86_64-pc-windows-msvc/release/k3-gui.exe
 
 dist-macos: dist-macos-x86_64 dist-macos-aarch64
 
