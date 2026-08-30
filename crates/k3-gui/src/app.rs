@@ -648,7 +648,10 @@ fn start_gui_recording(
         }
         return;
     };
-    let monitoring = ui.upgrade().is_some_and(|ui| ui.get_monitoring());
+    let monitoring = ui.upgrade().is_some_and(|ui| {
+        ui.set_monitoring(true);
+        true
+    });
     let volume = ui.upgrade().map_or(1.0, |ui| ui.get_volume());
     if let Some(ui) = ui.upgrade() {
         ui.set_recording_state(RecordingState::Starting);
@@ -680,6 +683,7 @@ fn start_gui_recording(
                 }
                 Err(error) => {
                     ui.set_recording_state(RecordingState::Idle);
+                    ui.set_monitoring(false);
                     ui.set_recording_message(SharedString::default());
                     show_error(&ui, format!("Cannot start recording: {error}"));
                 }
@@ -719,6 +723,7 @@ fn pump_recording_snapshots(ui: &slint::Weak<K3Window>, recording: &Mutex<GuiRec
 fn stop_gui_recording(ui: slint::Weak<K3Window>, recording: Arc<Mutex<GuiRecordingController>>) {
     if let Some(ui) = ui.upgrade() {
         ui.set_recording_state(RecordingState::Stopping);
+        ui.set_monitoring(false);
         ui.set_recording_message("Saving recording…".into());
     }
     thread::spawn(move || {

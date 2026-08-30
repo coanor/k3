@@ -1,6 +1,6 @@
 import { AboutSlint, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
 import { Strings } from "strings.slint";
-import { ActionButton, PlayButton, SectionLabel, Tokens, TrackPill } from "controls.slint";
+import { ActionButton, PlayButton, SectionLabel, Tokens, TrackPill, TransportIconButton } from "controls.slint";
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export enum ViewMode { setup, rehearsal }
@@ -63,7 +63,7 @@ export component K3Window inherits Window {
     in property <PlaybackState> playback-state: PlaybackState.unavailable;
     property <bool> playback-ready: root.playback-state == PlaybackState.paused || root.playback-state == PlaybackState.playing || root.playback-state == PlaybackState.finished;
     property <bool> playing: root.playback-state == PlaybackState.playing;
-    in property <float> position-seconds: 0;
+    in-out property <float> position-seconds: 0;
     in property <float> duration-seconds: 0;
     in-out property <float> volume: 1;
     in property <int> key-shift: 0;
@@ -108,6 +108,27 @@ export component K3Window inherits Window {
         let minutes = floor(total / 60);
         let remainder = total - minutes * 60;
         return minutes + (remainder < 10 ? ":0" : ":") + remainder;
+    }
+
+    function toggle-recording() {
+        if (root.recording-state == RecordingState.idle) {
+            if (!root.monitoring) {
+                root.monitoring = true;
+                root.set-monitoring(true);
+            }
+            root.recording-command(true);
+        } else if (root.recording-state == RecordingState.recording) {
+            if (root.monitoring) {
+                root.monitoring = false;
+                root.set-monitoring(false);
+            }
+            root.recording-command(false);
+        }
+    }
+
+    function toggle-monitoring() {
+        root.monitoring = !root.monitoring;
+        root.set-monitoring(root.monitoring);
     }
 
     function playback-state-text() -> string {
@@ -157,11 +178,10 @@ export component K3Window inherits Window {
                 root.begin-lyrics-search(); return accept;
             }
             if (event.text == "r" && root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
-                root.recording-command(root.recording-state == RecordingState.idle); return accept;
+                root.toggle-recording(); return accept;
             }
             if (event.text == "m" && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
-                root.monitoring = !root.monitoring;
-                root.set-monitoring(root.monitoring);
+                root.toggle-monitoring();
                 return accept;
             }
             return reject;
@@ -455,13 +475,10 @@ export component K3Window inherits Window {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        HorizontalLayout {
-                            width: 430px;
-                            spacing: 10px;
-                            VerticalLayout {
-                                horizontal-stretch: 1;
-                                spacing: 4px;
-                                alignment: center;
+                        VerticalLayout {
+                            width: 280px;
+                            spacing: 4px;
+                            alignment: center;
                             Text {
                                 text: root.recording-message != "" ? root.recording-message : root.playback-state-text();
                                 visible: self.text != "";
@@ -477,23 +494,6 @@ export component K3Window inherits Window {
                                 font-size: 11px;
                                 font-weight: 700;
                                 horizontal-alignment: right;
-                            }
-                            }
-                            ActionButton {
-                                width: 74px;
-                                label: root.recording-state == RecordingState.recording ? Strings.stop-recording : root.recording-state == RecordingState.idle ? Strings.record : Strings.working;
-                                primary: root.recording-state == RecordingState.recording;
-                                enabled: root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording);
-                                clicked => { root.recording-command(root.recording-state == RecordingState.idle); }
-                            }
-                            ActionButton {
-                                width: 76px;
-                                label: root.monitoring ? Strings.monitor-on : Strings.monitor-off;
-                                enabled: root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording;
-                                clicked => {
-                                    root.monitoring = !root.monitoring;
-                                    root.set-monitoring(root.monitoring);
-                                }
                             }
                         }
                     }
@@ -703,7 +703,7 @@ export component K3Window inherits Window {
                         enabled: root.playback-ready;
                         minimum: 0;
                         maximum: max(1, root.duration-seconds);
-                        value: root.position-seconds;
+                        value <=> root.position-seconds;
                         released(value) => { root.seek-to(value); }
                     }
                     Text {
@@ -765,7 +765,7 @@ export component K3Window inherits Window {
                     Rectangle { horizontal-stretch: 1; }
 
                     HorizontalLayout {
-                        width: 280px;
+                        width: 350px;
                         height: 54px;
                         spacing: 8px;
                         alignment: center;
@@ -776,10 +776,25 @@ export component K3Window inherits Window {
                             enabled: root.playback-ready;
                             clicked => { root.playback-command(PlaybackAction.back); }
                         }
+                        TransportIconButton {
+                            icon: root.recording-state == RecordingState.recording ? @image-url("../assets/stop.svg") : @image-url("../assets/record.svg");
+                            accessible-name: root.recording-state == RecordingState.recording ? Strings.stop-recording : Strings.record;
+                            active: root.recording-state == RecordingState.recording;
+                            accent: true;
+                            enabled: root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording);
+                            clicked => { root.toggle-recording(); }
+                        }
                         PlayButton {
                             playing: root.playing;
                             enabled: root.playback-ready;
                             clicked => { root.playback-command(PlaybackAction.toggle); }
+                        }
+                        TransportIconButton {
+                            icon: @image-url("../assets/monitor.svg");
+                            accessible-name: root.monitoring ? Strings.monitor-on : Strings.monitor-off;
+                            active: root.monitoring;
+                            enabled: root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording;
+                            clicked => { root.toggle-monitoring(); }
                         }
                         ActionButton {
                             width: 52px;

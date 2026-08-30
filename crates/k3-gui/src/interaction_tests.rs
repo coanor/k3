@@ -164,6 +164,20 @@ fn render_pixels(
     pixels
 }
 
+fn vertical_color_span(
+    pixels: &[Rgb565Pixel],
+    color: Rgb565Pixel,
+    x_range: std::ops::Range<usize>,
+    y_range: std::ops::Range<usize>,
+) -> std::ops::RangeInclusive<usize> {
+    let mut rows = y_range.filter(|y| x_range.clone().any(|x| pixels[y * 1280 + x] == color));
+    let first = rows
+        .next()
+        .expect("expected control color was not rendered");
+    let last = rows.next_back().unwrap_or(first);
+    first..=last
+}
+
 fn release_key(ui: &K3Window, text: impl Into<SharedString>) {
     ui.window()
         .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
@@ -228,6 +242,57 @@ fn custom_buttons_activate_on_first_click() {
         (1, 1, 1, 1),
         "the first pointer click must invoke each custom control"
     );
+}
+
+#[test]
+fn transport_record_button_enables_monitoring_by_default() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Paused);
+    ui.set_accompaniment_available(true);
+
+    let recording = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let observed_recording = Rc::clone(&recording);
+    ui.on_recording_command(move |start| observed_recording.borrow_mut().push(start));
+    let monitoring = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let observed_monitoring = Rc::clone(&monitoring);
+    ui.on_set_monitoring(move |enabled| observed_monitoring.borrow_mut().push(enabled));
+
+    ui.show().expect("test UI should show");
+    window.draw_if_needed(|_| {});
+    click(&ui, LogicalPosition::new(557.0, 759.0));
+    assert!(ui.get_monitoring());
+    ui.set_recording_state(RecordingState::Recording);
+    click(&ui, LogicalPosition::new(671.0, 759.0));
+    click(&ui, LogicalPosition::new(557.0, 759.0));
+
+    assert_eq!(recording.borrow().as_slice(), [true, false]);
+    assert_eq!(monitoring.borrow().as_slice(), [true, false]);
+    assert!(!ui.get_monitoring());
+}
+
+#[test]
+fn transport_round_buttons_share_one_size_and_center_line() {
+    const CUE: Rgb565Pixel = Rgb565Pixel(0xfbad);
+    const PAPER: Rgb565Pixel = Rgb565Pixel(0xf77c);
+
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Playing);
+    ui.set_accompaniment_available(true);
+    ui.set_recording_state(RecordingState::Recording);
+    ui.set_monitoring(true);
+    ui.show().expect("test UI should show");
+    let pixels = render_pixels(&window, None);
+
+    let record = vertical_color_span(&pixels, CUE, 530..590, 680..800);
+    let play = vertical_color_span(&pixels, PAPER, 590..650, 680..800);
+    let monitor = vertical_color_span(&pixels, CUE, 650..710, 680..800);
+
+    assert_eq!(record, play, "Record and Play circles must align");
+    assert_eq!(monitor, play, "Monitor and Play circles must align");
 }
 
 #[test]
@@ -430,6 +495,43 @@ fn switching_projects_clears_the_previous_progress_immediately() {
     assert_eq!(ui.get_playback_state(), PlaybackState::Loading);
     assert!(ui.get_position_seconds().abs() < f32::EPSILON);
     assert!(ui.get_duration_seconds().abs() < f32::EPSILON);
+}
+
+#[test]
+fn switching_projects_resets_a_previously_manipulated_timeline() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_playback_state(PlaybackState::Paused);
+    ui.set_position_seconds(93.0);
+    ui.set_duration_seconds(240.0);
+    let seeks = Rc::new(RefCell::new(Vec::<f32>::new()));
+    let observed_seeks = Rc::clone(&seeks);
+    ui.on_seek_to(move |position| observed_seeks.borrow_mut().push(position));
+    ui.show().expect("test UI should show");
+    window.draw_if_needed(|_| {});
+
+    click(&ui, LogicalPosition::new(900.0, 663.0));
+    assert!(
+        seeks
+            .borrow()
+            .last()
+            .is_some_and(|position| *position > 0.0)
+    );
+
+    begin_project_load(&ui);
+    ui.set_loading(false);
+    ui.set_duration_seconds(240.0);
+    ui.set_playback_state(PlaybackState::Paused);
+    release_key(&ui, Key::RightArrow);
+
+    assert!(
+        seeks
+            .borrow()
+            .last()
+            .is_some_and(|position| position.abs() < f32::EPSILON),
+        "switching projects must reset the Slider's own value"
+    );
 }
 
 #[test]

@@ -151,12 +151,13 @@ GUI 的用户可见文字首期全部使用英文。Slint 文案集中在 `ui/st
 
 排版分为两个明确角色：Source Han Sans CN 负责歌曲、歌词和界面正文，系统等宽字体负责
 时间码、区块标签、调号与数值。底部按真实任务分为 Stem、Transport、Key / Volume，
-但不显示重复的分区标题。三个控制组共享一条水平中心线；`−5s`、Play、`+5s`、扬声器
-图标和音量滑杆也必须位于同一中心线上。界面不依赖装饰动画；键盘焦点和禁用状态必须
+但不显示重复的分区标题。三个控制组共享一条水平中心线；`−5s`、Record、Play、Monitor、
+`+5s`、扬声器图标和音量滑杆也必须位于同一中心线上。录音与监听不在标题区重复显示操作按钮；
+录音开始时默认开启监听，用户可在录音期间关闭。界面不依赖装饰动画；键盘焦点和禁用状态必须
 保持清晰。
 
 正式界面直接使用 Slint，并建立仅覆盖实际需求的小型 K3 组件集：ActionButton、
-PlayButton、TrackPill、SectionLabel 和歌词行。颜色、排版、间距、圆角和状态来自统一
+PlayButton、TransportIconButton、TrackPill、SectionLabel 和歌词行。颜色、排版、间距、圆角和状态来自统一
 design tokens。Refresh、Retry、Reload、Folder、Close、Play / Pause、Restart 和 Volume
 等具有通用图形语义的动作使用居中的矢量图标，不显示重复文字或音量百分比，但必须保留
 accessible label。按钮默认不显示描边，只通过 hover、键盘焦点和按下状态的背景变化

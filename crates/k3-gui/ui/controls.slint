@@ -129,6 +129,54 @@ export component PlayButton inherits Rectangle {
     }
 }
 
+export component TransportIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> accessible-name;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> accent: false;
+    callback clicked;
+
+    width: 54px;
+    height: 54px;
+    border-radius: 27px;
+    background: !root.enabled ? transparent : root.active ? Tokens.cue : transport-touch.has-hover || transport-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.accessible-name;
+    accessible-enabled: root.enabled;
+
+    Image {
+        width: 20px;
+        height: 20px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        image-fit: contain;
+        colorize: root.active ? Tokens.paper-ink : root.accent ? Tokens.cue : Tokens.ink;
+    }
+
+    transport-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    transport-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            transport-focus.focus();
+            root.clicked();
+        }
+    }
+}
+
 export component TrackPill inherits Rectangle {
     in property <string> label;
     in property <string> unavailable-reason;
