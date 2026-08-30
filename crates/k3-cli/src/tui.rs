@@ -36,7 +36,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     audio::AudioPlayer,
-    library::{self, LibraryConfig, LibrarySnapshot, SourceEntry},
+    library::{self, LibraryConfig, LibrarySnapshot, SourceEntry, SourceProjectState},
     lyrics_download::{
         LyricsChoice, LyricsProgress, LyricsSearch, default_lyrics_query, find_lyrics_again,
         find_missing_lyrics, save_lyrics_choice,
@@ -193,37 +193,50 @@ impl MediaLibrary {
             ));
             return;
         }
-        let replacing = request.source.imported;
+        let project_state = request.source.project_state;
         self.launch_import(request);
-        self.message = Some(if replacing {
-            format!("Re-separating and replacing stems: {}", display_name(&path))
-        } else {
-            format!("Creating project and separating: {}", display_name(&path))
+        self.message = Some(match project_state {
+            SourceProjectState::New => {
+                format!("Creating project and separating: {}", display_name(&path))
+            }
+            SourceProjectState::Current => {
+                format!("Re-separating and replacing stems: {}", display_name(&path))
+            }
+            SourceProjectState::ReplaceSource => {
+                format!("Updating project source and stems: {}", display_name(&path))
+            }
         });
     }
 
     fn launch_import(&mut self, request: SeparationRequest) {
         let worker_source = request.source.path.clone();
         let worker_project = request.source.project_path.clone();
-        let replacing = request.source.imported;
+        let project_state = request.source.project_state;
         let config = self.config.clone();
         let cancellation = Arc::new(AtomicBool::new(false));
         let worker_cancellation = cancellation.clone();
         let (sender, result) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let outcome = if replacing {
-                library::reseparate_with_cancellation(
+            let outcome = match project_state {
+                SourceProjectState::New => library::import_and_separate_with_cancellation(
+                    &config,
+                    &worker_source,
+                    worker_cancellation,
+                ),
+                SourceProjectState::Current => library::reseparate_with_cancellation(
                     &config,
                     &worker_source,
                     &worker_project,
                     worker_cancellation,
-                )
-            } else {
-                library::import_and_separate_with_cancellation(
-                    &config,
-                    &worker_source,
-                    worker_cancellation,
-                )
+                ),
+                SourceProjectState::ReplaceSource => {
+                    library::replace_source_and_reseparate_with_cancellation(
+                        &config,
+                        &worker_source,
+                        &worker_project,
+                        worker_cancellation,
+                    )
+                }
             }
             .map_err(|error| error.to_string());
             let _ = sender.send(outcome);
@@ -255,7 +268,7 @@ impl MediaLibrary {
 
     fn enqueue_downloaded_source(&mut self, path: &Path) -> bool {
         let source = library::source_entry_for_path(&self.config, path);
-        if source.imported
+        if source.project_state == SourceProjectState::Current
             || self.job.as_ref().is_some_and(|job| job.source == path)
             || self.queue.iter().any(|request| request.source.path == path)
         {
@@ -1606,7 +1619,7 @@ fn handle_library_source_key(
         }
         KeyCode::Enter => {
             if let Some(source) = library.snapshot.sources.get(library.source_selected)
-                && source.imported
+                && source.project_state == SourceProjectState::Current
             {
                 if current
                     .as_ref()
@@ -1643,7 +1656,7 @@ fn start_source_reseparation(library: &mut MediaLibrary, current: &mut Option<Ap
         .get(library.source_selected)
         .cloned();
     let replacing_open = selected.as_ref().is_some_and(|source| {
-        source.imported
+        source.project_state == SourceProjectState::Current
             && current
                 .as_ref()
                 .is_some_and(|app| app.session.project().root() == source.project_path)
@@ -2161,10 +2174,12 @@ fn draw_library_sources(frame: &mut Frame, area: ratatui::layout::Rect, library:
                 .any(|request| request.source.path == entry.path)
             {
                 "◷"
-            } else if entry.imported {
-                "✓"
             } else {
-                "+"
+                match entry.project_state {
+                    SourceProjectState::New => "+",
+                    SourceProjectState::Current => "✓",
+                    SourceProjectState::ReplaceSource => "↻",
+                }
             };
             let selected = index == library.source_selected;
             let full_name = display_name(&entry.path);
@@ -2677,12 +2692,12 @@ mod tests {
         App, CatalogJob, ChromeLoginJob, FooterAction, ImportJob, LyricCountdown, LyricsPicker,
         LyricsQueryEditor, ManagedTask, MediaLibrary, NeteaseDownloadJob, NeteaseModal,
         NeteaseNotice, NeteasePanel, NeteaseView, PlaybackState, PlaybackTrack, SeparationRequest,
-        TrackKind, draw_library_sources, effect_preset_for_key, fit_single_line_middle,
-        fit_source_name, format_duration, handle_library_key, handle_library_source_key,
-        handle_netease_modal_key, handle_netease_source_key, load_lyrics, lyric_countdown,
-        lyric_seek_target, lyric_window, mode_allows_footer_action, netease_sign_in_hint,
-        netease_song_label, poll_import_job, poll_netease_catalog, poll_netease_chrome_login,
-        poll_netease_download, should_handle_key,
+        SourceProjectState, TrackKind, draw_library_sources, effect_preset_for_key,
+        fit_single_line_middle, fit_source_name, format_duration, handle_library_key,
+        handle_library_source_key, handle_netease_modal_key, handle_netease_source_key,
+        load_lyrics, lyric_countdown, lyric_seek_target, lyric_window, mode_allows_footer_action,
+        netease_sign_in_hint, netease_song_label, poll_import_job, poll_netease_catalog,
+        poll_netease_chrome_login, poll_netease_download, should_handle_key,
     };
     use crate::{
         lyrics_download::LyricsChoice,
@@ -3696,7 +3711,7 @@ mod tests {
         let mut library = MediaLibrary::new(config).unwrap();
         let active_source = library.snapshot.sources[0].path.clone();
         let queued_source = library.snapshot.sources[1].path.clone();
-        library.snapshot.sources[1].imported = true;
+        library.snapshot.sources[1].project_state = SourceProjectState::Current;
         let (sender, receiver) = mpsc::channel();
         library.job = Some(ImportJob {
             source: active_source,
@@ -3716,7 +3731,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             [&queued_source]
         );
-        assert!(library.queue[0].source.imported);
+        assert_eq!(
+            library.queue[0].source.project_state,
+            SourceProjectState::Current
+        );
         assert!(library.message.as_deref().unwrap().contains("Queued at"));
         library.start_import();
         assert_eq!(library.queue.len(), 1);
@@ -3777,7 +3795,10 @@ mod tests {
         handle_library_source_key(&mut library, &mut None, KeyCode::Char('s')).unwrap();
 
         assert_eq!(library.queue.len(), 1);
-        assert!(library.queue[0].source.imported);
+        assert_eq!(
+            library.queue[0].source.project_state,
+            SourceProjectState::Current
+        );
         assert!(library.message.as_deref().unwrap().contains("Queued at"));
     }
 

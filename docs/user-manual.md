@@ -317,6 +317,8 @@ target/release/k3 tui --project /path/to/project
 后，K3 使用当前 `separation` 配置依次创建 project 并分离人声与伴奏。临时网络错误会
 有限重试；账号会话失效时队列暂停，重新从 Chrome 导入或扫码后继续。不可下载歌曲会
 跳过并计入结束摘要。下载期间仍可使用 TUI，但退出 K3 会要求确认取消队列。
+已有歌曲升级到更高音质时，K3 会更新原 project 内复制的音源并重新生成 stems，同时保留
+project ID、歌词、takes 和其他用户文件；若更新失败，原 project 音源和 stems 保持不变。
 
 K3 自动尝试账号当前可用的最高音质，并在状态信息中显示实际音质。文件保存到
 `music_root/NetEase/`，使用平铺命名：

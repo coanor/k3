@@ -855,6 +855,9 @@ pub(super) fn handle_netease_source_key(
                 panel.start_search(query, panel.page_offset + panel.page_size);
             }
         }
+        KeyCode::Enter if panel.active_download() => {
+            library.netease_message = Some(netease_download_busy_hint().into());
+        }
         KeyCode::Char('c') if !panel.is_logged_in() => {
             panel.start_chrome_login();
             library.netease_message = Some("Importing NetEase login from Chrome...".into());
@@ -897,13 +900,6 @@ pub(super) fn handle_netease_source_key(
             } else {
                 library.netease_message = Some("Press l before selecting all liked songs".into());
             }
-        }
-        KeyCode::Enter
-            if panel.is_logged_in()
-                && panel.active_download()
-                && !panel.selected_ids.is_empty() =>
-        {
-            library.netease_message = Some(netease_download_busy_hint().into());
         }
         KeyCode::Enter if panel.is_logged_in() && !panel.selected_ids.is_empty() => {
             panel.modal = Some(NeteaseModal::ConfirmDownload);
