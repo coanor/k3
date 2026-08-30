@@ -20,7 +20,7 @@ rodio = "0.22.2"
 rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
 qrcode = { version = "0.14.1", default-features = false }
-rookie-cookies = "=0.5.9"
+rookie-cookies = { version = "=0.5.9", default-features = false, features = ["appbound"] }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

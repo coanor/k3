@@ -244,22 +244,86 @@ impl ChromeCookieSource for RookieChromeCookieSource {
                         "a Chrome profile could not be read: {error}"
                     ))
                 })?;
-        Ok(report
+        let mut cookies = Vec::new();
+        let mut source_failure = None;
+
+        for source in report
             .profiles
             .into_iter()
             .flat_map(|profile| profile.sources)
-            .filter(|source| {
-                source.selected
-                    && source.status == rookie_cookies::report::SourceStatusCode::succeeded()
-            })
-            .flat_map(|source| source.cookies)
-            .filter(|cookie| matches!(cookie.name.as_str(), "MUSIC_U" | "__csrf"))
-            .map(|cookie| BrowserCookie {
-                name: cookie.name,
-                value: cookie.value,
-            })
-            .collect())
+            .filter(|source| source.selected)
+        {
+            let failed = source.status == rookie_cookies::report::SourceStatusCode::failed();
+            if source_failure.is_none() {
+                source_failure = source
+                    .issues
+                    .iter()
+                    .find_map(|issue| chrome_source_failure_hint(&issue.message))
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        failed.then(|| {
+                            source
+                                .issues
+                                .first()
+                                .map_or_else(chrome_source_failure_fallback, |issue| {
+                                    chrome_source_failure_message(&issue.message)
+                                })
+                        })
+                    });
+            }
+
+            if source.status == rookie_cookies::report::SourceStatusCode::succeeded() {
+                cookies.extend(
+                    source
+                        .cookies
+                        .into_iter()
+                        .filter(|cookie| matches!(cookie.name.as_str(), "MUSIC_U" | "__csrf"))
+                        .map(|cookie| BrowserCookie {
+                            name: cookie.name,
+                            value: cookie.value,
+                        }),
+                );
+            }
+        }
+
+        if !cookies.iter().any(|cookie| cookie.name == "MUSIC_U")
+            && let Some(message) = source_failure
+        {
+            return Err(NeteaseError::ChromeLogin(message));
+        }
+
+        Ok(cookies)
     }
+}
+
+fn chrome_source_failure_message(message: &str) -> String {
+    chrome_source_failure_hint(message).map_or_else(chrome_source_failure_fallback, str::to_owned)
+}
+
+fn chrome_source_failure_hint(message: &str) -> Option<&'static str> {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("share-locked")
+        || normalized.contains("sharing violation")
+        || normalized.contains("os error 32")
+    {
+        return Some(
+            "Chrome is using its cookie database. Close Chrome completely, then retry Chrome login import.",
+        );
+    }
+    if (normalized.contains("app-bound") || normalized.contains("v20"))
+        && (normalized.contains("administrator") || normalized.contains("privilege"))
+    {
+        return Some(
+            "Chrome's App-Bound cookie encryption requires K3 to run as administrator. Restart K3 as administrator, then retry Chrome login import.",
+        );
+    }
+
+    None
+}
+
+fn chrome_source_failure_fallback() -> String {
+    "Chrome cookies could not be read. Check that the Chrome profile is accessible, then retry Chrome login import."
+        .to_owned()
 }
 
 pub(super) fn chrome_cookie_header(cookies: &[BrowserCookie]) -> Option<String> {
@@ -304,4 +368,34 @@ pub(super) fn write_private_json<T: Serialize>(path: &Path, value: &T) -> Result
         .persist(path)
         .map(|_| ())
         .map_err(|error| NeteaseError::Io(error.error))
+}
+
+#[cfg(test)]
+mod chrome_source_failure_tests {
+    use super::chrome_source_failure_message;
+
+    #[test]
+    fn locked_database_message_is_actionable_and_does_not_disclose_the_profile_path() {
+        let message = chrome_source_failure_message(
+            r"Windows browser database is share-locked at \\?\C:\Users\Alice\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies (OS error 32); process shutdown is disabled",
+        );
+
+        assert_eq!(
+            message,
+            "Chrome is using its cookie database. Close Chrome completely, then retry Chrome login import."
+        );
+        assert!(!message.contains("Alice"));
+    }
+
+    #[test]
+    fn app_bound_encryption_message_explains_the_administrator_requirement() {
+        let message = chrome_source_failure_message(
+            "Chrome App-Bound cookie decryption requires an administrator process",
+        );
+
+        assert_eq!(
+            message,
+            "Chrome's App-Bound cookie encryption requires K3 to run as administrator. Restart K3 as administrator, then retry Chrome login import."
+        );
+    }
 }
