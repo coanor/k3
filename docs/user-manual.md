@@ -258,9 +258,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 参数位置不固定。环境变量 `K3_OUTPUT_DIR`、`K3_BIN`、`K3_WORKER`、
 `K3_PROFILE`、`K3_MODEL`、`K3_MODEL_DIR`、`K3_SEGMENT_SIZE`、
 `K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。默认保留和声，
-因此输出包含 `vocals.wav`、`backing-vocals.wav` 和含和声的
-`accompaniment.wav`。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖
-stem，但保留歌词、take、效果和其他 project 文件。
+因此输出包含版本化的 `vocals-<id>.wav`、`backing-vocals-<id>.wav` 和含和声的
+`accompaniment-<id>.wav`。脚本会从 `project.json` 的 separation manifest 输出本次
+实际文件路径。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖 stem，
+但保留歌词、take、效果和其他 project 文件。
 
 ### 3.2 三栏媒体库配置
 
@@ -471,17 +472,20 @@ project。成功后 provenance 更新为新模型和参数；失败时仍保留�
 成功后生成：
 
 ```text
-stems/vocals.wav
-stems/accompaniment.wav
+stems/vocals-<id>.wav
+stems/accompaniment-<id>.wav
 ```
 
 启用保留和声模式时还会生成：
 
 ```text
-stems/vocals.wav          # 主唱
-stems/backing-vocals.wav  # 单独和声
-stems/accompaniment.wav   # 纯伴奏加回和声
+stems/vocals-<id>.wav          # 主唱
+stems/backing-vocals-<id>.wav  # 单独和声
+stems/accompaniment-<id>.wav   # 纯伴奏加回和声
 ```
+
+`<id>` 是每次成功分离生成的唯一版本标识。请以 `project.json` 的 separation manifest
+和包装脚本成功后打印的路径为准；重新分离成功后，旧版本会被新 manifest 原子替换。
 
 `project.json` 会把状态保存为 `ready`，并记录：
 
@@ -739,8 +743,7 @@ nvidia-smi
 
 ### `output_exists`
 
-worker 默认不会覆盖 `vocals.wav`、`backing-vocals.wav` 或
-`accompaniment.wav`。确认文件可替换且
+worker 默认不会在已有 stem 时开始新的分离。确认现有结果可替换且
 工程仍为 `not requested` 后使用 `--overwrite`。
 
 ### 工程显示 `failed`

@@ -37,8 +37,16 @@ struct AppData {
     presented_project_generation: u64,
     scan_generation: u64,
     open_generation: u64,
-    lyrics_search_generation: u64,
+    lyrics_generation: u64,
+    lyrics_context: Option<LyricsContext>,
     lyrics_choices: Vec<LyricsChoice>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LyricsContext {
+    generation: u64,
+    project_id: Uuid,
+    project_root: PathBuf,
 }
 
 pub fn launch() {
@@ -102,7 +110,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         presented_project_generation: 0,
         scan_generation: 0,
         open_generation: 0,
-        lyrics_search_generation: 0,
+        lyrics_generation: 0,
+        lyrics_context: None,
         lyrics_choices: Vec::new(),
     }));
     let (settings_writer, settings_writer_handle) = SettingsWriter::start()?;
@@ -207,6 +216,7 @@ fn install_lyrics_callbacks(
     recording: &Arc<Mutex<GuiRecordingController>>,
 ) {
     install_begin_lyrics_callback(ui, data, recording);
+    install_close_lyrics_callback(ui, data);
     install_search_lyrics_callback(ui, data, recording);
     install_save_lyrics_callback(ui, data, recording);
 }
@@ -226,24 +236,48 @@ fn install_begin_lyrics_callback(
         {
             return;
         }
-        let project_root = selected_project_path(&data);
-        let Some(project_root) = project_root else {
+        let context = data
+            .lock()
+            .ok()
+            .and_then(|mut data| begin_lyrics_context(&mut data));
+        let Some(context) = context else {
             return;
         };
-        let query = default_project_lyrics_query(&project_root).unwrap_or_else(|_| {
-            ui.upgrade()
-                .map_or_else(String::new, |ui| ui.get_song_title().to_string())
-        });
-        if let Ok(mut data) = data.lock() {
-            data.lyrics_choices.clear();
-        }
+        let fallback = ui
+            .upgrade()
+            .map_or_else(String::new, |ui| ui.get_song_title().to_string());
         if let Some(ui) = ui.upgrade() {
-            ui.set_lyrics_query(query.into());
+            ui.set_lyrics_query(fallback.clone().into());
             ui.set_lyrics_candidates(ModelRc::new(VecModel::default()));
             ui.set_selected_lyrics_candidate(-1);
-            ui.set_lyrics_panel_state(LyricsPanelState::Idle);
-            ui.set_lyrics_panel_message(SharedString::default());
+            ui.set_lyrics_panel_state(LyricsPanelState::Preparing);
+            ui.set_lyrics_panel_message("Reading project and audio metadata…".into());
             ui.set_overlay(Overlay::LyricsSearch);
+        }
+        let ui = ui.clone();
+        let data = Arc::clone(&data);
+        thread::spawn(move || {
+            let query = default_project_lyrics_query(&context.project_root).unwrap_or(fallback);
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
+                if !lyrics_context_matches(&data, &context) {
+                    return;
+                }
+                ui.set_lyrics_query(query.into());
+                ui.set_lyrics_panel_state(LyricsPanelState::Idle);
+                ui.set_lyrics_panel_message(SharedString::default());
+            });
+        });
+    });
+}
+
+fn install_close_lyrics_callback(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
+    let data = Arc::clone(data);
+    ui.on_close_lyrics_search(move || {
+        if let Ok(mut data) = data.lock() {
+            invalidate_lyrics_context(&mut data);
         }
     });
 }
@@ -267,16 +301,12 @@ fn install_search_lyrics_callback(
         if query.is_empty() {
             return;
         }
-        let Some(project_root) = selected_project_path(&data) else {
+        let context = data
+            .lock()
+            .ok()
+            .and_then(|mut data| begin_lyrics_context(&mut data));
+        let Some(context) = context else {
             return;
-        };
-        let generation = match data.lock() {
-            Ok(mut data) => {
-                data.lyrics_search_generation = data.lyrics_search_generation.wrapping_add(1);
-                data.lyrics_choices.clear();
-                data.lyrics_search_generation
-            }
-            Err(_) => return,
         };
         if let Some(ui) = ui.upgrade() {
             ui.set_lyrics_panel_state(LyricsPanelState::Searching);
@@ -288,20 +318,27 @@ fn install_search_lyrics_callback(
         let data = Arc::clone(&data);
         thread::spawn(move || {
             let progress_ui = ui.clone();
-            let result = find_project_lyrics(&project_root, &query, true, &mut |progress| {
-                let ui = progress_ui.clone();
-                let message = progress.to_string();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui.upgrade()
-                        && ui.get_lyrics_panel_state() == LyricsPanelState::Searching
-                    {
-                        ui.set_lyrics_panel_message(message.into());
-                    }
-                });
-            })
-            .map_err(|error| error.to_string());
+            let progress_data = Arc::clone(&data);
+            let progress_context = context.clone();
+            let result =
+                find_project_lyrics(&context.project_root, &query, true, &mut |progress| {
+                    let ui = progress_ui.clone();
+                    let data = Arc::clone(&progress_data);
+                    let context = progress_context.clone();
+                    let message = progress.to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui.upgrade()
+                            && lyrics_context_matches(&data, &context)
+                            && ui.get_overlay() == Overlay::LyricsSearch
+                            && ui.get_lyrics_panel_state() == LyricsPanelState::Searching
+                        {
+                            ui.set_lyrics_panel_message(message.into());
+                        }
+                    });
+                })
+                .map_err(|error| error.to_string());
             let _ = slint::invoke_from_event_loop(move || {
-                apply_lyrics_search_result(&ui, &data, generation, result);
+                apply_lyrics_search_result(&ui, &data, &context, result);
             });
         });
     });
@@ -310,7 +347,7 @@ fn install_search_lyrics_callback(
 fn apply_lyrics_search_result(
     ui: &slint::Weak<K3Window>,
     data: &Mutex<AppData>,
-    generation: u64,
+    context: &LyricsContext,
     result: Result<LyricsSearch, String>,
 ) {
     let Some(ui) = ui.upgrade() else {
@@ -319,7 +356,7 @@ fn apply_lyrics_search_result(
     let Ok(mut data) = data.lock() else {
         return;
     };
-    if data.lyrics_search_generation != generation {
+    if !lyrics_context_is_current(&data, context) || ui.get_overlay() != Overlay::LyricsSearch {
         return;
     }
     match result {
@@ -372,14 +409,17 @@ fn install_save_lyrics_callback(
         let Some(index) = usize::try_from(index).ok() else {
             return;
         };
-        let choice = data
-            .lock()
-            .ok()
-            .and_then(|data| data.lyrics_choices.get(index).cloned());
-        let Some(choice) = choice else {
-            return;
-        };
-        let Some(project_root) = selected_project_path(&data) else {
+        let selection = data.lock().ok().and_then(|data| {
+            let context = data.lyrics_context.clone()?;
+            if !lyrics_context_is_current(&data, &context) {
+                return None;
+            }
+            data.lyrics_choices
+                .get(index)
+                .cloned()
+                .map(|choice| (context, choice))
+        });
+        let Some((context, choice)) = selection else {
             return;
         };
         if let Some(ui) = ui.upgrade() {
@@ -387,15 +427,22 @@ fn install_save_lyrics_callback(
             ui.set_lyrics_panel_message("Saving synchronized lyrics…".into());
         }
         let ui = ui.clone();
+        let data = Arc::clone(&data);
         thread::spawn(move || {
-            let result = save_project_lyrics(&project_root, choice, &mut |_| {})
+            let result = save_project_lyrics(&context.project_root, choice, &mut |_| {})
                 .map_err(|error| error.to_string());
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui.upgrade() else {
                     return;
                 };
+                if !lyrics_context_matches(&data, &context) {
+                    return;
+                }
                 match result {
                     Ok(saved) => {
+                        if let Ok(mut data) = data.lock() {
+                            invalidate_lyrics_context(&mut data);
+                        }
                         ui.set_overlay(Overlay::None);
                         ui.set_lyrics_panel_state(LyricsPanelState::Idle);
                         ui.set_recording_message(
@@ -405,10 +452,7 @@ fn install_save_lyrics_callback(
                             )
                             .into(),
                         );
-                        let project_id = ui.get_current_project_id();
-                        if !project_id.is_empty() {
-                            ui.invoke_open_project(project_id);
-                        }
+                        ui.invoke_open_project(context.project_id.to_string().into());
                     }
                     Err(error) => {
                         ui.set_lyrics_panel_state(LyricsPanelState::Results);
@@ -422,13 +466,43 @@ fn install_save_lyrics_callback(
     });
 }
 
-fn selected_project_path(data: &Mutex<AppData>) -> Option<PathBuf> {
-    let data = data.lock().ok()?;
-    let selected = data.selected_id?;
-    data.projects
+fn begin_lyrics_context(data: &mut AppData) -> Option<LyricsContext> {
+    let project_id = data.selected_id?;
+    let project_root = data
+        .projects
         .iter()
-        .find(|project| project.id == selected)
-        .map(|project| project.path.clone())
+        .find(|project| project.id == project_id)?
+        .path
+        .clone();
+    data.lyrics_generation = data.lyrics_generation.wrapping_add(1);
+    data.lyrics_choices.clear();
+    let context = LyricsContext {
+        generation: data.lyrics_generation,
+        project_id,
+        project_root,
+    };
+    data.lyrics_context = Some(context.clone());
+    Some(context)
+}
+
+fn invalidate_lyrics_context(data: &mut AppData) {
+    data.lyrics_generation = data.lyrics_generation.wrapping_add(1);
+    data.lyrics_context = None;
+    data.lyrics_choices.clear();
+}
+
+fn lyrics_context_is_current(data: &AppData, context: &LyricsContext) -> bool {
+    data.lyrics_context.as_ref() == Some(context)
+        && data.selected_id == Some(context.project_id)
+        && data
+            .projects
+            .iter()
+            .any(|project| project.id == context.project_id && project.path == context.project_root)
+}
+
+fn lyrics_context_matches(data: &Mutex<AppData>, context: &LyricsContext) -> bool {
+    data.lock()
+        .is_ok_and(|data| lyrics_context_is_current(&data, context))
 }
 
 fn install_library_callbacks(
@@ -480,6 +554,9 @@ fn install_save_root_callback(
                     show_error(&ui, ui_text::unreadable_projects_folder(&path));
                 }
                 return;
+            }
+            if let Ok(mut data) = data.lock() {
+                invalidate_lyrics_context(&mut data);
             }
             if let Some(ui) = ui.upgrade() {
                 ui.set_loading(true);
@@ -571,6 +648,7 @@ fn install_open_project_callback(
                 if project.is_some() {
                     data.open_generation = data.open_generation.wrapping_add(1);
                     data.pending_open_id = Some(id);
+                    invalidate_lyrics_context(&mut data);
                 }
                 project.map(|project| (project, data.open_generation))
             });
@@ -973,6 +1051,7 @@ fn scan_library(
                                 data.settings.last_project_id = None;
                                 data.selected_id = None;
                                 data.selected_document_revision = None;
+                                invalidate_lyrics_context(&mut data);
                             }
                             let last_project = if intent.reopens_last_project() {
                                 data.settings.last_project_id.clone()

@@ -40,6 +40,27 @@ function Invoke-K3 {
     }
 }
 
+function Write-SeparationOutputs {
+    param([Parameter(Mandatory = $true)][string]$Project)
+
+    $document = Get-Content -LiteralPath (Join-Path $Project "project.json") -Raw | ConvertFrom-Json
+    if ($document.separation.status -ne "ready") {
+        throw "project 未保存 ready 状态的分离 manifest：$Project"
+    }
+    $details = $document.separation.details
+    foreach ($output in @(
+        @{ Label = "主唱"; Name = "vocals" },
+        @{ Label = "和声"; Name = "backing_vocals" },
+        @{ Label = "伴奏"; Name = "accompaniment" }
+    )) {
+        $relative = Get-PropertyValue -Object $details -Name $output.Name -Default $null
+        if (-not [string]::IsNullOrWhiteSpace($relative)) {
+            $nativeRelative = $relative -replace "/", [IO.Path]::DirectorySeparatorChar
+            Write-Host "  $($output.Label)：$(Join-Path $Project $nativeRelative)"
+        }
+    }
+}
+
 $configPath = Join-Path $PSScriptRoot "config.json"
 $config = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
     Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
@@ -192,9 +213,5 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
     Invoke-K3 -Arguments $arguments
 
     Write-Host "完成：$project"
-    Write-Host "  主唱：$project\stems\vocals.wav"
-    if ($preserveBackingVocals) {
-        Write-Host "  和声：$project\stems\backing-vocals.wav"
-    }
-    Write-Host "  伴奏：$project\stems\accompaniment.wav"
+    Write-SeparationOutputs -Project $project
 }

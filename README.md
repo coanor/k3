@@ -40,8 +40,8 @@ cargo run -p k3-gui
 ## 本地分轨 worker
 
 Rust 通过小型 `StemSeparator` interface 调用 `python/separator` 下的 JSON-lines
-worker。它支持质量 profile、明确的 checkpoint、SHA-256 provenance，以及标准化的
-`vocals.wav` / `accompaniment.wav` 输出。安装与协议说明见
+worker。它支持质量 profile、明确的 checkpoint、SHA-256 provenance，以及由
+`project.json` manifest 引用的版本化 stem 输出。安装与协议说明见
 [worker README](python/separator/README.md)。
 
 示例：

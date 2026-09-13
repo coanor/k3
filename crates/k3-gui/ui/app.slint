@@ -11,7 +11,7 @@ export enum PlaybackAction { toggle, back, forward, restart, retry }
 export enum TrackSelection { original, accompaniment, vocals, take }
 export enum ProjectState { ready, repair-needed }
 export enum RecordingState { idle, starting, recording, stopping }
-export enum LyricsPanelState { idle, searching, results, saving }
+export enum LyricsPanelState { idle, preparing, searching, results, saving }
 
 export struct ProjectItem {
     id: string,
@@ -99,6 +99,7 @@ export component K3Window inherits Window {
     callback recording-command(bool);
     callback set-monitoring(bool);
     callback begin-lyrics-search;
+    callback close-lyrics-search;
     callback search-online-lyrics(string);
     callback save-lyrics-candidate(int);
 
@@ -131,6 +132,12 @@ export component K3Window inherits Window {
         root.set-monitoring(root.monitoring);
     }
 
+    function dismiss-lyrics-search() {
+        if (root.lyrics-panel-state == LyricsPanelState.saving) { return; }
+        root.close-lyrics-search();
+        root.overlay = Overlay.none;
+    }
+
     function playback-state-text() -> string {
         if (root.playback-state == PlaybackState.unavailable) { return Strings.playback-unavailable; }
         if (root.playback-state == PlaybackState.loading) { return Strings.loading-audio; }
@@ -144,7 +151,12 @@ export component K3Window inherits Window {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 if (root.overlay != Overlay.none) {
-                    root.overlay = Overlay.none; return accept;
+                    if (root.overlay == Overlay.lyrics-search) {
+                        root.dismiss-lyrics-search();
+                    } else {
+                        root.overlay = Overlay.none;
+                    }
+                    return accept;
                 }
                 if (root.view-mode == ViewMode.setup && root.projects-root != "") {
                     root.view-mode = ViewMode.rehearsal; return accept;
@@ -956,7 +968,7 @@ export component K3Window inherits Window {
                         accessible-name: Strings.close;
                         icon: @image-url("../assets/close.svg");
                         enabled: root.lyrics-panel-state != LyricsPanelState.saving;
-                        clicked => { root.overlay = Overlay.none; }
+                        clicked => { root.dismiss-lyrics-search(); }
                     }
                 }
 
@@ -973,7 +985,7 @@ export component K3Window inherits Window {
                     LineEdit {
                         text <=> root.lyrics-query;
                         placeholder-text: Strings.lyrics-query-placeholder;
-                        enabled: root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        enabled: root.lyrics-panel-state != LyricsPanelState.preparing && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
                         accepted => {
                             if (root.lyrics-query != "") { root.search-online-lyrics(root.lyrics-query); }
                         }
@@ -981,9 +993,9 @@ export component K3Window inherits Window {
                     ActionButton {
                         width: 96px;
                         height: 42px;
-                        label: root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching : Strings.search;
+                        label: root.lyrics-panel-state == LyricsPanelState.preparing ? Strings.preparing : root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching : Strings.search;
                         primary: true;
-                        enabled: root.lyrics-query != "" && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        enabled: root.lyrics-query != "" && root.lyrics-panel-state != LyricsPanelState.preparing && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
                         clicked => { root.search-online-lyrics(root.lyrics-query); }
                     }
                 }
@@ -1004,7 +1016,7 @@ export component K3Window inherits Window {
                     border-color: Tokens.line;
 
                     if root.lyrics-candidates.length == 0: Text {
-                        text: root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching-lyrics : Strings.no-lyrics-results;
+                        text: root.lyrics-panel-state == LyricsPanelState.preparing ? Strings.preparing-lyrics : root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching-lyrics : Strings.no-lyrics-results;
                         color: Tokens.faint;
                         font-size: 14px;
                         horizontal-alignment: center;
@@ -1058,7 +1070,7 @@ export component K3Window inherits Window {
                         width: 90px;
                         label: Strings.cancel;
                         enabled: root.lyrics-panel-state != LyricsPanelState.saving;
-                        clicked => { root.overlay = Overlay.none; }
+                        clicked => { root.dismiss-lyrics-search(); }
                     }
                     ActionButton {
                         width: 132px;

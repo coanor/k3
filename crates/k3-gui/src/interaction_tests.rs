@@ -1,7 +1,9 @@
 use std::{
     cell::Cell,
     cell::RefCell,
+    path::PathBuf,
     rc::Rc,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -9,14 +11,20 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferTyp
 use slint::platform::{
     Key, Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, SharedString, VecModel};
+use slint::{
+    ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, SharedString, VecModel,
+};
 
 use super::{
-    ErrorKind, K3Window, LyricItem, Overlay, PlaybackAction, PlaybackState,
-    PlaybackTransitionTracker, ProjectItem, ProjectState, RecordingState, TrackSelection, ViewMode,
-    begin_project_load, should_apply_project_snapshot, snapshot_matches_pending_open,
+    AppData, ErrorKind, K3Window, LyricItem, LyricsPanelState, Overlay, PlaybackAction,
+    PlaybackState, PlaybackTransitionTracker, ProjectItem, ProjectState, RecordingState,
+    TrackSelection, ViewMode, apply_lyrics_search_result, begin_lyrics_context, begin_project_load,
+    should_apply_project_snapshot, snapshot_matches_pending_open,
 };
-use k3_app::{PlaybackSnapshot, PlaybackStatus, TrackKind};
+use crate::settings::GuiSettings;
+use k3_app::{
+    LyricsChoice, LyricsSearch, PlaybackSnapshot, PlaybackStatus, ProjectSummary, TrackKind,
+};
 use uuid::Uuid;
 
 thread_local! {
@@ -130,6 +138,23 @@ fn setup_window() -> Rc<MinimalSoftwareWindow> {
     let window = WINDOW.with(Clone::clone);
     window.set_size(PhysicalSize::new(1280, 800));
     window
+}
+
+fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> AppData {
+    AppData {
+        settings: GuiSettings::default(),
+        settings_writable: false,
+        projects,
+        selected_id: Some(selected_id),
+        pending_open_id: None,
+        selected_document_revision: None,
+        presented_project_generation: 0,
+        scan_generation: 0,
+        open_generation: 0,
+        lyrics_generation: 0,
+        lyrics_context: None,
+        lyrics_choices: Vec::new(),
+    }
 }
 
 fn click(ui: &K3Window, position: LogicalPosition) {
@@ -409,8 +434,95 @@ fn escape_closes_only_the_topmost_transient_layer() {
     assert_eq!(ui.get_overlay(), Overlay::None);
     assert_eq!(ui.get_view_mode(), ViewMode::Setup);
 
+    let closed_lyrics = Rc::new(Cell::new(0));
+    let observed_closed_lyrics = Rc::clone(&closed_lyrics);
+    ui.on_close_lyrics_search(move || observed_closed_lyrics.set(1));
+    ui.set_overlay(Overlay::LyricsSearch);
+    ui.set_lyrics_panel_state(LyricsPanelState::Searching);
+    press_key(&ui, Key::Escape);
+    assert_eq!(ui.get_overlay(), Overlay::None);
+    assert_eq!(closed_lyrics.get(), 1);
+
     press_key(&ui, Key::Escape);
     assert_eq!(ui.get_view_mode(), ViewMode::Rehearsal);
+}
+
+#[test]
+fn delayed_lyrics_results_cannot_cross_project_boundaries() {
+    let _window = setup_window();
+    let first_id = Uuid::new_v4();
+    let second_id = Uuid::new_v4();
+    let projects = vec![
+        ProjectSummary {
+            id: first_id,
+            title: "First".into(),
+            path: PathBuf::from("/projects/first"),
+            source_available: true,
+            document_revision: None,
+        },
+        ProjectSummary {
+            id: second_id,
+            title: "Second".into(),
+            path: PathBuf::from("/projects/second"),
+            source_available: true,
+            document_revision: None,
+        },
+    ];
+    let mut app_data = app_data_with_projects(projects, first_id);
+    let first_context = begin_lyrics_context(&mut app_data).expect("first project is selected");
+    app_data.selected_id = Some(second_id);
+    let app_data = Mutex::new(app_data);
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_overlay(Overlay::LyricsSearch);
+    let stale_choice =
+        LyricsChoice::for_test("test", "First", "Singer", 180.0, "[00:01.00] stale lyric");
+
+    apply_lyrics_search_result(
+        &ui.as_weak(),
+        &app_data,
+        &first_context,
+        Ok(LyricsSearch::Candidates(vec![stale_choice])),
+    );
+
+    assert_eq!(ui.get_lyrics_candidates().row_count(), 0);
+    assert!(app_data.lock().unwrap().lyrics_choices.is_empty());
+}
+
+#[test]
+fn reopened_lyrics_search_rejects_the_previous_search_result() {
+    let _window = setup_window();
+    let project_id = Uuid::new_v4();
+    let project = ProjectSummary {
+        id: project_id,
+        title: "Same project".into(),
+        path: PathBuf::from("/projects/same"),
+        source_available: true,
+        document_revision: None,
+    };
+    let mut app_data = app_data_with_projects(vec![project], project_id);
+    let previous_context = begin_lyrics_context(&mut app_data).expect("project is selected");
+    super::invalidate_lyrics_context(&mut app_data);
+    let current_context = begin_lyrics_context(&mut app_data).expect("project is selected");
+    assert_ne!(previous_context, current_context);
+
+    let app_data = Mutex::new(app_data);
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_overlay(Overlay::LyricsSearch);
+    apply_lyrics_search_result(
+        &ui.as_weak(),
+        &app_data,
+        &previous_context,
+        Ok(LyricsSearch::Candidates(vec![LyricsChoice::for_test(
+            "test",
+            "Same project",
+            "Singer",
+            180.0,
+            "[00:01.00] stale lyric",
+        )])),
+    );
+
+    assert_eq!(ui.get_lyrics_candidates().row_count(), 0);
+    assert!(app_data.lock().unwrap().lyrics_choices.is_empty());
 }
 
 #[test]

@@ -24,6 +24,30 @@ usage() {
     echo "set K3_PRESERVE_BACKING_VOCALS=false to disable keeping backing vocals in accompaniment" >&2
 }
 
+print_separation_outputs() {
+    local project_dir="$1"
+    "$python_bin" - "$project_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+with (project / "project.json").open(encoding="utf-8-sig") as handle:
+    separation = json.load(handle)["separation"]
+if separation.get("status") != "ready":
+    raise SystemExit("k3-separate: project did not persist a ready separation manifest")
+details = separation["details"]
+for label, field in (
+    ("vocals", "vocals"),
+    ("backing vocals", "backing_vocals"),
+    ("accompaniment", "accompaniment"),
+):
+    relative = details.get(field)
+    if relative:
+        print(f"{label}: {project / relative}")
+PY
+}
+
 input_args=()
 output_arg="$default_output_dir"
 while [[ $# -gt 0 ]]; do
@@ -211,11 +235,7 @@ for index in "${!input_paths[@]}"; do
 
     if K3_SEPARATE_WORKER_MODE=1 "$k3_bin" "${separate_args[@]}"; then
         echo "project: $project_dir"
-        echo "vocals: $project_dir/stems/vocals.wav"
-        if [[ $preserve_backing_vocals -eq 1 ]]; then
-            echo "backing vocals: $project_dir/stems/backing-vocals.wav"
-        fi
-        echo "accompaniment: $project_dir/stems/accompaniment.wav"
+        print_separation_outputs "$project_dir"
     else
         echo "k3-separate: separation failed for project: $project_dir" >&2
         failures=$((failures + 1))
