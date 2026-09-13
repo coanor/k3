@@ -154,6 +154,7 @@ fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> A
         lyrics_generation: 0,
         lyrics_context: None,
         lyrics_choices: Vec::new(),
+        separation_running: false,
     }
 }
 

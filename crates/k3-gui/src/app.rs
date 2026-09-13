@@ -12,6 +12,7 @@ use std::{
 
 use crate::{
     logging::DiagnosticLog,
+    separation::{self, Profile, SeparationRequest},
     settings::{GuiSettings, SettingsWriter, SettingsWriterHandle},
     ui_text,
 };
@@ -40,6 +41,7 @@ struct AppData {
     lyrics_generation: u64,
     lyrics_context: Option<LyricsContext>,
     lyrics_choices: Vec<LyricsChoice>,
+    separation_running: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +115,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         lyrics_generation: 0,
         lyrics_context: None,
         lyrics_choices: Vec::new(),
+        separation_running: false,
     }));
     let (settings_writer, settings_writer_handle) = SettingsWriter::start()?;
     let playback = Arc::new(PlaybackService::start(RodioBackend::default()));
@@ -208,6 +211,7 @@ fn install_callbacks(
     install_playback_callbacks(ui, data, playback, recording, settings_writer);
     install_recording_callbacks(ui, data, playback, recording);
     install_lyrics_callbacks(ui, data, recording);
+    install_separation_callbacks(ui, data, settings_writer);
 }
 
 fn install_lyrics_callbacks(
@@ -505,6 +509,182 @@ fn lyrics_context_matches(data: &Mutex<AppData>, context: &LyricsContext) -> boo
         .is_ok_and(|data| lyrics_context_is_current(&data, context))
 }
 
+fn install_separation_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    settings_writer: &SettingsWriterHandle,
+) {
+    install_choose_separation_source(ui, data);
+    install_start_separation(ui, data, settings_writer);
+}
+
+fn install_choose_separation_source(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
+    let weak = ui.as_weak();
+    let picker_data = Arc::clone(data);
+    ui.on_choose_separation_source(move || {
+        let weak = weak.clone();
+        let picker_data = Arc::clone(&picker_data);
+        thread::spawn(move || {
+            let Some(source) = rfd::FileDialog::new()
+                .add_filter(
+                    "Audio",
+                    &["flac", "mp3", "wav", "m4a", "ogg", "opus", "aac"],
+                )
+                .pick_file()
+            else {
+                return;
+            };
+            let root = picker_data
+                .lock()
+                .ok()
+                .and_then(|data| data.settings.projects_root.clone());
+            let result = root
+                .as_deref()
+                .ok_or_else(|| "Choose a projects folder first".to_string())
+                .and_then(|root| separation::destination(&source, root));
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                if ui.get_separation_state() == SeparationState::Running {
+                    return;
+                }
+                match result {
+                    Ok((_, exists)) => {
+                        ui.set_separation_source(path_text(&source));
+                        ui.set_separation_existing(exists);
+                        ui.set_separation_state(SeparationState::Idle);
+                        ui.set_separation_message(SharedString::default());
+                    }
+                    Err(error) => {
+                        ui.set_separation_state(SeparationState::Error);
+                        ui.set_separation_message(error.into());
+                    }
+                }
+            });
+        });
+    });
+}
+
+fn install_start_separation(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    settings_writer: &SettingsWriterHandle,
+) {
+    let weak = ui.as_weak();
+    let data = Arc::clone(data);
+    let settings_writer = settings_writer.clone();
+    ui.on_start_separation(move |source, profile_index, allow_replace| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let root = data
+            .lock()
+            .ok()
+            .and_then(|data| data.settings.projects_root.clone());
+        let Some(root) = root else {
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message("Choose a projects folder first".into());
+            return;
+        };
+        let request = SeparationRequest {
+            source: PathBuf::from(source.as_str()),
+            projects_root: root.clone(),
+            profile: Profile::from_index(profile_index),
+            allow_replace,
+        };
+        let (project, exists) = match separation::destination(&request.source, &root) {
+            Ok(destination) => destination,
+            Err(error) => {
+                ui.set_separation_state(SeparationState::Error);
+                ui.set_separation_message(error.into());
+                return;
+            }
+        };
+        if exists && !allow_replace {
+            ui.set_separation_existing(true);
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message(
+                "This project already exists. Review the replacement warning and try again.".into(),
+            );
+            return;
+        }
+        let script = match separation::bundled_script() {
+            Ok(script) => script,
+            Err(error) => {
+                ui.set_separation_state(SeparationState::Error);
+                ui.set_separation_message(error.into());
+                return;
+            }
+        };
+        let Ok(mut state) = data.lock() else {
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message("Could not access the project library".into());
+            return;
+        };
+        if state.separation_running {
+            return;
+        }
+        if exists
+            && state.projects.iter().any(|item| {
+                (Some(item.id) == state.selected_id || Some(item.id) == state.pending_open_id)
+                    && item.path == project
+            })
+        {
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message(
+                "Switch to another project before replacing the loaded song's stems.".into(),
+            );
+            return;
+        }
+        state.separation_running = true;
+        drop(state);
+        ui.set_separation_state(SeparationState::Running);
+        ui.set_separation_message("Separating audio. This may take several minutes…".into());
+        run_separation_task(
+            weak.clone(),
+            Arc::clone(&data),
+            settings_writer.clone(),
+            request,
+            script,
+        );
+    });
+}
+
+fn run_separation_task(
+    weak: slint::Weak<K3Window>,
+    data: Arc<Mutex<AppData>>,
+    settings_writer: SettingsWriterHandle,
+    request: SeparationRequest,
+    script: PathBuf,
+) {
+    thread::spawn(move || {
+        let root = request.projects_root.clone();
+        let result = separation::run(&request, &script);
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Ok(mut state) = data.lock() {
+                state.separation_running = false;
+            }
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(_) => {
+                    ui.set_separation_state(SeparationState::Success);
+                    ui.set_separation_message(
+                        "Separation complete. Select the song in the project list.".into(),
+                    );
+                }
+                Err(error) => {
+                    ui.set_separation_state(SeparationState::Error);
+                    ui.set_separation_message(error.into());
+                }
+            }
+            scan_library(weak, data, settings_writer, root, ScanIntent::Refresh);
+        });
+    });
+}
+
 fn install_library_callbacks(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
@@ -548,6 +728,12 @@ fn install_save_root_callback(
         let data = Arc::clone(data);
         let settings_writer = settings_writer.clone();
         ui.unwrap().on_save_projects_root(move |root| {
+            if data.lock().is_ok_and(|data| data.separation_running) {
+                if let Some(ui) = ui.upgrade() {
+                    show_error(&ui, "Wait for separation to finish before changing folders");
+                }
+                return;
+            }
             let path = PathBuf::from(root.as_str());
             if !path.is_dir() {
                 if let Some(ui) = ui.upgrade() {
@@ -627,6 +813,9 @@ fn install_open_project_callback(
         let playback = Arc::clone(playback);
         let recording = Arc::clone(recording);
         ui.unwrap().on_open_project(move |id| {
+            if data.lock().is_ok_and(|data| data.separation_running) {
+                return;
+            }
             if recording
                 .lock()
                 .is_ok_and(|recording| recording.is_recording())
@@ -1077,6 +1266,11 @@ fn scan_library(
                     ui.set_loading(false);
                     if intent.adopts_root() {
                         ui.set_projects_root(path_text(&root));
+                        ui.set_separation_source(SharedString::default());
+                        ui.set_separation_existing(false);
+                        ui.set_separation_state(SeparationState::Idle);
+                        ui.set_separation_message(SharedString::default());
+                        ui.set_separation_panel_open(false);
                     }
                     ui.set_view_mode(ViewMode::Rehearsal);
                     ui.set_project_changed(project_changed);

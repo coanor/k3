@@ -194,6 +194,10 @@ for index in "${!input_paths[@]}"; do
 
     replacing=0
     if [[ -f "$project_dir/project.json" ]]; then
+        if [[ "${K3_NO_OVERWRITE:-0}" == "1" ]]; then
+            echo "k3-separate: project already exists; refusing to replace stems: $project_dir" >&2
+            exit 1
+        fi
         replacing=1
         echo "k3-separate: re-separating existing project with current settings: $project_dir" >&2
     else

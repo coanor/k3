@@ -82,3 +82,40 @@ else:
     }
     assert!(!stdout.contains("stems/vocals.wav"));
 }
+
+#[test]
+fn shell_wrapper_refuses_existing_project_when_no_overwrite_is_set() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let song = sandbox.path().join("song.wav");
+    fs::write(&song, b"audio").unwrap();
+    let projects = sandbox.path().join("projects");
+    let project = projects.join("song");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("project.json"), b"existing project").unwrap();
+    let python = Command::new("sh")
+        .args(["-c", "command -v python3"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap();
+    let wrapper = concat!(env!("CARGO_MANIFEST_DIR"), "/../../separate.sh");
+    let output = Command::new("bash")
+        .arg(wrapper)
+        .args([
+            "-f",
+            song.to_str().unwrap(),
+            "-d",
+            projects.to_str().unwrap(),
+        ])
+        .env("K3_BIN", "/bin/true")
+        .env("K3_PYTHON", python.trim())
+        .env("K3_NO_OVERWRITE", "1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("refusing to replace stems"));
+    assert_eq!(
+        fs::read(project.join("project.json")).unwrap(),
+        b"existing project"
+    );
+}

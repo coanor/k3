@@ -185,6 +185,9 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
     $title = [IO.Path]::GetFileNameWithoutExtension($input)
     $replacing = Test-Path -LiteralPath (Join-Path $project "project.json") -PathType Leaf
     if ($replacing) {
+        if ($env:K3_NO_OVERWRITE -eq "1") {
+            throw "project already exists; refusing to replace stems: $project"
+        }
         Write-Host "正在按当前配置重新分离：$title"
     } else {
         Write-Host "正在创建 project：$title"
