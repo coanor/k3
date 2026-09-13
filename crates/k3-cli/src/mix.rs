@@ -230,7 +230,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(samples.len(), frames * 2);
         let left = samples
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[0])
             .collect::<Vec<_>>();
         let crossings = left[1_000..7_000]
