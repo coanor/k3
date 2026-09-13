@@ -3575,7 +3575,10 @@ name = "k3-gui"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "fontique",
+ "k3",
  "k3-app",
+ "qrcode",
  "rfd",
  "serde",
  "serde_json",

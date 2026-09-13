@@ -817,6 +817,10 @@ fn download_index_skips_equal_quality_and_replaces_lower_quality() {
     index.save().unwrap();
 
     let loaded = DownloadIndex::load(&path).unwrap();
+    assert_eq!(
+        loaded.cached_path(7),
+        Some(sandbox.path().join("Artist-Song.flac"))
+    );
     assert_eq!(loaded.decision(7, Quality::ExHigh), DownloadDecision::Skip);
     assert_eq!(
         loaded.decision(7, Quality::Lossless),
@@ -837,6 +841,7 @@ fn download_index_skips_equal_quality_and_replaces_lower_quality() {
         tampered.decision(8, Quality::HiRes),
         DownloadDecision::Download
     );
+    assert_eq!(tampered.cached_path(8), None);
 }
 
 #[test]

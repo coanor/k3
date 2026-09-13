@@ -43,7 +43,6 @@ impl SessionStore {
         Self { path }
     }
 
-    #[cfg(test)]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -155,7 +154,6 @@ impl LoginTicket {
         }
     }
 
-    #[cfg(test)]
     pub fn qr_url(&self) -> &str {
         &self.qr_url
     }

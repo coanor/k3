@@ -186,6 +186,17 @@ impl NeteaseClient {
         })
     }
 
+    pub fn downloaded_song_path(
+        &self,
+        music_root: &Path,
+        song_id: u64,
+    ) -> Result<Option<std::path::PathBuf>, NeteaseError> {
+        let index_path = music_root
+            .join("NetEase")
+            .join(".k3-netease-downloads.json");
+        Ok(DownloadIndex::load(&index_path)?.cached_path(song_id))
+    }
+
     fn select_audio_source(
         &self,
         cookie: &str,

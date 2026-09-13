@@ -1,9 +1,10 @@
 mod effects;
 mod library;
 mod mix;
-mod netease;
 mod python_separator;
 mod tui;
+
+use k3::netease;
 
 use std::{error::Error, path::PathBuf};
 

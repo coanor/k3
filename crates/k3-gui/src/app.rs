@@ -26,6 +26,8 @@ use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel};
 use uuid::Uuid;
 
+mod netease_gui;
+
 slint::include_modules!();
 
 struct AppData {
@@ -123,6 +125,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let _ = playback.execute(PlaybackCommand::SetVolume(initial_volume));
     let snapshots = playback.subscribe()?;
     install_callbacks(&ui, &data, &playback, &recording, &settings_writer_handle);
+    let netease_running = netease_gui::install(&ui, &data);
     install_focus_refresh(&ui, &data, &settings_writer_handle);
 
     let pump_running = Arc::new(AtomicBool::new(true));
@@ -149,6 +152,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let ui_result = ui.run();
+    netease_running.store(false, Ordering::Release);
     if let Ok(mut recording) = recording.lock() {
         recording.abort();
     }
