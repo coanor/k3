@@ -1,0 +1,1821 @@
+{
+  "schema_version": 1,
+  "platforms": {
+    "windows": [
+      {
+        "canonical_id": "arc",
+        "aliases": [],
+        "display_name": "Arc",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "arc-package-stable",
+            "template": "{local_app_data}/Packages/TheBrowserCompany.Arc_*/LocalCache/Local/Arc/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "brave",
+        "aliases": [],
+        "display_name": "Brave",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "brave-stable-local",
+            "template": "{local_app_data}/BraveSoftware/Brave-Browser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "brave-beta-local",
+            "template": "{local_app_data}/BraveSoftware/Brave-Browser-Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "brave-dev-local",
+            "template": "{local_app_data}/BraveSoftware/Brave-Browser-Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "brave-nightly-local",
+            "template": "{local_app_data}/BraveSoftware/Brave-Browser-Nightly/User Data",
+            "channel": "nightly",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "brave-stable-roaming",
+            "template": "{roaming_app_data}/BraveSoftware/Brave-Browser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "brave-beta-roaming",
+            "template": "{roaming_app_data}/BraveSoftware/Brave-Browser-Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          },
+          {
+            "root_id": "brave-dev-roaming",
+            "template": "{roaming_app_data}/BraveSoftware/Brave-Browser-Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 70
+          },
+          {
+            "root_id": "brave-nightly-roaming",
+            "template": "{roaming_app_data}/BraveSoftware/Brave-Browser-Nightly/User Data",
+            "channel": "nightly",
+            "discovery": "chromium_user_data",
+            "priority": 80
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "browser_from_vought",
+        "aliases": [
+          "vought"
+        ],
+        "display_name": "Browser from Vought",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "browser-from-vought-roaming",
+            "template": "{roaming_app_data}/Browser from Vought",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "browser-from-vought-local",
+            "template": "{local_app_data}/Browser from Vought",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "chrome",
+        "aliases": [],
+        "display_name": "Google Chrome",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chrome-stable-local",
+            "template": "{local_app_data}/Google/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "chrome-beta-local",
+            "template": "{local_app_data}/Google/Chrome Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "chrome-dev-local",
+            "template": "{local_app_data}/Google/Chrome Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "chrome-canary-local",
+            "template": "{local_app_data}/Google/Chrome SxS/User Data",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "chrome-stable-roaming",
+            "template": "{roaming_app_data}/Google/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "chrome-beta-roaming",
+            "template": "{roaming_app_data}/Google/Chrome Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          },
+          {
+            "root_id": "chrome-dev-roaming",
+            "template": "{roaming_app_data}/Google/Chrome Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 70
+          },
+          {
+            "root_id": "chrome-canary-roaming",
+            "template": "{roaming_app_data}/Google/Chrome SxS/User Data",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 80
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10",
+            "v20"
+          ]
+        }
+      },
+      {
+        "canonical_id": "chromium",
+        "aliases": [],
+        "display_name": "Chromium",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chromium-local",
+            "template": "{local_app_data}/Chromium/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "chromium-roaming",
+            "template": "{roaming_app_data}/Chromium/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "coccoc",
+        "aliases": [],
+        "display_name": "CocCoc",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "coccoc-local",
+            "template": "{local_app_data}/CocCoc/Browser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "dc_browser",
+        "aliases": [
+          "dc"
+        ],
+        "display_name": "DC Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "dc-browser-local",
+            "template": "{local_app_data}/DCBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "dc-browser-roaming",
+            "template": "{roaming_app_data}/DCBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "duckduckgo",
+        "aliases": [],
+        "display_name": "DuckDuckGo",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "duckduckgo-package-stable",
+            "template": "{local_app_data}/Packages/DuckDuckGo.DesktopBrowser_*/LocalState/EBWebView",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "edge",
+        "aliases": [],
+        "display_name": "Microsoft Edge",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "edge-stable-local",
+            "template": "{local_app_data}/Microsoft/Edge/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "edge-beta-local",
+            "template": "{local_app_data}/Microsoft/Edge Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "edge-dev-local",
+            "template": "{local_app_data}/Microsoft/Edge Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "edge-canary-local",
+            "template": "{local_app_data}/Microsoft/Edge SxS/User Data",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "edge-stable-roaming",
+            "template": "{roaming_app_data}/Microsoft/Edge/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "edge-beta-roaming",
+            "template": "{roaming_app_data}/Microsoft/Edge Beta/User Data",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          },
+          {
+            "root_id": "edge-dev-roaming",
+            "template": "{roaming_app_data}/Microsoft/Edge Dev/User Data",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 70
+          },
+          {
+            "root_id": "edge-canary-roaming",
+            "template": "{roaming_app_data}/Microsoft/Edge SxS/User Data",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 80
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "octo_browser",
+        "aliases": [],
+        "display_name": "Octo Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "octo-local-temporary",
+            "template": "{local_app_data}/Octo Browser/tmp/*",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "octo-roaming-temporary",
+            "template": "{roaming_app_data}/Octo Browser/tmp/*",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "opera",
+        "aliases": [],
+        "display_name": "Opera",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "opera-stable-local",
+            "template": "{local_app_data}/Opera Software/Opera Stable",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "opera-next-local",
+            "template": "{local_app_data}/Opera Software/Opera Next",
+            "channel": "next",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "opera-developer-local",
+            "template": "{local_app_data}/Opera Software/Opera Developer",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "opera-stable-roaming",
+            "template": "{roaming_app_data}/Opera Software/Opera Stable",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "opera-next-roaming",
+            "template": "{roaming_app_data}/Opera Software/Opera Next",
+            "channel": "next",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "opera-developer-roaming",
+            "template": "{roaming_app_data}/Opera Software/Opera Developer",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "opera_gx",
+        "aliases": [
+          "opera-gx",
+          "opera gx"
+        ],
+        "display_name": "Opera GX",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "opera-gx-stable-local",
+            "template": "{local_app_data}/Opera Software/Opera GX Stable",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "opera-gx-stable-roaming",
+            "template": "{roaming_app_data}/Opera Software/Opera GX Stable",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "qq_browser",
+        "aliases": [
+          "qq"
+        ],
+        "display_name": "QQ Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "qq-browser-local",
+            "template": "{local_app_data}/Tencent/QQBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "qq-browser-roaming",
+            "template": "{roaming_app_data}/Tencent/QQBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "sogou",
+        "aliases": [],
+        "display_name": "Sogou Explorer",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "sogou-local",
+            "template": "{local_app_data}/Sogou/SogouExplorer/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "sogou-roaming",
+            "template": "{roaming_app_data}/Sogou/SogouExplorer/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "speed_360",
+        "aliases": [
+          "360"
+        ],
+        "display_name": "360 Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "speed-360-local",
+            "template": "{local_app_data}/360chrome/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "speed-360-roaming",
+            "template": "{roaming_app_data}/360chrome/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "speed_360x",
+        "aliases": [
+          "360x"
+        ],
+        "display_name": "360X Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "speed-360x-local",
+            "template": "{local_app_data}/360ChromeX/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "speed-360x-roaming",
+            "template": "{roaming_app_data}/360ChromeX/Chrome/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "vivaldi",
+        "aliases": [],
+        "display_name": "Vivaldi",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "vivaldi-local",
+            "template": "{local_app_data}/Vivaldi/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "vivaldi-roaming",
+            "template": "{roaming_app_data}/Vivaldi/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "yandex",
+        "aliases": [],
+        "display_name": "Yandex Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "yandex-local",
+            "template": "{local_app_data}/Yandex/YandexBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "yandex-roaming",
+            "template": "{roaming_app_data}/Yandex/YandexBrowser/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "legacy_dpapi",
+            "v10"
+          ]
+        }
+      },
+      {
+        "canonical_id": "firefox",
+        "aliases": [],
+        "display_name": "Firefox",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "firefox-roaming",
+            "template": "{roaming_app_data}/Mozilla/Firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          },
+          {
+            "root_id": "firefox-local",
+            "template": "{local_app_data}/Mozilla/Firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "librewolf",
+        "aliases": [],
+        "display_name": "LibreWolf",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "librewolf-local",
+            "template": "{local_app_data}/librewolf",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          },
+          {
+            "root_id": "librewolf-roaming",
+            "template": "{roaming_app_data}/librewolf",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "zen",
+        "aliases": [],
+        "display_name": "Zen Browser",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "zen-roaming",
+            "template": "{roaming_app_data}/zen",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          },
+          {
+            "root_id": "zen-local",
+            "template": "{local_app_data}/zen",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "internet_explorer",
+        "aliases": [
+          "ie"
+        ],
+        "display_name": "Internet Explorer",
+        "engine": "internet_explorer",
+        "roots": [
+          {
+            "root_id": "ie-webcache-roaming",
+            "template": "{roaming_app_data}/Microsoft/Windows/WebCache",
+            "channel": "stable",
+            "discovery": "internet_explorer_web_cache",
+            "priority": 10
+          },
+          {
+            "root_id": "ie-webcache-local",
+            "template": "{local_app_data}/Microsoft/Windows/WebCache",
+            "channel": "stable",
+            "discovery": "internet_explorer_web_cache",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "internet_explorer_ese"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": []
+        }
+      }
+    ],
+    "macos": [
+      {
+        "canonical_id": "arc",
+        "aliases": [],
+        "display_name": "Arc",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "arc-stable",
+            "template": "{home}/Library/Application Support/Arc/User Data",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Arc Safe Storage",
+            "account": "Arc"
+          }
+        }
+      },
+      {
+        "canonical_id": "brave",
+        "aliases": [],
+        "display_name": "Brave",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "brave-stable",
+            "template": "{home}/Library/Application Support/BraveSoftware/Brave-Browser",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "brave-beta",
+            "template": "{home}/Library/Application Support/BraveSoftware/Brave-Browser-Beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "brave-dev",
+            "template": "{home}/Library/Application Support/BraveSoftware/Brave-Browser-Dev",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "brave-nightly",
+            "template": "{home}/Library/Application Support/BraveSoftware/Brave-Browser-Nightly",
+            "channel": "nightly",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Brave Safe Storage",
+            "account": "Brave"
+          }
+        }
+      },
+      {
+        "canonical_id": "chrome",
+        "aliases": [],
+        "display_name": "Google Chrome",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chrome-stable",
+            "template": "{home}/Library/Application Support/Google/Chrome",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "chrome-beta",
+            "template": "{home}/Library/Application Support/Google/Chrome Beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "chrome-dev",
+            "template": "{home}/Library/Application Support/Google/Chrome Dev",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "chrome-canary",
+            "template": "{home}/Library/Application Support/Google/Chrome Canary",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Chrome Safe Storage",
+            "account": "Chrome"
+          }
+        }
+      },
+      {
+        "canonical_id": "chromium",
+        "aliases": [],
+        "display_name": "Chromium",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chromium-stable",
+            "template": "{home}/Library/Application Support/Chromium",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Chrome Safe Storage",
+            "account": "Chromium"
+          }
+        }
+      },
+      {
+        "canonical_id": "coccoc",
+        "aliases": [],
+        "display_name": "CocCoc",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "coccoc-stable",
+            "template": "{home}/Library/Application Support/Coccoc",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "edge",
+        "aliases": [],
+        "display_name": "Microsoft Edge",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "edge-stable",
+            "template": "{home}/Library/Application Support/Microsoft Edge",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "edge-beta",
+            "template": "{home}/Library/Application Support/Microsoft Edge Beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "edge-dev",
+            "template": "{home}/Library/Application Support/Microsoft Edge Dev",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "edge-canary",
+            "template": "{home}/Library/Application Support/Microsoft Edge Canary",
+            "channel": "canary",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Microsoft Edge Safe Storage",
+            "account": "Microsoft Edge"
+          }
+        }
+      },
+      {
+        "canonical_id": "opera",
+        "aliases": [],
+        "display_name": "Opera",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "opera-stable",
+            "template": "{home}/Library/Application Support/com.operasoftware.Opera",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "opera-next",
+            "template": "{home}/Library/Application Support/com.operasoftware.OperaNext",
+            "channel": "next",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "opera-developer",
+            "template": "{home}/Library/Application Support/com.operasoftware.OperaDeveloper",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Opera Safe Storage",
+            "account": "Opera"
+          }
+        }
+      },
+      {
+        "canonical_id": "opera_gx",
+        "aliases": [
+          "opera-gx",
+          "opera gx"
+        ],
+        "display_name": "Opera GX",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "opera-gx-stable",
+            "template": "{home}/Library/Application Support/com.operasoftware.OperaGX",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Opera Safe Storage",
+            "account": "Opera"
+          }
+        }
+      },
+      {
+        "canonical_id": "vivaldi",
+        "aliases": [],
+        "display_name": "Vivaldi",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "vivaldi-stable",
+            "template": "{home}/Library/Application Support/Vivaldi",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10"
+          ]
+        },
+        "key_credentials": {
+          "macos_keychain": {
+            "service": "Vivaldi Safe Storage",
+            "account": "Vivaldi"
+          }
+        }
+      },
+      {
+        "canonical_id": "yandex",
+        "aliases": [],
+        "display_name": "Yandex Browser",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "yandex-stable",
+            "template": "{home}/Library/Application Support/Yandex/YandexBrowser",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "firefox",
+        "aliases": [],
+        "display_name": "Firefox",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "firefox",
+            "template": "{home}/Library/Application Support/Firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "librewolf",
+        "aliases": [],
+        "display_name": "LibreWolf",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "librewolf",
+            "template": "{home}/Library/Application Support/librewolf",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "zen",
+        "aliases": [],
+        "display_name": "Zen Browser",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "zen",
+            "template": "{home}/Library/Application Support/zen",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "safari",
+        "aliases": [],
+        "display_name": "Safari",
+        "engine": "safari",
+        "roots": [
+          {
+            "root_id": "safari-user-library",
+            "template": "{home}/Library",
+            "channel": "stable",
+            "discovery": "safari_default_profile",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "safari_binarycookies"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": []
+        }
+      }
+    ],
+    "linux": [
+      {
+        "canonical_id": "arc",
+        "aliases": [],
+        "display_name": "Arc",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "arc-native",
+            "template": "{xdg_config_home}/arc",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "arc-snap",
+            "template": "{home}/snap/arc/common/arc",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "arc-flatpak",
+            "template": "{home}/.var/app/org.arc.Arc/config/arc",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "arc"
+        }
+      },
+      {
+        "canonical_id": "brave",
+        "aliases": [],
+        "display_name": "Brave",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "brave-stable-native",
+            "template": "{xdg_config_home}/BraveSoftware/Brave-Browser",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "brave-beta-native",
+            "template": "{xdg_config_home}/BraveSoftware/Brave-Browser-Beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "brave-dev-native",
+            "template": "{xdg_config_home}/BraveSoftware/Brave-Browser-Dev",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "brave-nightly-native",
+            "template": "{xdg_config_home}/BraveSoftware/Brave-Browser-Nightly",
+            "channel": "nightly",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "brave-snap",
+            "template": "{home}/snap/brave/current/.config/BraveSoftware/Brave-Browser",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "brave-flatpak",
+            "template": "{home}/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "brave"
+        }
+      },
+      {
+        "canonical_id": "chrome",
+        "aliases": [],
+        "display_name": "Google Chrome",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chrome-stable",
+            "template": "{config_home}/google-chrome",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "chrome-beta",
+            "template": "{config_home}/google-chrome-beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "chrome-dev",
+            "template": "{config_home}/google-chrome-unstable",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "chrome-flatpak",
+            "template": "{home}/.var/app/com.google.Chrome/config/google-chrome",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "chrome"
+        }
+      },
+      {
+        "canonical_id": "chromium",
+        "aliases": [],
+        "display_name": "Chromium",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "chromium-native",
+            "template": "{xdg_config_home}/chromium",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "chromium-snap",
+            "template": "{home}/snap/chromium/common/chromium",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "chromium-flatpak",
+            "template": "{home}/.var/app/org.chromium.Chromium/config/chromium",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "chromium"
+        }
+      },
+      {
+        "canonical_id": "edge",
+        "aliases": [],
+        "display_name": "Microsoft Edge",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "edge-stable-native",
+            "template": "{xdg_config_home}/microsoft-edge",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "edge-beta-native",
+            "template": "{xdg_config_home}/microsoft-edge-beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "edge-dev-native",
+            "template": "{xdg_config_home}/microsoft-edge-dev",
+            "channel": "dev",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "edge-nightly-native",
+            "template": "{xdg_config_home}/microsoft-edge-nightly",
+            "channel": "nightly",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "edge-flatpak",
+            "template": "{home}/.var/app/com.microsoft.Edge/config/microsoft-edge",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "chromium"
+        }
+      },
+      {
+        "canonical_id": "opera",
+        "aliases": [],
+        "display_name": "Opera",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "opera-stable-native",
+            "template": "{xdg_config_home}/opera",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "opera-beta-native",
+            "template": "{xdg_config_home}/opera-beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "opera-developer-native",
+            "template": "{xdg_config_home}/opera-developer",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          },
+          {
+            "root_id": "opera-stable-snap",
+            "template": "{home}/snap/opera/current/.config/opera",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 40
+          },
+          {
+            "root_id": "opera-beta-snap",
+            "template": "{home}/snap/opera-beta/current/.config/opera",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 50
+          },
+          {
+            "root_id": "opera-developer-snap",
+            "template": "{home}/snap/opera-developer/current/.config/opera",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 60
+          },
+          {
+            "root_id": "opera-stable-flatpak",
+            "template": "{home}/.var/app/com.opera.Opera/config/opera",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 70
+          },
+          {
+            "root_id": "opera-beta-flatpak",
+            "template": "{home}/.var/app/com.opera.Opera/config/opera-beta",
+            "channel": "beta",
+            "discovery": "chromium_user_data",
+            "priority": 80
+          },
+          {
+            "root_id": "opera-developer-flatpak",
+            "template": "{home}/.var/app/com.opera.Opera/config/opera-developer",
+            "channel": "developer",
+            "discovery": "chromium_user_data",
+            "priority": 90
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "chromium"
+        }
+      },
+      {
+        "canonical_id": "vivaldi",
+        "aliases": [],
+        "display_name": "Vivaldi",
+        "engine": "chromium",
+        "roots": [
+          {
+            "root_id": "vivaldi-stable-native",
+            "template": "{xdg_config_home}/vivaldi",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 10
+          },
+          {
+            "root_id": "vivaldi-snapshot-native",
+            "template": "{xdg_config_home}/vivaldi-snapshot",
+            "channel": "snapshot",
+            "discovery": "chromium_user_data",
+            "priority": 20
+          },
+          {
+            "root_id": "vivaldi-flatpak",
+            "template": "{home}/.var/app/com.vivaldi.Vivaldi/config/vivaldi",
+            "channel": "stable",
+            "discovery": "chromium_user_data",
+            "priority": 30
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "chromium_sqlite"
+          ],
+          "declared_session_formats": [],
+          "declared_decryption_tiers": [
+            "v10",
+            "v11"
+          ]
+        },
+        "key_credentials": {
+          "linux_crypt_name": "chrome"
+        }
+      },
+      {
+        "canonical_id": "firefox",
+        "aliases": [],
+        "display_name": "Firefox",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "firefox-snap",
+            "template": "{home}/snap/firefox/common/.mozilla/firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          },
+          {
+            "root_id": "firefox-native",
+            "template": "{home}/.mozilla/firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 20
+          },
+          {
+            "root_id": "firefox-flatpak",
+            "template": "{home}/.var/app/org.mozilla.firefox/.mozilla/firefox",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 30
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "librewolf",
+        "aliases": [],
+        "display_name": "LibreWolf",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "librewolf-snap",
+            "template": "{home}/snap/librewolf/common/.librewolf",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          },
+          {
+            "root_id": "librewolf-native",
+            "template": "{home}/.librewolf",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 20
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "zen",
+        "aliases": [],
+        "display_name": "Zen Browser",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "zen-native",
+            "template": "{home}/.zen",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      },
+      {
+        "canonical_id": "cachy",
+        "aliases": [],
+        "display_name": "Cachy Browser",
+        "engine": "gecko",
+        "roots": [
+          {
+            "root_id": "cachy-native",
+            "template": "{home}/.cachy",
+            "channel": "stable",
+            "discovery": "mozilla_profiles_ini",
+            "priority": 10
+          }
+        ],
+        "capabilities": {
+          "declared_persistent_formats": [
+            "mozilla_sqlite"
+          ],
+          "declared_session_formats": [
+            "firefox_session_jsonlz4",
+            "firefox_session_json"
+          ],
+          "declared_decryption_tiers": []
+        }
+      }
+    ]
+  }
+}

@@ -214,9 +214,10 @@ printf '%s\n' '{"id":"health","method":"health"}' | \
 bash python/separator/scripts/install-cpu.sh .venv-separator 3.13
 ```
 
-老旧 CPU 建议使用 `fast`、`uvr-mdx-karaoke-2`、`segment_size=64` 或
-`128`，并关闭 autocast。CPU 分离可能明显慢于歌曲时长，不建议运行 quality
-RoFormer。
+老旧 CPU 建议使用 `fast`、`uvr-mdx-karaoke-2`，省略 `segment_size` 并关闭
+autocast。该 MDX 模型的原生分块大小是 `256`；覆盖为 `64` 或 `128` 会把 ONNX
+模型转换为 PyTorch 执行，不但更慢，还可能在不支持较新指令集的 CPU 上导致 worker
+异常退出。CPU 分离可能明显慢于歌曲时长，不建议运行 quality RoFormer。
 
 把 `separate.sh` 和运行包复制到另一台 Linux 机器时，最低要求是 x86-64
 Linux、Bash 4（脚本使用关联数组）、`realpath`、FFmpeg、可执行的 K3 二进制，
@@ -309,7 +310,7 @@ project。启动时扫描到的旧失败 project 也不会显示在左栏。
 | `separation.log_dir` | `K3_LOG_DIR` | 分离日志目录；单个 `separate.log` 每次覆盖 |
 | `separation.profile` | `K3_PROFILE` | `fast` / `balanced` / `quality` / `compatible` |
 | `separation.model` | `K3_MODEL` | 明确指定模型 |
-| `separation.segment_size` | `K3_SEGMENT_SIZE` | 推理分块大小 |
+| `separation.segment_size` | `K3_SEGMENT_SIZE` | 可选的推理分块大小覆盖；通常应省略并使用模型原生值 |
 | `separation.autocast` | `K3_AUTOCAST` | GPU 混合精度开关；CPU 建议设为 `false` |
 | `separation.preserve_backing_vocals` | `K3_PRESERVE_BACKING_VOCALS` | 默认 `true`；设为 `false` 才关闭和声保留 |
 
@@ -330,7 +331,81 @@ worker 的完整输出不会直接写入 TUI，而是保存到单个 `separate.l
 target/release/k3 tui --project /path/to/project
 ```
 
-### 3.3 候选状态图标（待选）
+### 3.3 网易云音乐实验性来源
+
+网易云音乐登录、搜索和音频下载依赖未公开网页接口，没有稳定性或兼容性承诺，默认
+关闭。只有接受这一风险并确认自己的下载行为符合账号权限及当地规则时，才在媒体库配置
+中显式启用：
+
+```json
+{
+  "netease": {
+    "enabled": true
+  }
+}
+```
+
+启用后，把焦点切到右栏并按 `n`，可在 `Local Music` 与 `NetEase` 间切换。首次进入
+会显示一次英文风险提示。接受后，推荐先在本机 Chrome 登录 `music.163.com`，再回到 K3
+按 `c` 导入会话；登录成功后会自动加载“我喜欢的音乐”。K3 会按 Chrome 最近使用顺序
+检查各个 Profile，并使用第一个经网易云验证成功的会话。
+
+如果 Chrome 导入不可用，按 `i` 生成二维码，用网易云音乐手机客户端扫描并确认。二维码
+直接显示在终端内，过期后按 `r` 刷新；二维码弹窗内也可以按 `c` 改用 Chrome。
+
+网易云来源快捷键：
+
+| 快捷键 | 作用 |
+|---|---|
+| `n` | 切换本地音乐与网易云来源 |
+| `c` | 未登录时从本机 Chrome 导入登录（推荐） |
+| `i` | 未登录时开始二维码登录 |
+| `l` | 加载“我喜欢的音乐” |
+| `/` | 搜索单曲 |
+| `↑` / `↓` | 移动选择 |
+| `←` / `→` | 切换结果页 |
+| `Space` | 勾选或取消当前歌曲 |
+| `a` | 勾选当前页 |
+| `A` | 勾选全部喜欢歌曲 |
+| `Enter` | 确认并开始下载所选歌曲 |
+| `x` | 退出网易云账号并删除本地凭据 |
+
+下载一次只处理一首歌。每首新下载成功的歌曲会自动进入 project 创建队列；全部下载结束
+后，K3 使用当前 `separation` 配置依次创建 project 并分离人声与伴奏。临时网络错误会
+有限重试；账号会话失效时队列暂停，重新从 Chrome 导入或扫码后继续。不可下载歌曲会
+跳过并计入结束摘要。下载期间仍可使用 TUI，但退出 K3 会要求确认取消队列。
+已有歌曲升级到更高音质时，K3 会更新原 project 内复制的音源并重新生成 stems，同时保留
+project ID、歌词、takes 和其他用户文件；若更新失败，原 project 音源和 stems 保持不变。
+
+K3 自动尝试账号当前可用的最高音质，并在状态信息中显示实际音质。文件保存到
+`music_root/NetEase/`，使用平铺命名：
+
+```text
+<主歌手>-<歌名>.<扩展名>
+```
+
+文件包含歌名、完整歌手列表、专辑、网易云歌曲 ID 和封面标签。下载索引按歌曲 ID 去重；
+已有同等或更高音质时跳过，获得更高音质后可安全升级。取消喜欢不会删除本地文件。
+下载完成后右栏自动刷新，并在全部下载结束后启动上述 project 创建与分离队列。分离失败
+不会删除已下载音频。对于启用自动 project 创建之前已经下载的歌曲，按 `n` 切回
+`Local Music`，选中歌曲后按 `Enter`，即可手动创建 project 并开始分离。
+
+每个操作系统用户只保存一个网易云账号。凭据位于系统标准 K3 配置目录中的
+`netease-session.json`：Linux 使用 `$XDG_CONFIG_HOME/k3/`（默认
+`~/.config/k3/`），Windows 使用 `%APPDATA%\k3\`，macOS 使用
+`~/Library/Application Support/k3/`。Unix 文件权限为 `0600`。这是可直接使用的
+Cookie 文件；它不会写入日志，但不能抵御已经可以读取当前用户文件的恶意程序。
+
+Chrome 导入只会在你按 `c` 时读取 `music.163.com` 的 Cookie，并只把 `MUSIC_U` 与可选
+的 `__csrf` 复制到上述 K3 会话文件；不会扫描或导出其他站点，也不会修改 Chrome 数据。
+按 `x` 只删除 K3 的副本，Chrome 仍保持登录。macOS 可能询问钥匙串权限；Linux 需要
+桌面钥匙串服务处于解锁状态；现代 Windows Chrome 的 App-Bound 加密可能要求以管理员
+权限运行，部分设备绑定会话仍可能无法导入。遇到这些情况可继续使用二维码登录。
+
+完整边界、失败语义和验收标准见
+[网易云音乐实验性集成规格](netease-music-integration-spec.md)。
+
+### 3.4 候选状态图标（待选）
 
 以下图标只是后续 TUI 设计的候选清单，当前版本不会因此改变快捷键或显示方式。
 优先考虑在常见终端中宽度稳定的 Unicode 符号，并与必要的英文文字组合使用：

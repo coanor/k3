@@ -1,6 +1,7 @@
 mod effects;
 mod library;
 mod mix;
+mod netease;
 mod python_separator;
 mod tui;
 
