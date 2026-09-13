@@ -5,22 +5,28 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aes = "0.8.4"
+base64 = "0.22.1"
+cbc = { version = "0.1.2", features = ["alloc"] }
 clap.workspace = true
 crossterm.workspace = true
 k3-core = { path = "../k3-core" }
 hound = "3.5.1"
 lofty = "0.24.0"
+num-bigint = "0.4.8"
+rand = "0.8.7"
 ratatui.workspace = true
 rodio = "0.22.2"
 rodio-wsola = "0.2.0"
 rtrb = "0.3.4"
+qrcode = { version = "0.14.1", default-features = false }
+rookie-cookies = { version = "=0.5.9", default-features = false, features = ["appbound"] }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }
 unicode-width = "0.2.1"
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

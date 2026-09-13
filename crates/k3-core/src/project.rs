@@ -366,6 +366,24 @@ impl Project {
         self.source.resolve(&self.root)
     }
 
+    /// 更新 project 内部复制的原始音源路径。
+    ///
+    /// 调用方必须先把新音源放入 project 的 `source/` 目录；此方法只更新持久化引用，
+    /// 不会触碰歌词、takes 或其他用户内容。
+    ///
+    /// # Errors
+    ///
+    /// 当路径不位于 `source/` 目录下时返回 [`ProjectError::Invalid`]。
+    pub fn replace_source(&mut self, source: ProjectPath) -> Result<(), ProjectError> {
+        if !source.as_str().starts_with("source/") {
+            return Err(ProjectError::Invalid(
+                "source must be stored below source/".into(),
+            ));
+        }
+        self.source = source;
+        Ok(())
+    }
+
     #[must_use]
     pub fn lyrics(&self) -> Option<&ProjectPath> {
         self.lyrics.as_ref()

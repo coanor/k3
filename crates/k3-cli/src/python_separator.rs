@@ -2,7 +2,13 @@ use std::{
     env, fs,
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Output, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
 };
 
 use k3_core::{
@@ -27,12 +33,27 @@ pub struct PythonSeparatorConfig {
 #[derive(Debug)]
 pub struct PythonStemSeparator {
     config: PythonSeparatorConfig,
+    cancellation: Arc<AtomicBool>,
 }
 
 impl PythonStemSeparator {
     #[must_use]
     pub fn new(config: PythonSeparatorConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            cancellation: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_cancellation(
+        config: PythonSeparatorConfig,
+        cancellation: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            config,
+            cancellation,
+        }
     }
 
     fn invoke(
@@ -40,6 +61,9 @@ impl PythonStemSeparator {
         input: &Path,
         profile: SeparationProfile,
     ) -> Result<SeparationManifest, String> {
+        if self.cancellation.load(Ordering::Acquire) {
+            return Err("separation cancelled".into());
+        }
         let output_dir = self.config.project_root.join("stems");
         if let Some(parent) = self.config.log_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -55,22 +79,6 @@ impl PythonStemSeparator {
                 self.config.log_path.display()
             )
         })?;
-        let mut command = Command::new(&self.config.worker);
-        if let Some(model_dir) = &self.config.model_dir {
-            command.arg("--model-dir").arg(model_dir);
-        }
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr_log))
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "cannot start separation worker {}: {error}",
-                    self.config.worker.display()
-                )
-            })?;
-
         let request = WorkerRequest {
             id: "k3-separate",
             method: "separate",
@@ -87,21 +95,40 @@ impl PythonStemSeparator {
                 },
             },
         };
-        {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| "separation worker stdin is unavailable".to_owned())?;
-            serde_json::to_writer(&mut stdin, &request)
-                .map_err(|error| format!("cannot encode worker request: {error}"))?;
-            stdin
-                .write_all(b"\n")
-                .map_err(|error| format!("cannot write worker request: {error}"))?;
+        let mut encoded_request = serde_json::to_vec(&request)
+            .map_err(|error| format!("cannot encode worker request: {error}"))?;
+        encoded_request.push(b'\n');
+
+        let mut command = Command::new(&self.config.worker);
+        if let Some(model_dir) = &self.config.model_dir {
+            command.arg("--model-dir").arg(model_dir);
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(stderr_log))
+            .spawn()
+            .map_err(|error| {
+                format!(
+                    "cannot start separation worker {}: {error}",
+                    self.config.worker.display()
+                )
+            })?;
+
+        let write_result = child.stdin.take().map_or_else(
+            || Err("separation worker stdin is unavailable".to_owned()),
+            |mut stdin| {
+                stdin
+                    .write_all(&encoded_request)
+                    .map_err(|error| format!("cannot write worker request: {error}"))
+            },
+        );
+        if let Err(error) = write_result {
+            terminate_and_reap(&mut child);
+            return Err(error);
         }
 
-        let output = child
-            .wait_with_output()
-            .map_err(|error| format!("cannot wait for separation worker: {error}"))?;
+        let output = wait_for_output(&mut child, &self.cancellation)?;
         if !output.status.success() {
             return Err(format!(
                 "separation worker exited with status {}{}",
@@ -207,6 +234,48 @@ impl PythonStemSeparator {
     }
 }
 
+fn wait_for_output(child: &mut Child, cancellation: &AtomicBool) -> Result<Output, String> {
+    let Some(mut stdout) = child.stdout.take() else {
+        terminate_and_reap(child);
+        return Err("separation worker stdout is unavailable".to_owned());
+    };
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let status = loop {
+        if cancellation.load(Ordering::Acquire) {
+            terminate_and_reap(child);
+            break Err("separation cancelled".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_and_reap(child);
+                break Err(format!("cannot wait for separation worker: {error}"));
+            }
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "separation worker stdout reader panicked".to_owned())?
+        .map_err(|error| format!("cannot read separation worker response: {error}"))?;
+    let status = status?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
+fn terminate_and_reap(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 pub fn separation_log_path() -> io::Result<PathBuf> {
     if let Some(directory) = env::var_os("K3_LOG_DIR").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(directory).join("separate.log"));
@@ -304,6 +373,82 @@ fn validate_output_path(actual: &Path, expected: &Path, label: &str) -> Result<(
         return Err(format!("worker {label} output is empty"));
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{PythonSeparatorConfig, PythonStemSeparator};
+    use k3_core::{SeparationProfile, StemSeparator};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn cancellation_terminates_and_reaps_worker_process() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let worker = sandbox.path().join("slow-worker");
+        let pid_path = sandbox.path().join("worker.pid");
+        fs::write(
+            &worker,
+            format!(
+                "#!/usr/bin/env python3\nimport os\nimport pathlib\nimport sys\nimport time\nsys.stdin.readline()\npathlib.Path({pid_path:?}).write_text(str(os.getpid()), encoding='utf-8')\nwhile True:\n    time.sleep(1)\n"
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&worker).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&worker, permissions).unwrap();
+        let source = sandbox.path().join("song.wav");
+        fs::write(&source, b"song").unwrap();
+        let project_root = sandbox.path().join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let separator_cancellation = cancellation.clone();
+        let handle = thread::spawn(move || {
+            let mut separator = PythonStemSeparator::with_cancellation(
+                PythonSeparatorConfig {
+                    worker,
+                    model_dir: None,
+                    project_root: project_root.clone(),
+                    log_path: project_root.join("separate.log"),
+                    model_id: None,
+                    overwrite: false,
+                    segment_size: None,
+                    autocast: true,
+                    preserve_backing_vocals: true,
+                },
+                separator_cancellation,
+            );
+            separator.separate(&source, SeparationProfile::Quality)
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = fs::read_to_string(&pid_path).expect("worker should report its pid");
+        cancellation.store(true, Ordering::Release);
+        let error = handle.join().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("separation cancelled"));
+        assert!(
+            !Command::new("kill")
+                .args(["-0", pid.trim()])
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "worker process {pid} survived cancellation"
+        );
+    }
 }
 
 #[derive(Debug, Serialize)]

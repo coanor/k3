@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/k3-core", "crates/k3-cli"]
+exclude = ["vendor/rookie-cookies"]
 resolver = "2"
 
 [workspace.package]
@@ -23,3 +24,6 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[patch.crates-io]
+rookie-cookies = { path = "vendor/rookie-cookies" }
