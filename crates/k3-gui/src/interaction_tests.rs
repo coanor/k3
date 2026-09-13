@@ -598,6 +598,7 @@ fn reloading_the_same_project_refreshes_its_presentation_once() {
 
 #[test]
 fn switching_projects_clears_the_previous_progress_immediately() {
+    let _window = setup_window();
     let ui = K3Window::new().expect("test UI should construct");
     ui.set_position_seconds(93.0);
     ui.set_duration_seconds(240.0);
