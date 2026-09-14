@@ -84,6 +84,39 @@ export component ActionButton inherits Rectangle {
     }
 }
 
+export component CopyableMessage inherits HorizontalLayout {
+    in property <string> message;
+    in property <brush> message-color: Tokens.muted;
+    in property <length> message-font-size: 11px;
+    callback copy-requested(string);
+
+    height: 44px;
+    spacing: 8px;
+
+    message-input := TextInput {
+        text: root.message;
+        read-only: true;
+        single-line: false;
+        wrap: word-wrap;
+        color: root.message-color;
+        font-size: root.message-font-size;
+        vertical-alignment: center;
+        selection-background-color: Tokens.lyric-current;
+        selection-foreground-color: Tokens.paper-ink;
+        horizontal-stretch: 1;
+        accessible-role: text-input;
+        accessible-read-only: true;
+        accessible-label: Strings.status-message;
+    }
+    ActionButton {
+        width: 64px;
+        height: 32px;
+        label: Strings.copy;
+        accessible-name: Strings.copy-message;
+        clicked => { root.copy-requested(root.message); }
+    }
+}
+
 export component PlayButton inherits Rectangle {
     in property <bool> playing;
     in property <bool> enabled: true;

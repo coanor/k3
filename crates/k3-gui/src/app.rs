@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     error::Error,
     path::{Path, PathBuf},
     sync::{
@@ -44,6 +45,12 @@ struct AppData {
     lyrics_context: Option<LyricsContext>,
     lyrics_choices: Vec<LyricsChoice>,
     separation_running: bool,
+    queued_netease_separations: VecDeque<QueuedSeparation>,
+}
+
+struct QueuedSeparation {
+    source: PathBuf,
+    profile_index: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +125,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         lyrics_context: None,
         lyrics_choices: Vec::new(),
         separation_running: false,
+        queued_netease_separations: VecDeque::new(),
     }));
     let (settings_writer, settings_writer_handle) = SettingsWriter::start()?;
     let playback = Arc::new(PlaybackService::start(RodioBackend::default()));
@@ -125,7 +133,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let _ = playback.execute(PlaybackCommand::SetVolume(initial_volume));
     let snapshots = playback.subscribe()?;
     install_callbacks(&ui, &data, &playback, &recording, &settings_writer_handle);
-    let netease_running = netease_gui::install(&ui, &data);
+    let netease_cancelled = netease_gui::install(&ui, &data);
     install_focus_refresh(&ui, &data, &settings_writer_handle);
 
     let pump_running = Arc::new(AtomicBool::new(true));
@@ -152,7 +160,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let ui_result = ui.run();
-    netease_running.store(false, Ordering::Release);
+    netease_cancelled.store(true, Ordering::Release);
     if let Ok(mut recording) = recording.lock() {
         recording.abort();
     }
@@ -684,9 +692,75 @@ fn run_separation_task(
                     ui.set_separation_message(error.into());
                 }
             }
-            scan_library(weak, data, settings_writer, root, ScanIntent::Refresh);
+            scan_library(
+                weak,
+                Arc::clone(&data),
+                settings_writer,
+                root,
+                ScanIntent::Refresh,
+            );
+            start_next_queued_separation(&ui, &data);
         });
     });
+}
+
+fn queue_netease_separation(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    source: PathBuf,
+    profile_index: i32,
+) -> usize {
+    let Ok(mut state) = data.lock() else {
+        ui.set_separation_message("Could not access the separation queue".into());
+        return 0;
+    };
+    state
+        .queued_netease_separations
+        .push_back(QueuedSeparation {
+            source,
+            profile_index,
+        });
+    drop(state);
+    start_next_queued_separation(ui, data);
+    update_separation_queue_count(ui, data)
+}
+
+fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
+    if ui.get_recording_state() != RecordingState::Idle {
+        update_separation_queue_count(ui, data);
+        return;
+    }
+    loop {
+        let next = {
+            let Ok(mut state) = data.lock() else { return };
+            if state.separation_running {
+                let waiting = state.queued_netease_separations.len();
+                drop(state);
+                ui.set_netease_separation_queued_count(i32::try_from(waiting).unwrap_or(i32::MAX));
+                return;
+            }
+            state.queued_netease_separations.pop_front()
+        };
+        let Some(next) = next else {
+            ui.set_netease_separation_queued_count(0);
+            return;
+        };
+        update_separation_queue_count(ui, data);
+        ui.set_separation_source(path_text(&next.source));
+        ui.set_separation_existing(false);
+        ui.invoke_start_separation(path_text(&next.source), next.profile_index, false);
+        if data.lock().is_ok_and(|state| state.separation_running) {
+            return;
+        }
+    }
+}
+
+fn update_separation_queue_count(ui: &K3Window, data: &Arc<Mutex<AppData>>) -> usize {
+    let count = data
+        .lock()
+        .map_or(0, |state| state.queued_netease_separations.len());
+    ui.set_netease_separation_queued_count(i32::try_from(count).unwrap_or(i32::MAX));
+    count
 }
 
 fn install_library_callbacks(
@@ -732,9 +806,25 @@ fn install_save_root_callback(
         let data = Arc::clone(data);
         let settings_writer = settings_writer.clone();
         ui.unwrap().on_save_projects_root(move |root| {
-            if data.lock().is_ok_and(|data| data.separation_running) {
+            if ui.upgrade().is_some_and(|ui| {
+                ui.get_netease_download_running() || ui.get_netease_queued_count() > 0
+            }) {
                 if let Some(ui) = ui.upgrade() {
-                    show_error(&ui, "Wait for separation to finish before changing folders");
+                    show_error(
+                        &ui,
+                        "Wait for NetEase downloads to finish before changing folders",
+                    );
+                }
+                return;
+            }
+            if data.lock().is_ok_and(|data| {
+                data.separation_running || !data.queued_netease_separations.is_empty()
+            }) {
+                if let Some(ui) = ui.upgrade() {
+                    show_error(
+                        &ui,
+                        "Wait for separation queue to finish before changing folders",
+                    );
                 }
                 return;
             }
@@ -885,7 +975,7 @@ fn install_recording_callbacks(
             if start {
                 start_gui_recording(ui.clone(), &data, &playback, Arc::clone(&recording));
             } else {
-                stop_gui_recording(ui.clone(), Arc::clone(&recording));
+                stop_gui_recording(ui.clone(), Arc::clone(&data), Arc::clone(&recording));
             }
         });
     }
@@ -902,7 +992,7 @@ fn install_recording_callbacks(
 
 fn start_gui_recording(
     ui: slint::Weak<K3Window>,
-    data: &Mutex<AppData>,
+    data: &Arc<Mutex<AppData>>,
     playback: &PlaybackService,
     recording: Arc<Mutex<GuiRecordingController>>,
 ) {
@@ -924,6 +1014,7 @@ fn start_gui_recording(
         true
     });
     let volume = ui.upgrade().map_or(1.0, |ui| ui.get_volume());
+    let data = Arc::clone(data);
     if let Some(ui) = ui.upgrade() {
         ui.set_recording_state(RecordingState::Starting);
         ui.set_recording_message("Opening microphone…".into());
@@ -957,6 +1048,7 @@ fn start_gui_recording(
                     ui.set_monitoring(false);
                     ui.set_recording_message(SharedString::default());
                     show_error(&ui, format!("Cannot start recording: {error}"));
+                    start_next_queued_separation(&ui, &data);
                 }
             }
         });
@@ -991,7 +1083,11 @@ fn pump_recording_snapshots(ui: &slint::Weak<K3Window>, recording: &Mutex<GuiRec
     }
 }
 
-fn stop_gui_recording(ui: slint::Weak<K3Window>, recording: Arc<Mutex<GuiRecordingController>>) {
+fn stop_gui_recording(
+    ui: slint::Weak<K3Window>,
+    data: Arc<Mutex<AppData>>,
+    recording: Arc<Mutex<GuiRecordingController>>,
+) {
     if let Some(ui) = ui.upgrade() {
         ui.set_recording_state(RecordingState::Stopping);
         ui.set_monitoring(false);
@@ -1032,6 +1128,7 @@ fn stop_gui_recording(ui: slint::Weak<K3Window>, recording: Arc<Mutex<GuiRecordi
                     show_error(&ui, format!("Cannot save recording: {error}"));
                 }
             }
+            start_next_queued_separation(&ui, &data);
         });
     });
 }

@@ -1,9 +1,10 @@
 use std::{
     cell::Cell,
     cell::RefCell,
+    collections::VecDeque,
     path::PathBuf,
     rc::Rc,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -19,7 +20,8 @@ use super::{
     AppData, ErrorKind, K3Window, LyricItem, LyricsPanelState, Overlay, PlaybackAction,
     PlaybackState, PlaybackTransitionTracker, ProjectItem, ProjectState, RecordingState,
     TrackSelection, ViewMode, apply_lyrics_search_result, begin_lyrics_context, begin_project_load,
-    should_apply_project_snapshot, snapshot_matches_pending_open,
+    queue_netease_separation, should_apply_project_snapshot, snapshot_matches_pending_open,
+    start_next_queued_separation,
 };
 use crate::settings::GuiSettings;
 use k3_app::{
@@ -30,6 +32,63 @@ use uuid::Uuid;
 thread_local! {
     static WINDOW: Rc<MinimalSoftwareWindow> =
         MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    static CLIPBOARD: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+#[test]
+fn netease_error_message_can_be_copied_in_full() {
+    let window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    let message = "NetEase download failed: a detailed error to report";
+    ui.set_view_mode(ViewMode::Rehearsal);
+    ui.set_separation_panel_open(true);
+    ui.set_netease_message(message.into());
+    ui.show().expect("test UI should show");
+    window.draw_if_needed(|_| {});
+
+    CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = None);
+    ui.invoke_copy_netease_message();
+
+    CLIPBOARD.with(|clipboard| assert_eq!(clipboard.borrow().as_deref(), Some(message)));
+}
+
+#[test]
+fn netease_selection_can_be_queued_during_a_download_and_separation() {
+    let _window = setup_window();
+    let ui = K3Window::new().expect("test UI should construct");
+    ui.set_netease_logged_in(true);
+    ui.set_netease_selected_count(2);
+    ui.set_netease_download_running(true);
+    ui.set_separation_state(super::SeparationState::Running);
+    assert!(ui.get_netease_can_queue());
+
+    let data = Arc::new(Mutex::new(app_data_with_projects(Vec::new(), Uuid::nil())));
+    data.lock().unwrap().separation_running = true;
+    assert_eq!(
+        queue_netease_separation(&ui, &data, PathBuf::from("one.wav"), 1),
+        1
+    );
+    assert_eq!(
+        queue_netease_separation(&ui, &data, PathBuf::from("two.wav"), 2),
+        2
+    );
+
+    let started = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&started);
+    let callback_data = Arc::clone(&data);
+    ui.on_start_separation(move |source, profile, _| {
+        callback_data.lock().unwrap().separation_running = true;
+        observed.borrow_mut().push((source.to_string(), profile));
+    });
+    data.lock().unwrap().separation_running = false;
+    start_next_queued_separation(&ui, &data);
+    assert_eq!(started.borrow().as_slice(), [("one.wav".into(), 1)]);
+    data.lock().unwrap().separation_running = false;
+    start_next_queued_separation(&ui, &data);
+    assert_eq!(
+        started.borrow().as_slice(),
+        [("one.wav".into(), 1), ("two.wav".into(), 2)]
+    );
 }
 
 #[test]
@@ -131,9 +190,15 @@ impl Platform for TestPlatform {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
         Ok(WINDOW.with(Clone::clone))
     }
+
+    fn set_clipboard_text(&self, text: &str, clipboard: slint::platform::Clipboard) {
+        if clipboard == slint::platform::Clipboard::DefaultClipboard {
+            CLIPBOARD.with(|contents| *contents.borrow_mut() = Some(text.to_owned()));
+        }
+    }
 }
 
-fn setup_window() -> Rc<MinimalSoftwareWindow> {
+pub(super) fn setup_window() -> Rc<MinimalSoftwareWindow> {
     let _ = slint::platform::set_platform(Box::new(TestPlatform));
     let window = WINDOW.with(Clone::clone);
     window.set_size(PhysicalSize::new(1280, 800));
@@ -155,6 +220,7 @@ fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> A
         lyrics_context: None,
         lyrics_choices: Vec::new(),
         separation_running: false,
+        queued_netease_separations: VecDeque::new(),
     }
 }
 
