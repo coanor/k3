@@ -95,6 +95,18 @@ pub fn launch() {
         if let Some(log) = log {
             log.record(format!("GUI stopped with error: {error}"));
         }
+        #[cfg(target_os = "windows")]
+        {
+            let mut message = ui_text::gui_start_failed(error.as_ref());
+            if let Some(log) = log {
+                message.push_str(&format!("\n{}", ui_text::diagnostics(log.path())));
+            }
+            rfd::MessageDialog::new()
+                .set_title("K3")
+                .set_level(rfd::MessageLevel::Error)
+                .set_description(message)
+                .show();
+        }
         eprintln!("{}", ui_text::gui_start_failed(error.as_ref()));
         if let Some(log) = log {
             eprintln!("{}", ui_text::diagnostics(log.path()));
