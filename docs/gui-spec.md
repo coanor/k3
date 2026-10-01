@@ -67,8 +67,8 @@ k3-gui        Slint 桌面前端
 错误，不暴露 Slint、Ratatui 类型或工程 JSON 的内部表示。GUI 使用后台
 `PlaybackService` 的快照订阅；TUI 使用同一个 `PlaybackEngine`。默认麦克风采集、实时
 监听和录音时间轴落盘位于 `k3-app`，由 GUI 与 TUI 共同复用。变调算法只在 `k3-audio`
-实现一次，由 GUI 与 CLI 共同复用。分轨、在线歌词编排和 take 效果渲染仍保留在
-`k3-cli`。
+实现一次，由 GUI 与 CLI 共同复用。take 混音与效果渲染由 `k3-app` 共享；效果选择、
+重新渲染的交互、分轨和在线歌词编排仍由 `k3-cli` 负责。
 
 ## 5. 播放模块
 

@@ -6,12 +6,14 @@ use std::{
 };
 
 use k3_core::{
-    FileProjectRepository, Project, ProjectPath, ProjectRepository, RecordingSession, Take,
+    FileProjectRepository, Project, ProjectPath, ProjectRepository, RecordingSession,
+    SeparationState, Take, VocalEffectPreset,
 };
 
 use crate::{
     AudioRecorder, PlaybackCommand, PlaybackSnapshot, PlaybackStatus, RecordingSummary,
     RecordingTimelineAnchor, SessionPlayback, SessionTrackKind, place_recording_on_timeline,
+    render_take_mix,
 };
 
 /// GUI 开始录音后可立即展示的信息。
@@ -201,9 +203,53 @@ fn finish_recording(active: ActiveRecording) -> Result<GuiRecordingResult, Box<d
         warning,
     } = recorder.stop()?;
     place_recording_on_timeline(&paths.dry_temporary_path, &paths.dry_final_path, &timeline)?;
+    save_completed_recording(&mut session, paths, device, duration, warning)
+}
+
+fn save_completed_recording(
+    session: &mut RecordingSession,
+    paths: RecordingPaths,
+    device: String,
+    duration: Duration,
+    warning: Option<String>,
+) -> Result<GuiRecordingResult, Box<dyn Error>> {
     let dry_path = ProjectPath::new(paths.dry_relative_path)?;
-    session.stop(Take::new(paths.id.clone(), dry_path))?;
+    let mut take = Take::new(paths.id.clone(), dry_path);
+    let mix_result = match session.project().separation() {
+        SeparationState::Ready(manifest) => render_take_mix(
+            &manifest.accompaniment.resolve(session.project().root()),
+            &paths.dry_final_path,
+            &paths.mix_temporary_path,
+            session.project().latency_compensation_ms(),
+            session.project().key_shift_semitones(),
+            VocalEffectPreset::Clean,
+        )
+        .and_then(|()| {
+            fs::rename(&paths.mix_temporary_path, &paths.mix_final_path).map_err(Into::into)
+        }),
+        _ => Err("project accompaniment is unavailable".into()),
+    };
+    let mix_warning = match mix_result {
+        Ok(()) => {
+            take = take.with_mix_audio_at_key(
+                ProjectPath::new(paths.mix_relative_path)?,
+                session.project().key_shift_semitones(),
+            );
+            None
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&paths.mix_temporary_path);
+            Some(format!("cannot render mix preview: {error}"))
+        }
+    };
+    session.stop(take)?;
     FileProjectRepository.save(session.project_mut())?;
+    let warning = match (warning, mix_warning) {
+        (Some(recording), Some(mix)) => Some(format!("{recording}; {mix}")),
+        (Some(recording), None) => Some(recording),
+        (None, Some(mix)) => Some(mix),
+        (None, None) => None,
+    };
     Ok(GuiRecordingResult {
         take_id: paths.id,
         dry_path: paths.dry_final_path,
@@ -213,11 +259,115 @@ fn finish_recording(active: ActiveRecording) -> Result<GuiRecordingResult, Box<d
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{recording_paths, save_completed_recording};
+    use crate::{LoadedProject, TrackKind};
+    use k3_core::{FileProjectRepository, ProjectRepository, RecordingSession};
+    use std::{fs, time::Duration};
+
+    #[test]
+    fn saved_gui_take_contains_backing_audio() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir(root.join("stems")).unwrap();
+        fs::create_dir(root.join("takes")).unwrap();
+        write_wav(&root.join("stems/accompaniment.wav"), 2, &[0.2; 8]);
+        write_wav(&root.join("takes/dry.wav"), 1, &[0.0; 4]);
+        fs::write(
+            root.join("project.json"),
+            r#"{
+  "schema_version": 1,
+  "id": "135a282d-5915-4b7f-a8da-1c5beff3eee3",
+  "title": "Recording",
+  "source": "source/song.wav",
+  "lyrics": null,
+  "separation": {
+    "status": "ready",
+    "details": {
+      "vocals": "stems/vocals.wav",
+      "accompaniment": "stems/accompaniment.wav",
+      "provenance": {
+        "provider": "test",
+        "architecture": "test",
+        "checkpoint_id": "test",
+        "checkpoint_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "profile": "quality"
+      }
+    }
+  },
+  "takes": [],
+  "latency_compensation_ms": 0,
+  "effects_schema_version": 1
+}"#,
+        )
+        .unwrap();
+        let project = FileProjectRepository.open(root).unwrap();
+        let paths = recording_paths(&project).unwrap();
+        fs::rename(root.join("takes/dry.wav"), &paths.dry_final_path).unwrap();
+        let mut session = RecordingSession::new(project);
+        session.arm().unwrap();
+        session.start().unwrap();
+
+        save_completed_recording(
+            &mut session,
+            paths,
+            "test microphone".into(),
+            Duration::from_millis(4),
+            None,
+        )
+        .unwrap();
+
+        let saved = FileProjectRepository.open(root).unwrap();
+        let take = saved.takes().last().unwrap();
+        assert!(take.mix_audio().is_some());
+        let mut dry_reader = hound::WavReader::open(take.dry_audio().resolve(root)).unwrap();
+        assert!(
+            dry_reader
+                .samples::<f32>()
+                .all(|sample| sample.unwrap() == 0.0)
+        );
+        let loaded = LoadedProject::open(root).unwrap();
+        let take_path = loaded
+            .track(TrackKind::Take)
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap();
+        let mut reader = hound::WavReader::open(take_path).unwrap();
+        let samples = reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            samples.iter().any(|sample| *sample > 0.1),
+            "saved take has no backing audio: {samples:?}"
+        );
+    }
+
+    fn write_wav(path: &std::path::Path, channels: u16, samples: &[f32]) {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: 1_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for sample in samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+}
+
 struct RecordingPaths {
     id: String,
     dry_relative_path: String,
     dry_temporary_path: PathBuf,
     dry_final_path: PathBuf,
+    mix_relative_path: String,
+    mix_temporary_path: PathBuf,
+    mix_final_path: PathBuf,
 }
 
 fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> {
@@ -226,7 +376,18 @@ fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> 
     let dry_relative_path = format!("takes/{id}-dry.wav");
     let dry_final_path = project.root().join(&dry_relative_path);
     let dry_temporary_path = project.root().join(format!("takes/.{id}-dry.wav.partial"));
-    if dry_final_path.exists() || dry_temporary_path.exists() {
+    let mix_relative_path = format!("takes/{id}-mix.wav");
+    let mix_final_path = project.root().join(&mix_relative_path);
+    let mix_temporary_path = project.root().join(format!("takes/.{id}-mix.wav.partial"));
+    if [
+        &dry_final_path,
+        &dry_temporary_path,
+        &mix_final_path,
+        &mix_temporary_path,
+    ]
+    .iter()
+    .any(|path| path.exists())
+    {
         return Err(format!("recording destination already exists for {id}").into());
     }
     Ok(RecordingPaths {
@@ -234,5 +395,8 @@ fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> 
         dry_relative_path,
         dry_temporary_path,
         dry_final_path,
+        mix_relative_path,
+        mix_temporary_path,
+        mix_final_path,
     })
 }

@@ -22,7 +22,7 @@ use k3_app::{
     AudioRecorder, LyricsChoice, LyricsProgress, LyricsSearch, PlaybackCommand, PlaybackStatus,
     RecordingTimelineAnchor, SessionPlayback, SessionTrackKind, TrackKind as ProjectTrackKind,
     default_lyrics_query, find_lyrics_again, find_missing_lyrics, lyric_countdown, lyric_window,
-    place_recording_on_timeline, save_lyrics_choice,
+    place_recording_on_timeline, render_take_mix, render_take_preview, save_lyrics_choice,
 };
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
@@ -41,7 +41,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     library::{self, LibraryConfig, LibrarySnapshot, SourceEntry, SourceProjectState},
-    mix::{render_take_mix, render_take_preview},
     netease::local_stores,
 };
 

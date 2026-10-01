@@ -1,6 +1,4 @@
-mod effects;
 mod library;
-mod mix;
 mod python_separator;
 mod tui;
 
@@ -14,11 +12,11 @@ use k3_core::{
     SeparationProfile, SongPreparation,
 };
 
-use crate::mix::render_take_preview;
 use crate::python_separator::{
     PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
     separation_output_paths,
 };
+use k3_app::render_take_preview;
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]

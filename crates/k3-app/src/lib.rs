@@ -11,7 +11,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod audio_config;
+mod effects;
 mod lyrics_download;
+mod mix;
 mod playback;
 mod recorder;
 mod recording;
@@ -24,6 +26,7 @@ pub use lyrics_download::{
     default_project_lyrics_query, find_lyrics_again, find_missing_lyrics, find_project_lyrics,
     save_lyrics_choice, save_project_lyrics,
 };
+pub use mix::{render_take_mix, render_take_preview};
 pub use playback::{
     AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackEngine, PlaybackService,
     PlaybackServiceError, PlaybackSnapshot, PlaybackStatus,
