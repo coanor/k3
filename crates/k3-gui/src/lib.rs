@@ -1,4 +1,5 @@
 mod app;
+mod i18n;
 pub mod logging;
 mod separation;
 pub mod settings;

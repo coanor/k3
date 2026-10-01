@@ -139,6 +139,7 @@ export component K3Window inherits Window {
     callback save-volume(float);
     callback select-language(int);
     callback select-separation-profile(int);
+    pure callback localize-message(string, int) -> string;
     callback set-key(int);
     callback switch-track(TrackSelection);
     callback seek-lyric(float);
@@ -170,7 +171,7 @@ export component K3Window inherits Window {
     }
 
     public function copy-netease-message() {
-        root.copy-message(root.netease-message);
+        root.copy-message(root.localize-message(root.netease-message, root.language-index));
     }
 
     function format-time(seconds: float) -> string {
@@ -374,7 +375,7 @@ export component K3Window inherits Window {
                     }
                 }
                 if root.error-kind != ErrorKind.none: CopyableMessage {
-                    message: root.error-message;
+                    message: root.localize-message(root.error-message, root.language-index);
                     message-color: Tokens.danger;
                     message-font-size: 12px;
                     copy-requested(message) => { root.copy-message(message); }
@@ -590,7 +591,7 @@ export component K3Window inherits Window {
                             spacing: 4px;
                             alignment: center;
                             Text {
-                                text: root.recording-message != "" ? root.recording-message : root.playback-state-text();
+                                text: root.recording-message != "" ? root.localize-message(root.recording-message, root.language-index) : root.playback-state-text();
                                 visible: self.text != "";
                                 color: root.recording-state == RecordingState.recording ? Tokens.cue : root.error-kind != ErrorKind.none ? Tokens.danger : Tokens.muted;
                                 font-size: 11px;
@@ -619,7 +620,7 @@ export component K3Window inherits Window {
                             padding-right: 8px;
                             spacing: 10px;
                             Text {
-                                text: root.error-message;
+                                text: root.localize-message(root.error-message, root.language-index);
                                 color: Tokens.danger;
                                 font-size: 12px;
                                 vertical-alignment: center;
@@ -631,7 +632,7 @@ export component K3Window inherits Window {
                                 height: 32px;
                                 label: Strings.copy;
                                 accessible-name: Strings.copy-message;
-                                clicked => { root.copy-message(root.error-message); }
+                                clicked => { root.copy-message(root.localize-message(root.error-message, root.language-index)); }
                             }
                             if root.error-kind == ErrorKind.playback: ActionButton {
                                 width: 32px;
@@ -830,7 +831,7 @@ export component K3Window inherits Window {
                                     height: 40px;
                                     spacing: 8px;
                                     Text {
-                                        text: root.separation-selected-count > 0 ? root.separation-source : Strings.no-audio-selected;
+                                        text: root.separation-selected-count > 0 ? root.localize-message(root.separation-source, root.language-index) : Strings.no-audio-selected;
                                         color: root.separation-selected-count > 0 ? Tokens.ink : Tokens.faint;
                                         font-size: 12px;
                                         vertical-alignment: center;
@@ -846,7 +847,7 @@ export component K3Window inherits Window {
                                     }
                                 }
                                 if root.separation-selection-message != "": CopyableMessage {
-                                    message: root.separation-selection-message;
+                                    message: root.localize-message(root.separation-selection-message, root.language-index);
                                     message-font-size: 11px;
                                     copy-requested(message) => { root.copy-message(message); }
                                 }
@@ -887,7 +888,7 @@ export component K3Window inherits Window {
                                 }
                                 Rectangle { height: 4px; }
                                 if root.separation-message != "": CopyableMessage {
-                                    message: root.separation-message;
+                                    message: root.localize-message(root.separation-message, root.language-index);
                                     message-color: root.separation-state == SeparationState.error ? Tokens.danger : root.separation-state == SeparationState.success ? Tokens.lyric-current : Tokens.muted;
                                     message-font-size: 12px;
                                     copy-requested(message) => { root.copy-message(message); }
@@ -1060,7 +1061,7 @@ export component K3Window inherits Window {
                                     }
                                 }
                                 netease-status := CopyableMessage {
-                                    message: root.netease-message;
+                                    message: root.localize-message(root.netease-message, root.language-index);
                                     visible: root.netease-message != "";
                                     height: root.netease-message != "" ? 44px : 0px;
                                     copy-requested(message) => { root.copy-message(message); }
@@ -1314,7 +1315,7 @@ export component K3Window inherits Window {
                         selected => { root.select-existing-take(take-select.current-index); }
                     }
                     Text {
-                        text: root.take-effect-message;
+                        text: root.localize-message(root.take-effect-message, root.language-index);
                         color: Tokens.faint;
                         font-size: 11px;
                         vertical-alignment: center;
@@ -1531,7 +1532,7 @@ export component K3Window inherits Window {
                     height: 32px;
                     spacing: 8px;
                     Text {
-                        text: root.lyrics-panel-message;
+                        text: root.localize-message(root.lyrics-panel-message, root.language-index);
                         color: Tokens.muted;
                         font-size: 11px;
                         overflow: elide;
@@ -1543,7 +1544,7 @@ export component K3Window inherits Window {
                         height: 30px;
                         label: Strings.copy;
                         accessible-name: Strings.copy-message;
-                        clicked => { root.copy-message(root.lyrics-panel-message); }
+                        clicked => { root.copy-message(root.localize-message(root.lyrics-panel-message, root.language-index)); }
                     }
                 }
 

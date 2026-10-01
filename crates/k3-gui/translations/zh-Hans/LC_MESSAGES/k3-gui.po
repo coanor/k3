@@ -390,3 +390,288 @@ msgstr "语言"
 
 msgid "GUI settings:"
 msgstr "GUI 设置："
+
+msgid "Projects folder is not readable: {path}"
+msgstr "项目文件夹无法读取：{path}"
+
+msgid "Searching online lyrics: {query}"
+msgstr "正在搜索在线歌词：{query}"
+
+msgid "Found {count} synced lyric versions"
+msgstr "找到 {count} 个同步歌词版本"
+
+msgid "Lyrics search failed: {error}"
+msgstr "歌词搜索失败：{error}"
+
+msgid "Saved lyrics: {artist} - {track} · {origin}"
+msgstr "已保存歌词：{artist} - {track} · {origin}"
+
+msgid "Cannot save synchronized lyrics: {error}"
+msgstr "无法保存同步歌词：{error}"
+
+msgid "Queued {count} audio file(s)"
+msgstr "已将 {count} 个音频文件加入队列"
+
+msgid "{name}: destination changed; select the file again"
+msgstr "{name}：目标位置已改变，请重新选择文件"
+
+msgid "{name}: already queued or separating"
+msgstr "{name}：已经排队或正在分离"
+
+msgid "Separating {name}. This may take several minutes…"
+msgstr "正在分离 {name}，可能需要几分钟…"
+
+msgid "Separated {count} song(s); {failed} failed{details}"
+msgstr "已分离 {count} 首歌曲；{failed} 首失败{details}"
+
+msgid "Cannot render take: {error}"
+msgstr "无法渲染录音：{error}"
+
+msgid "{effect} saved · playing"
+msgstr "已保存 {effect} 效果 · 正在播放"
+
+msgid "Recording · {device}"
+msgstr "正在录音 · {device}"
+
+msgid "Cannot start recording: {error}"
+msgstr "无法开始录音：{error}"
+
+msgid "Cannot save recording: {error}"
+msgstr "无法保存录音：{error}"
+
+msgid "Saved {duration}s take from {device}"
+msgstr "已保存来自 {device} 的 {duration} 秒录音"
+
+msgid "Take {index} of {count} · latest"
+msgstr "录音 {index}/{count} · 最新"
+
+msgid "Take {index} of {count}"
+msgstr "录音 {index}/{count}"
+
+msgid "NetEase setup failed: {error}"
+msgstr "网易云音乐设置失败：{error}"
+
+msgid "NetEase session failed: {error}"
+msgstr "网易云音乐会话失败：{error}"
+
+msgid "Cannot enable NetEase: {error}"
+msgstr "无法启用网易云音乐：{error}"
+
+msgid "Chrome login failed: {error}"
+msgstr "Chrome 登录失败：{error}"
+
+msgid "QR login failed: {error}"
+msgstr "扫码登录失败：{error}"
+
+msgid "Login failed: {error}"
+msgstr "登录失败：{error}"
+
+msgid "Log out failed: {error}"
+msgstr "退出登录失败：{error}"
+
+msgid "Already queued: {title}"
+msgstr "已加入队列：{title}"
+
+msgid "Queued {count} songs for download and separation"
+msgstr "已将 {count} 首歌曲加入下载与分离队列"
+
+msgid "Downloads finished: {count} processed, {issues} issues{details}"
+msgstr "下载完成：已处理 {count} 首，{issues} 个问题{details}"
+
+msgid "Downloading {title} · {waiting} waiting…"
+msgstr "正在下载 {title} · {waiting} 首等待中…"
+
+msgid "Retrying separation for {title} · {waiting} waiting"
+msgstr "正在重试分离 {title} · {waiting} 首等待中"
+
+msgid "Downloaded, but not separated: {issue}"
+msgstr "已下载但分离失败：{issue}"
+
+msgid "Downloaded {title} · {waiting} waiting to separate"
+msgstr "已下载 {title} · {waiting} 首等待分离"
+
+msgid "Downloaded {title} but cannot prepare project: {error}"
+msgstr "已下载 {title}，但无法准备项目：{error}"
+
+msgid "NetEase download failed for {title}: {error}"
+msgstr "网易云音乐下载 {title} 失败：{error}"
+
+msgid "Logged in to NetEase as {name}"
+msgstr "已以 {name} 登录网易云音乐"
+
+msgid "Found {count} songs; select any number to queue{cache_warning}"
+msgstr "找到 {count} 首歌曲；可选择多首加入队列{cache_warning}"
+
+msgid "NetEase catalog failed: {error}"
+msgstr "网易云音乐曲库加载失败：{error}"
+
+msgid "Cannot render login QR code: {error}"
+msgstr "无法生成登录二维码：{error}"
+
+msgid "Choose a projects folder first"
+msgstr "请先选择项目文件夹"
+
+msgid "This project already exists. Review the replacement warning and try again."
+msgstr "项目已存在。请查看替换提示后重试。"
+
+msgid "Could not access the project library"
+msgstr "无法访问项目曲库"
+
+msgid "Wait for take rendering to finish"
+msgstr "请等待录音渲染完成"
+
+msgid "Could not unload audio"
+msgstr "无法卸载音频"
+
+msgid "Separation complete. Select the song in the project list."
+msgstr "分离完成。请在项目列表中选择歌曲。"
+
+msgid "Could not access the separation queue"
+msgstr "无法访问分离队列"
+
+msgid "Wait for NetEase downloads to finish before changing folders"
+msgstr "请等待网易云音乐下载完成后再更换文件夹"
+
+msgid "Wait for audio processing to finish before changing folders"
+msgstr "请等待音频处理完成后再更换文件夹"
+
+msgid "Stop the recording before switching projects"
+msgstr "切换项目前请先停止录音"
+
+msgid "Rendering selected take…"
+msgstr "正在渲染选中的录音…"
+
+msgid "Render failed"
+msgstr "渲染失败"
+
+msgid "cannot release take audio"
+msgstr "无法释放录音音频"
+
+msgid "project changed on disk; reload it before changing the take effect"
+msgstr "项目已在磁盘上更改；请重新加载后再修改录音效果"
+
+msgid "Choose a project before recording"
+msgstr "录音前请先选择项目"
+
+msgid "Opening microphone…"
+msgstr "正在打开麦克风…"
+
+msgid "recording state is unavailable"
+msgstr "录音状态不可用"
+
+msgid "Saving recording…"
+msgstr "正在保存录音…"
+
+msgid "Experimental NetEase source enabled"
+msgstr "已启用实验性网易云音乐来源"
+
+msgid "Importing NetEase login from Chrome…"
+msgstr "正在从 Chrome 导入网易云音乐登录信息…"
+
+msgid "Requesting NetEase login QR code…"
+msgstr "正在获取网易云音乐登录二维码…"
+
+msgid "Confirm login in the NetEase app"
+msgstr "请在网易云音乐 App 中确认登录"
+
+msgid "QR code expired. Try again."
+msgstr "二维码已过期，请重试。"
+
+msgid "Login completed without a saved session"
+msgstr "登录已完成，但会话未保存"
+
+msgid "Logged out of NetEase"
+msgstr "已退出网易云音乐"
+
+msgid "Enter a song or artist"
+msgstr "请输入歌名或歌手"
+
+msgid "This song is unavailable for this account or region"
+msgstr "此账号或地区无法播放这首歌曲"
+
+msgid "NetEase session expired. Log in again to resume queued downloads."
+msgstr "网易云音乐会话已过期。重新登录后继续下载队列。"
+
+msgid "Scan with the NetEase Cloud Music app"
+msgstr "请使用网易云音乐 App 扫码"
+
+msgid "Searching NetEase songs…"
+msgstr "正在搜索网易云音乐歌曲…"
+
+msgid "Loading liked songs…"
+msgstr "正在加载我喜欢的歌曲…"
+
+msgid "Login QR code is too large"
+msgstr "登录二维码过大"
+
+msgid "No duration-matched synced lyrics found"
+msgstr "未找到时长匹配的同步歌词"
+
+msgid "Current lyrics are already available"
+msgstr "当前歌词已可用"
+
+msgid "Saving synchronized lyrics…"
+msgstr "正在保存同步歌词…"
+
+msgid "; downloaded status unavailable: {error}"
+msgstr "；无法获取下载状态：{error}"
+
+msgid " · Warning: {warning}"
+msgstr " · 警告：{warning}"
+
+msgid "Checking local lyrics..."
+msgstr "正在检查本地歌词…"
+
+msgid "Searching {source}: {artist} - {title}..."
+msgstr "正在搜索 {source}：{artist} - {title}…"
+
+msgid "Searching {source}: {title}..."
+msgstr "正在搜索 {source}：{title}…"
+
+msgid "No {source} artist match; retrying by title only: {title}..."
+msgstr "{source} 未找到匹配歌手，正在仅按歌名重试：{title}…"
+
+msgid "{source} request failed: {reason}; retrying (2/2)..."
+msgstr "{source} 请求失败：{reason}；正在重试（2/2）…"
+
+msgid "Found synced lyrics on {source}: {artist} - {track} ({duration_seconds}s)"
+msgstr "在 {source} 找到同步歌词：{artist} - {track}（{duration_seconds} 秒）"
+
+msgid "Saving lyrics: {relative_path}"
+msgstr "正在保存歌词：{relative_path}"
+
+msgid ". Last error: {error}"
+msgstr "。最近错误：{error}"
+
+msgid "{count} files: {names}"
+msgstr "{count} 个文件：{names}"
+
+msgid "{name}: another selected file has the same project name"
+msgstr "{name}：另一个已选文件使用了相同的项目名称"
+
+msgid "Audio file is not readable: {path}"
+msgstr "音频文件无法读取：{path}"
+
+msgid "Destination already exists but is not a K3 project: {path}"
+msgstr "目标位置已存在，但不是 K3 项目：{path}"
+
+msgid "Separation script is missing: {path}"
+msgstr "缺少分离脚本：{path}"
+
+msgid "Could not start the separation script: {error}"
+msgstr "无法启动分离脚本：{error}"
+
+msgid "{name}: {error}"
+msgstr "{name}：{error}"
+
+msgid "The audio file needs a name"
+msgstr "音频文件需要文件名"
+
+msgid "This project already exists. Choose the file again to confirm replacement."
+msgstr "项目已存在。请重新选择该文件以确认替换。"
+
+msgid "Separation failed. Open About to find the diagnostics log, and check the separator runtime."
+msgstr "分离失败。请在“关于”中查看诊断日志，并检查分离运行环境。"
+
+msgid "Audio"
+msgstr "音频"

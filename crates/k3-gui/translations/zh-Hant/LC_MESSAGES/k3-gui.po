@@ -11,10 +11,10 @@ msgid "Copy"
 msgstr "複製"
 
 msgid "Copy message"
-msgstr "複製消息"
+msgstr "複製訊息"
 
 msgid "Status message"
-msgstr "狀態消息"
+msgstr "狀態訊息"
 
 msgid "Choose a project"
 msgstr "選擇專案"
@@ -62,7 +62,7 @@ msgid "Open songbook"
 msgstr "打開曲庫"
 
 msgid "Search projects"
-msgstr "搜索專案"
+msgstr "搜尋專案"
 
 msgid "PROJECTS"
 msgstr "專案"
@@ -95,7 +95,7 @@ msgid "Playback unavailable"
 msgstr "無法播放"
 
 msgid "Loading audio…"
-msgstr "正在加載音頻…"
+msgstr "正在加載音訊…"
 
 msgid "Finished"
 msgstr "播放完畢"
@@ -140,28 +140,28 @@ msgid "Find synced lyrics"
 msgstr "查找同步歌詞"
 
 msgid "Search LRCLIB and NetEase Cloud Music. Your current lyrics stay unchanged until you save a result."
-msgstr "搜索 LRCLIB 和網易雲音樂。保存搜索結果前，當前歌詞不會改變。"
+msgstr "搜尋 LRCLIB 和網易雲音樂。保存搜尋結果前，當前歌詞不會改變。"
 
 msgid "Song title or artist"
 msgstr "歌名或歌手"
 
 msgid "Search"
-msgstr "搜索"
+msgstr "搜尋"
 
 msgid "Preparing…"
 msgstr "正在準備…"
 
 msgid "Reading the project and audio metadata…"
-msgstr "正在讀取專案和音頻信息…"
+msgstr "正在讀取專案和音訊信息…"
 
 msgid "Searching…"
-msgstr "正在搜索…"
+msgstr "正在搜尋…"
 
 msgid "Searching online lyric catalogs…"
-msgstr "正在搜索在線歌詞庫…"
+msgstr "正在搜尋線上歌詞庫…"
 
 msgid "Search to preview duration-matched synced lyrics."
-msgstr "搜索後可預覽與時長匹配的同步歌詞。"
+msgstr "搜尋後可預覽與時長匹配的同步歌詞。"
 
 msgid "Use this version"
 msgstr "使用此版本"
@@ -182,13 +182,13 @@ msgid "Prepare a song"
 msgstr "準備歌曲"
 
 msgid "Choose one or more local audio files, then queue them for separation. K3 prepares each song in order."
-msgstr "選擇一個或多個本地音頻檔案並加入分離隊列。K3 會依次處理。"
+msgstr "選擇一個或多個本地音訊檔案並加入分離佇列。K3 會依次處理。"
 
 msgid "SOURCE AUDIO"
-msgstr "原始音頻"
+msgstr "原始音訊"
 
 msgid "No audio selected"
-msgstr "尚未選擇音頻"
+msgstr "尚未選擇音訊"
 
 msgid "Choose files"
 msgstr "選擇檔案"
@@ -212,16 +212,16 @@ msgid "Requires the separator runtime installed beside K3. The first run may dow
 msgstr "需要在 K3 旁安裝分離運行環境。首次運行可能下載模型。"
 
 msgid "Existing projects will be re-separated from their stored source audio. Chosen files only identify projects; lyrics and takes are kept."
-msgstr "已有專案將使用保存的原始音頻重新分離。所選檔案僅用於定位專案；歌詞和錄音保留。"
+msgstr "已有專案將使用保存的原始音訊重新分離。所選檔案僅用於定位專案；歌詞和錄音保留。"
 
 msgid "Create and separate"
 msgstr "創建並分離"
 
 msgid "Queue selected"
-msgstr "加入隊列"
+msgstr "加入佇列"
 
 msgid "Queue & replace"
-msgstr "加入隊列並替換"
+msgstr "加入佇列並替換"
 
 msgid "Replace stems"
 msgstr "替換分軌"
@@ -233,28 +233,28 @@ msgid "NETEASE CLOUD MUSIC"
 msgstr "網易雲音樂"
 
 msgid "Experimental source using undocumented web endpoints; it may stop working. Only download songs your account may access and follow applicable terms. Login credentials stay in a private local K3 file. Audio is saved under .netease-audio in your projects folder."
-msgstr "使用未公開的網頁接口，可能隨時失效。請僅下載賬號有權訪問的歌曲並遵守適用條款。登錄信息保存在 K3 本地私有檔案中，音頻保存到專案檔案夾內的 .netease-audio。"
+msgstr "使用未公開的網頁接口，可能隨時失效。請僅下載賬號有權訪問的歌曲並遵守適用條款。登入信息保存在 K3 本地私有檔案中，音訊保存到專案檔案夾內的 .netease-audio。"
 
 msgid "Enable experimental NetEase source"
 msgstr "啓用實驗性網易雲音樂來源"
 
 msgid "Import Chrome login"
-msgstr "導入 Chrome 登錄信息"
+msgstr "導入 Chrome 登入信息"
 
 msgid "QR login"
-msgstr "掃碼登錄"
+msgstr "掃碼登入"
 
 msgid "Log out"
-msgstr "退出登錄"
+msgstr "退出登入"
 
 msgid "Search songs"
-msgstr "搜索歌曲"
+msgstr "搜尋歌曲"
 
 msgid "Liked songs"
 msgstr "我喜歡的歌曲"
 
 msgid "Queue selected songs"
-msgstr "將所選歌曲加入隊列"
+msgstr "將所選歌曲加入佇列"
 
 msgid "QUEUED"
 msgstr "排隊中"
@@ -281,7 +281,7 @@ msgid "Take"
 msgstr "錄音"
 
 msgid "Original audio is unavailable"
-msgstr "原始音頻不可用"
+msgstr "原始音訊不可用"
 
 msgid "Backing track is unavailable"
 msgstr "伴奏不可用"
@@ -383,10 +383,295 @@ msgid "Choose a projects folder"
 msgstr "選擇專案檔案夾"
 
 msgid "DEFAULT SEPARATION PROFILE"
-msgstr "默認分離檔位"
+msgstr "預設分離檔位"
 
 msgid "LANGUAGE"
 msgstr "語言"
 
 msgid "GUI settings:"
 msgstr "GUI 設置："
+
+msgid "Projects folder is not readable: {path}"
+msgstr "專案資料夾無法讀取：{path}"
+
+msgid "Searching online lyrics: {query}"
+msgstr "正在搜尋線上歌詞：{query}"
+
+msgid "Found {count} synced lyric versions"
+msgstr "找到 {count} 個同步歌詞版本"
+
+msgid "Lyrics search failed: {error}"
+msgstr "歌詞搜尋失敗：{error}"
+
+msgid "Saved lyrics: {artist} - {track} · {origin}"
+msgstr "已保存歌詞：{artist} - {track} · {origin}"
+
+msgid "Cannot save synchronized lyrics: {error}"
+msgstr "無法保存同步歌詞：{error}"
+
+msgid "Queued {count} audio file(s)"
+msgstr "已將 {count} 個音訊檔案加入佇列"
+
+msgid "{name}: destination changed; select the file again"
+msgstr "{name}：目標位置已改變，請重新選擇檔案"
+
+msgid "{name}: already queued or separating"
+msgstr "{name}：已經排隊或正在分離"
+
+msgid "Separating {name}. This may take several minutes…"
+msgstr "正在分離 {name}，可能需要幾分鐘…"
+
+msgid "Separated {count} song(s); {failed} failed{details}"
+msgstr "已分離 {count} 首歌曲；{failed} 首失敗{details}"
+
+msgid "Cannot render take: {error}"
+msgstr "無法渲染錄音：{error}"
+
+msgid "{effect} saved · playing"
+msgstr "已保存 {effect} 效果 · 正在播放"
+
+msgid "Recording · {device}"
+msgstr "正在錄音 · {device}"
+
+msgid "Cannot start recording: {error}"
+msgstr "無法開始錄音：{error}"
+
+msgid "Cannot save recording: {error}"
+msgstr "無法保存錄音：{error}"
+
+msgid "Saved {duration}s take from {device}"
+msgstr "已保存來自 {device} 的 {duration} 秒錄音"
+
+msgid "Take {index} of {count} · latest"
+msgstr "錄音 {index}/{count} · 最新"
+
+msgid "Take {index} of {count}"
+msgstr "錄音 {index}/{count}"
+
+msgid "NetEase setup failed: {error}"
+msgstr "網易雲音樂設置失敗：{error}"
+
+msgid "NetEase session failed: {error}"
+msgstr "網易雲音樂會話失敗：{error}"
+
+msgid "Cannot enable NetEase: {error}"
+msgstr "無法啓用網易雲音樂：{error}"
+
+msgid "Chrome login failed: {error}"
+msgstr "Chrome 登入失敗：{error}"
+
+msgid "QR login failed: {error}"
+msgstr "掃碼登入失敗：{error}"
+
+msgid "Login failed: {error}"
+msgstr "登入失敗：{error}"
+
+msgid "Log out failed: {error}"
+msgstr "退出登入失敗：{error}"
+
+msgid "Already queued: {title}"
+msgstr "已加入佇列：{title}"
+
+msgid "Queued {count} songs for download and separation"
+msgstr "已將 {count} 首歌曲加入下載與分離佇列"
+
+msgid "Downloads finished: {count} processed, {issues} issues{details}"
+msgstr "下載完成：已處理 {count} 首，{issues} 個問題{details}"
+
+msgid "Downloading {title} · {waiting} waiting…"
+msgstr "正在下載 {title} · {waiting} 首等待中…"
+
+msgid "Retrying separation for {title} · {waiting} waiting"
+msgstr "正在重試分離 {title} · {waiting} 首等待中"
+
+msgid "Downloaded, but not separated: {issue}"
+msgstr "已下載但分離失敗：{issue}"
+
+msgid "Downloaded {title} · {waiting} waiting to separate"
+msgstr "已下載 {title} · {waiting} 首等待分離"
+
+msgid "Downloaded {title} but cannot prepare project: {error}"
+msgstr "已下載 {title}，但無法準備專案：{error}"
+
+msgid "NetEase download failed for {title}: {error}"
+msgstr "網易雲音樂下載 {title} 失敗：{error}"
+
+msgid "Logged in to NetEase as {name}"
+msgstr "已以 {name} 登入網易雲音樂"
+
+msgid "Found {count} songs; select any number to queue{cache_warning}"
+msgstr "找到 {count} 首歌曲；可選擇多首加入佇列{cache_warning}"
+
+msgid "NetEase catalog failed: {error}"
+msgstr "網易雲音樂曲庫加載失敗：{error}"
+
+msgid "Cannot render login QR code: {error}"
+msgstr "無法生成登入二維碼：{error}"
+
+msgid "Choose a projects folder first"
+msgstr "請先選擇專案資料夾"
+
+msgid "This project already exists. Review the replacement warning and try again."
+msgstr "專案已存在。請查看替換提示後重試。"
+
+msgid "Could not access the project library"
+msgstr "無法訪問專案曲庫"
+
+msgid "Wait for take rendering to finish"
+msgstr "請等待錄音渲染完成"
+
+msgid "Could not unload audio"
+msgstr "無法卸載音訊"
+
+msgid "Separation complete. Select the song in the project list."
+msgstr "分離完成。請在專案列表中選擇歌曲。"
+
+msgid "Could not access the separation queue"
+msgstr "無法訪問分離佇列"
+
+msgid "Wait for NetEase downloads to finish before changing folders"
+msgstr "請等待網易雲音樂下載完成後再更換資料夾"
+
+msgid "Wait for audio processing to finish before changing folders"
+msgstr "請等待音訊處理完成後再更換資料夾"
+
+msgid "Stop the recording before switching projects"
+msgstr "切換專案前請先停止錄音"
+
+msgid "Rendering selected take…"
+msgstr "正在渲染選中的錄音…"
+
+msgid "Render failed"
+msgstr "渲染失敗"
+
+msgid "cannot release take audio"
+msgstr "無法釋放錄音音訊"
+
+msgid "project changed on disk; reload it before changing the take effect"
+msgstr "專案已在磁盤上更改；請重新加載後再修改錄音效果"
+
+msgid "Choose a project before recording"
+msgstr "錄音前請先選擇專案"
+
+msgid "Opening microphone…"
+msgstr "正在打開麥克風…"
+
+msgid "recording state is unavailable"
+msgstr "錄音狀態不可用"
+
+msgid "Saving recording…"
+msgstr "正在保存錄音…"
+
+msgid "Experimental NetEase source enabled"
+msgstr "已啓用實驗性網易雲音樂來源"
+
+msgid "Importing NetEase login from Chrome…"
+msgstr "正在從 Chrome 導入網易雲音樂登入信息…"
+
+msgid "Requesting NetEase login QR code…"
+msgstr "正在獲取網易雲音樂登入二維碼…"
+
+msgid "Confirm login in the NetEase app"
+msgstr "請在網易雲音樂 App 中確認登入"
+
+msgid "QR code expired. Try again."
+msgstr "二維碼已過期，請重試。"
+
+msgid "Login completed without a saved session"
+msgstr "登入已完成，但會話未保存"
+
+msgid "Logged out of NetEase"
+msgstr "已退出網易雲音樂"
+
+msgid "Enter a song or artist"
+msgstr "請輸入歌名或歌手"
+
+msgid "This song is unavailable for this account or region"
+msgstr "此賬號或地區無法播放這首歌曲"
+
+msgid "NetEase session expired. Log in again to resume queued downloads."
+msgstr "網易雲音樂會話已過期。重新登入後繼續下載佇列。"
+
+msgid "Scan with the NetEase Cloud Music app"
+msgstr "請使用網易雲音樂 App 掃碼"
+
+msgid "Searching NetEase songs…"
+msgstr "正在搜尋網易雲音樂歌曲…"
+
+msgid "Loading liked songs…"
+msgstr "正在加載我喜歡的歌曲…"
+
+msgid "Login QR code is too large"
+msgstr "登入二維碼過大"
+
+msgid "No duration-matched synced lyrics found"
+msgstr "未找到時長匹配的同步歌詞"
+
+msgid "Current lyrics are already available"
+msgstr "當前歌詞已可用"
+
+msgid "Saving synchronized lyrics…"
+msgstr "正在保存同步歌詞…"
+
+msgid "; downloaded status unavailable: {error}"
+msgstr "；無法獲取下載狀態：{error}"
+
+msgid " · Warning: {warning}"
+msgstr " · 警告：{warning}"
+
+msgid "Checking local lyrics..."
+msgstr "正在檢查本地歌詞…"
+
+msgid "Searching {source}: {artist} - {title}..."
+msgstr "正在搜尋 {source}：{artist} - {title}…"
+
+msgid "Searching {source}: {title}..."
+msgstr "正在搜尋 {source}：{title}…"
+
+msgid "No {source} artist match; retrying by title only: {title}..."
+msgstr "{source} 未找到匹配歌手，正在僅按歌名重試：{title}…"
+
+msgid "{source} request failed: {reason}; retrying (2/2)..."
+msgstr "{source} 請求失敗：{reason}；正在重試（2/2）…"
+
+msgid "Found synced lyrics on {source}: {artist} - {track} ({duration_seconds}s)"
+msgstr "在 {source} 找到同步歌詞：{artist} - {track}（{duration_seconds} 秒）"
+
+msgid "Saving lyrics: {relative_path}"
+msgstr "正在保存歌詞：{relative_path}"
+
+msgid ". Last error: {error}"
+msgstr "。最近錯誤：{error}"
+
+msgid "{count} files: {names}"
+msgstr "{count} 個檔案：{names}"
+
+msgid "{name}: another selected file has the same project name"
+msgstr "{name}：另一個已選檔案使用了相同的專案名稱"
+
+msgid "Audio file is not readable: {path}"
+msgstr "音訊檔案無法讀取：{path}"
+
+msgid "Destination already exists but is not a K3 project: {path}"
+msgstr "目標位置已存在，但不是 K3 專案：{path}"
+
+msgid "Separation script is missing: {path}"
+msgstr "缺少分離腳本：{path}"
+
+msgid "Could not start the separation script: {error}"
+msgstr "無法啓動分離腳本：{error}"
+
+msgid "{name}: {error}"
+msgstr "{name}：{error}"
+
+msgid "The audio file needs a name"
+msgstr "音訊檔案需要檔案名"
+
+msgid "This project already exists. Choose the file again to confirm replacement."
+msgstr "專案已存在。請重新選擇該檔案以確認替換。"
+
+msgid "Separation failed. Open About to find the diagnostics log, and check the separator runtime."
+msgstr "分離失敗。請在“關於”中查看診斷紀錄，並檢查分離執行環境。"
+
+msgid "Audio"
+msgstr "音訊"

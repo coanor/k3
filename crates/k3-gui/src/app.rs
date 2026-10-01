@@ -12,6 +12,7 @@ use std::{
 };
 
 use crate::{
+    i18n,
     logging::DiagnosticLog,
     separation::{self, Profile, SeparationRequest},
     settings::{
@@ -282,7 +283,12 @@ fn install_preference_callbacks(
     data: &Arc<Mutex<AppData>>,
     settings_writer: &SettingsWriterHandle,
 ) {
+    ui.on_localize_message(move |source, index| {
+        let language = GuiLanguage::from_index(index).unwrap_or_default();
+        i18n::message(source.as_str(), language).into()
+    });
     {
+        let weak = ui.as_weak();
         let data = Arc::clone(data);
         let settings_writer = settings_writer.clone();
         ui.on_select_language(move |index| {
@@ -292,6 +298,9 @@ fn install_preference_callbacks(
             if slint::select_bundled_translation(language.locale()).is_ok() {
                 if let Ok(mut data) = data.lock() {
                     data.settings.language = language;
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_take_options(take_options(data.takes.len(), language));
+                    }
                     if data.settings_writable {
                         settings_writer.persist(data.settings.clone());
                     }
@@ -673,9 +682,13 @@ fn install_choose_separation_source(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
         let weak = weak.clone();
         let picker_data = Arc::clone(&picker_data);
         thread::spawn(move || {
+            let language = picker_data
+                .lock()
+                .map_or(GuiLanguage::English, |data| data.settings.language);
+            let audio_label = i18n::message("Audio", language);
             let Some(sources) = rfd::FileDialog::new()
                 .add_filter(
-                    "Audio",
+                    &audio_label,
                     &["flac", "mp3", "wav", "m4a", "ogg", "opus", "aac"],
                 )
                 .pick_files()
@@ -2101,17 +2114,10 @@ fn open_project(
                 .as_ref()
                 .and_then(|id| takes.iter().position(|take| take.id == *id))
                 .unwrap_or(0);
-            let take_options = takes
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    if index + 1 == takes.len() {
-                        format!("Take {} of {} · latest", index + 1, takes.len()).into()
-                    } else {
-                        format!("Take {} of {}", index + 1, takes.len()).into()
-                    }
-                })
-                .collect::<Vec<SharedString>>();
+            let take_options = take_options(
+                takes.len(),
+                GuiLanguage::from_index(ui.get_language_index()).unwrap_or_default(),
+            );
             if let Ok(mut state) = data.lock() {
                 if state.selected_id != Some(project.id) {
                     ui.set_take_effect_message(SharedString::default());
@@ -2119,7 +2125,7 @@ fn open_project(
                 state.takes = takes;
                 state.selected_take_id.clone_from(&selected);
             }
-            ui.set_take_options(ModelRc::new(VecModel::from(take_options)));
+            ui.set_take_options(take_options);
             ui.set_selected_take_index(i32::try_from(selected_index).unwrap_or(i32::MAX));
             let command = if play_take && selected.is_some() {
                 PlaybackCommand::LoadTake(loaded)
@@ -2136,6 +2142,20 @@ fn open_project(
             }
         });
     });
+}
+
+fn take_options(total: usize, language: GuiLanguage) -> ModelRc<SharedString> {
+    let labels = (1..=total)
+        .map(|index| {
+            let english = if index == total {
+                format!("Take {index} of {total} · latest")
+            } else {
+                format!("Take {index} of {total}")
+            };
+            i18n::message(&english, language).into()
+        })
+        .collect::<Vec<SharedString>>();
+    ModelRc::new(VecModel::from(labels))
 }
 
 fn is_current_open(data: &Mutex<AppData>, generation: u64) -> bool {
