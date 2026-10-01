@@ -4,7 +4,7 @@ import { ActionButton, CopyableMessage, PlayButton, SectionLabel, Tokens, TrackP
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export enum ViewMode { setup, rehearsal }
-export enum Overlay { none, about, confirm-root-change, lyrics-search }
+export enum Overlay { none, about, settings, confirm-root-change, lyrics-search }
 export enum ErrorKind { none, general, playback }
 export enum PlaybackState { unavailable, loading, paused, playing, finished, error }
 export enum PlaybackAction { toggle, back, forward, restart, retry }
@@ -68,6 +68,8 @@ export component K3Window inherits Window {
     in property <string> song-title: Strings.choose-project;
     in property <string> error-message;
     in property <string> log-path;
+    in property <string> settings-path;
+    in-out property <int> language-index: 1;
     in-out property <ErrorKind> error-kind: ErrorKind.none;
     in-out property <bool> project-changed: false;
     in-out property <string> current-project-id;
@@ -135,6 +137,8 @@ export component K3Window inherits Window {
     callback seek-to(float);
     callback set-volume(float);
     callback save-volume(float);
+    callback select-language(int);
+    callback select-separation-profile(int);
     callback set-key(int);
     callback switch-track(TrackSelection);
     callback seek-lyric(float);
@@ -378,6 +382,11 @@ export component K3Window inherits Window {
                 HorizontalLayout {
                     height: 42px;
                     ActionButton {
+                        width: 90px;
+                        label: Strings.settings;
+                        clicked => { root.overlay = Overlay.settings; }
+                    }
+                    ActionButton {
                         width: 42px;
                         accessible-name: Strings.about-k3;
                         icon: @image-url("../assets/info.svg");
@@ -432,6 +441,11 @@ export component K3Window inherits Window {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
+                        ActionButton {
+                            width: 80px;
+                            label: Strings.settings;
+                            clicked => { root.overlay = Overlay.settings; }
+                        }
                         ActionButton {
                             width: 36px;
                             accessible-name: Strings.about-k3;
@@ -844,25 +858,25 @@ export component K3Window inherits Window {
                                         width: 92px; label: Strings.profile-fast;
                                         primary: root.separation-profile == 0;
                                         enabled: true;
-                                        clicked => { root.separation-profile = 0; }
+                                        clicked => { root.separation-profile = 0; root.select-separation-profile(0); }
                                     }
                                     ActionButton {
                                         width: 92px; label: Strings.profile-balanced;
                                         primary: root.separation-profile == 1;
                                         enabled: true;
-                                        clicked => { root.separation-profile = 1; }
+                                        clicked => { root.separation-profile = 1; root.select-separation-profile(1); }
                                     }
                                     ActionButton {
                                         width: 92px; label: Strings.profile-quality;
                                         primary: root.separation-profile == 2;
                                         enabled: true;
-                                        clicked => { root.separation-profile = 2; }
+                                        clicked => { root.separation-profile = 2; root.select-separation-profile(2); }
                                     }
                                     ActionButton {
                                         width: 92px; label: Strings.profile-compatible;
                                         primary: root.separation-profile == 3;
                                         enabled: true;
-                                        clicked => { root.separation-profile = 3; }
+                                        clicked => { root.separation-profile = 3; root.select-separation-profile(3); }
                                     }
                                 }
                                 Text {
@@ -1307,6 +1321,104 @@ export component K3Window inherits Window {
                         overflow: elide;
                         horizontal-stretch: 1;
                     }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.settings: Rectangle {
+        background: #15162bee;
+        Rectangle {
+            width: min(560px, parent.width - 80px);
+            height: 490px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 10px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 15px;
+                HorizontalLayout {
+                    height: 34px;
+                    Text {
+                        text: Strings.settings;
+                        color: Tokens.ink;
+                        font-size: 22px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 34px;
+                        accessible-name: Strings.close;
+                        icon: @image-url("../assets/close.svg");
+                        clicked => { root.overlay = Overlay.none; }
+                    }
+                }
+                Text {
+                    text: Strings.settings-copy;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                SectionLabel { text: Strings.settings-projects-folder; }
+                HorizontalLayout {
+                    height: 40px;
+                    spacing: 10px;
+                    Text {
+                        text: root.projects-root == "" ? Strings.no-projects-folder : root.projects-root;
+                        color: Tokens.ink;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    ActionButton {
+                        width: 110px;
+                        label: Strings.change-folder;
+                        enabled: !root.recording-active && !root.netease-busy;
+                        clicked => {
+                            if (root.playing) { root.overlay = Overlay.confirm-root-change; }
+                            else { root.overlay = Overlay.none; root.view-mode = ViewMode.setup; }
+                        }
+                    }
+                }
+                SectionLabel { text: Strings.volume; }
+                Slider {
+                    height: 32px;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.01;
+                    value: root.volume;
+                    accessible-label: Strings.volume;
+                    changed(value) => { root.set-volume(value); }
+                    released(value) => { root.save-volume(value); }
+                }
+                SectionLabel { text: Strings.settings-default-profile; }
+                settings-profile := ComboBox {
+                    height: 36px;
+                    model: [Strings.profile-fast, Strings.profile-balanced, Strings.profile-quality, Strings.profile-compatible];
+                    current-index <=> root.separation-profile;
+                    accessible-label: Strings.settings-default-profile;
+                    selected => { root.select-separation-profile(settings-profile.current-index); }
+                }
+                SectionLabel { text: Strings.settings-language; }
+                settings-language := ComboBox {
+                    height: 36px;
+                    model: ["简体中文", "English", "繁體中文"];
+                    current-index <=> root.language-index;
+                    accessible-label: Strings.settings-language;
+                    selected => { root.select-language(settings-language.current-index); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                Text {
+                    text: Strings.settings-file + " " + root.settings-path;
+                    color: Tokens.faint;
+                    font-size: 10px;
+                    overflow: elide;
                 }
             }
         }

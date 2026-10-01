@@ -14,7 +14,9 @@ use std::{
 use crate::{
     logging::DiagnosticLog,
     separation::{self, Profile, SeparationRequest},
-    settings::{GuiSettings, SettingsWriter, SettingsWriterHandle},
+    settings::{
+        GuiLanguage, GuiSeparationProfile, GuiSettings, SettingsWriter, SettingsWriterHandle,
+    },
     ui_text,
 };
 use k3_app::{
@@ -129,6 +131,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let initial_volume = settings.volume;
     let initial_effect = settings.recording.default_effect;
     let ui = K3Window::new()?;
+    slint::select_bundled_translation(settings.language.locale())?;
+    ui.set_language_index(settings.language.index());
+    ui.set_separation_profile(settings.separation_profile.index());
+    if let Ok(path) = GuiSettings::path() {
+        ui.set_settings_path(path_text(&path));
+    }
     if let Ok(log) = DiagnosticLog::initialize() {
         ui.set_log_path(path_text(log.path()));
     }
@@ -181,6 +189,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let _ = playback.execute(PlaybackCommand::SetVolume(initial_volume));
     let snapshots = playback.subscribe()?;
     install_callbacks(&ui, &data, &playback, &recording, &settings_writer_handle);
+    install_preference_callbacks(&ui, &data, &settings_writer_handle);
     let netease_cancelled = netease_gui::install(&ui, &data);
     install_window_events(&ui, &data, &settings_writer_handle);
 
@@ -266,6 +275,45 @@ fn install_window_events(
         }
         EventResult::Propagate
     });
+}
+
+fn install_preference_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    settings_writer: &SettingsWriterHandle,
+) {
+    {
+        let data = Arc::clone(data);
+        let settings_writer = settings_writer.clone();
+        ui.on_select_language(move |index| {
+            let Some(language) = GuiLanguage::from_index(index) else {
+                return;
+            };
+            if slint::select_bundled_translation(language.locale()).is_ok() {
+                if let Ok(mut data) = data.lock() {
+                    data.settings.language = language;
+                    if data.settings_writable {
+                        settings_writer.persist(data.settings.clone());
+                    }
+                }
+            }
+        });
+    }
+    {
+        let data = Arc::clone(data);
+        let settings_writer = settings_writer.clone();
+        ui.on_select_separation_profile(move |index| {
+            let Some(profile) = GuiSeparationProfile::from_index(index) else {
+                return;
+            };
+            if let Ok(mut data) = data.lock() {
+                data.settings.separation_profile = profile;
+                if data.settings_writable {
+                    settings_writer.persist(data.settings.clone());
+                }
+            }
+        });
+    }
 }
 
 fn install_callbacks(

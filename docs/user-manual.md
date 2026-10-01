@@ -68,8 +68,12 @@ target/release/k3-gui
 ```
 
 首次启动只需选择已有 K3 工程所在目录。GUI 与 CLI/TUI 共享工程目录中的
-`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、窗口尺寸和上次工程保存在独立的
-`gui.json` 中，不复用 TUI 配置。GUI 再次启动时会加载上次工程，但始终从头保持暂停。
+`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、默认分离档位、界面语言、
+窗口尺寸和上次工程保存在独立的 `gui.json` 中，不复用 TUI 配置。
+点击左上角的 `Settings` 可查看配置文件路径、更换工程目录并调整音量、默认分离档位和语言；
+录音效果仍使用播放区底部唯一的 `Effect` 下拉框。设置自动保存，无需手改 JSON。
+语言可在简体中文、English 和繁體中文之间即时切换，旧版 `gui.json` 默认使用英文。
+GUI 再次启动时会加载上次工程，但始终从头保持暂停。
 顶层信息按钮会打开 About 界面，其中显示 GUI 滚动诊断日志的位置。音频设备、媒体读取和
 工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
 回退命令。Windows 双击 `k3-gui.exe` 不会附带命令行窗口；启动失败时会显示含诊断日志路径的
@@ -77,7 +81,8 @@ target/release/k3-gui
 [GUI 验收记录](gui-acceptance.md)。
 
 要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
-Quality 或 Compatible 档位，再点击 `Queue selected`。默认使用 Quality；所选歌曲按顺序进入
+Quality 或 Compatible 档位，再点击 `Queue selected`。首次默认使用 Quality，之后记住
+上次选择的档位；所选歌曲按顺序进入
 分离队列，也可以在分离期间继续选歌追加。只选一首时按钮显示 `Create and separate`。
 按 `Esc` 可从备歌页返回歌词；后台下载与分离任务继续执行。
 每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`

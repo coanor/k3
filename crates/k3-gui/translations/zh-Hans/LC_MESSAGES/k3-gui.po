@@ -1,0 +1,392 @@
+msgid ""
+msgstr ""
+"Language: zh-Hans\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "K3 — Karaoke stage"
+msgstr "K3 — 卡拉 OK 排练室"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Copy message"
+msgstr "复制消息"
+
+msgid "Status message"
+msgstr "状态消息"
+
+msgid "Choose a project"
+msgstr "选择项目"
+
+msgid "Library ready"
+msgstr "曲库已就绪"
+
+msgid "Play"
+msgstr "播放"
+
+msgid "Pause"
+msgstr "暂停"
+
+msgid "K3"
+msgstr "K3"
+
+msgid "REHEARSAL ROOM"
+msgstr "排练室"
+
+msgid "KARAOKE REHEARSAL"
+msgstr "卡拉 OK 排练"
+
+msgid "Cancel folder selection"
+msgstr "取消选择文件夹"
+
+msgid "Find your songbook"
+msgstr "找到你的曲库"
+
+msgid "Choose the folder that contains your K3 projects.\nGUI preferences stay separate from the terminal interface."
+msgstr "选择存放 K3 项目的文件夹。\nGUI 设置与终端界面分开保存。"
+
+msgid "/path/to/k3-projects"
+msgstr "/path/to/k3-projects"
+
+msgid "Browse for projects folder"
+msgstr "浏览项目文件夹"
+
+msgid "About K3"
+msgstr "关于 K3"
+
+msgid "Checking…"
+msgstr "正在检查…"
+
+msgid "Open songbook"
+msgstr "打开曲库"
+
+msgid "Search projects"
+msgstr "搜索项目"
+
+msgid "PROJECTS"
+msgstr "项目"
+
+msgid "Refresh projects"
+msgstr "刷新项目"
+
+msgid "Repair needed"
+msgstr "需要修复"
+
+msgid "Ready"
+msgstr "就绪"
+
+msgid "Change projects folder"
+msgstr "更换项目文件夹"
+
+msgid "NOW REHEARSING"
+msgstr "正在排练"
+
+msgid "READY ROOM"
+msgstr "准备就绪"
+
+msgid "Playing"
+msgstr "播放中"
+
+msgid "Paused"
+msgstr "已暂停"
+
+msgid "Playback unavailable"
+msgstr "无法播放"
+
+msgid "Loading audio…"
+msgstr "正在加载音频…"
+
+msgid "Finished"
+msgstr "播放完毕"
+
+msgid "Playback error"
+msgstr "播放出错"
+
+msgid "WAITING FOR A SONG"
+msgstr "等待选择歌曲"
+
+msgid "Retry playback"
+msgstr "重试播放"
+
+msgid "This project changed on disk. Reload to use the latest version."
+msgstr "此项目已在磁盘上更改。请重新加载以使用最新版。"
+
+msgid "Reload project"
+msgstr "重新加载项目"
+
+msgid "LYRIC CUE"
+msgstr "歌词提示"
+
+msgid "Follow current line"
+msgstr "跟随当前歌词"
+
+msgid "Instrumental rehearsal"
+msgstr "伴奏排练"
+
+msgid "Choose a song from the left"
+msgstr "从左侧选择歌曲"
+
+msgid "This project has no synced lyrics."
+msgstr "此项目没有同步歌词。"
+
+msgid "Its lyrics and playback controls will appear here."
+msgstr "歌词和播放控件将显示在这里。"
+
+msgid "Find lyrics"
+msgstr "查找歌词"
+
+msgid "Find synced lyrics"
+msgstr "查找同步歌词"
+
+msgid "Search LRCLIB and NetEase Cloud Music. Your current lyrics stay unchanged until you save a result."
+msgstr "搜索 LRCLIB 和网易云音乐。保存搜索结果前，当前歌词不会改变。"
+
+msgid "Song title or artist"
+msgstr "歌名或歌手"
+
+msgid "Search"
+msgstr "搜索"
+
+msgid "Preparing…"
+msgstr "正在准备…"
+
+msgid "Reading the project and audio metadata…"
+msgstr "正在读取项目和音频信息…"
+
+msgid "Searching…"
+msgstr "正在搜索…"
+
+msgid "Searching online lyric catalogs…"
+msgstr "正在搜索在线歌词库…"
+
+msgid "Search to preview duration-matched synced lyrics."
+msgstr "搜索后可预览与时长匹配的同步歌词。"
+
+msgid "Use this version"
+msgstr "使用此版本"
+
+msgid "Saving…"
+msgstr "正在保存…"
+
+msgid "SONG PREPARATION"
+msgstr "歌曲准备"
+
+msgid "Separate song"
+msgstr "分离歌曲"
+
+msgid "Back to lyrics"
+msgstr "返回歌词"
+
+msgid "Prepare a song"
+msgstr "准备歌曲"
+
+msgid "Choose one or more local audio files, then queue them for separation. K3 prepares each song in order."
+msgstr "选择一个或多个本地音频文件并加入分离队列。K3 会依次处理。"
+
+msgid "SOURCE AUDIO"
+msgstr "原始音频"
+
+msgid "No audio selected"
+msgstr "尚未选择音频"
+
+msgid "Choose files"
+msgstr "选择文件"
+
+msgid "QUALITY PROFILE"
+msgstr "质量档位"
+
+msgid "Fast"
+msgstr "快速"
+
+msgid "Balanced"
+msgstr "均衡"
+
+msgid "Quality"
+msgstr "高质量"
+
+msgid "Compatible"
+msgstr "兼容"
+
+msgid "Requires the separator runtime installed beside K3. The first run may download a model."
+msgstr "需要在 K3 旁安装分离运行环境。首次运行可能下载模型。"
+
+msgid "Existing projects will be re-separated from their stored source audio. Chosen files only identify projects; lyrics and takes are kept."
+msgstr "已有项目将使用保存的原始音频重新分离。所选文件仅用于定位项目；歌词和录音保留。"
+
+msgid "Create and separate"
+msgstr "创建并分离"
+
+msgid "Queue selected"
+msgstr "加入队列"
+
+msgid "Queue & replace"
+msgstr "加入队列并替换"
+
+msgid "Replace stems"
+msgstr "替换分轨"
+
+msgid "Separating…"
+msgstr "正在分离…"
+
+msgid "NETEASE CLOUD MUSIC"
+msgstr "网易云音乐"
+
+msgid "Experimental source using undocumented web endpoints; it may stop working. Only download songs your account may access and follow applicable terms. Login credentials stay in a private local K3 file. Audio is saved under .netease-audio in your projects folder."
+msgstr "使用未公开的网页接口，可能随时失效。请仅下载账号有权访问的歌曲并遵守适用条款。登录信息保存在 K3 本地私有文件中，音频保存到项目文件夹内的 .netease-audio。"
+
+msgid "Enable experimental NetEase source"
+msgstr "启用实验性网易云音乐来源"
+
+msgid "Import Chrome login"
+msgstr "导入 Chrome 登录信息"
+
+msgid "QR login"
+msgstr "扫码登录"
+
+msgid "Log out"
+msgstr "退出登录"
+
+msgid "Search songs"
+msgstr "搜索歌曲"
+
+msgid "Liked songs"
+msgstr "我喜欢的歌曲"
+
+msgid "Queue selected songs"
+msgstr "将所选歌曲加入队列"
+
+msgid "QUEUED"
+msgstr "排队中"
+
+msgid "DOWNLOADED"
+msgstr "已下载"
+
+msgid "Waiting to download:"
+msgstr "等待下载："
+
+msgid "Waiting to separate:"
+msgstr "等待分离："
+
+msgid "Original"
+msgstr "原唱"
+
+msgid "Backing"
+msgstr "伴奏"
+
+msgid "Vocals"
+msgstr "人声"
+
+msgid "Take"
+msgstr "录音"
+
+msgid "Original audio is unavailable"
+msgstr "原始音频不可用"
+
+msgid "Backing track is unavailable"
+msgstr "伴奏不可用"
+
+msgid "Vocal track is unavailable"
+msgstr "人声分轨不可用"
+
+msgid "No recorded take is available"
+msgstr "没有可用的录音"
+
+msgid "−5s"
+msgstr "−5s"
+
+msgid "+5s"
+msgstr "+5s"
+
+msgid "Restart playback"
+msgstr "重新播放"
+
+msgid "−"
+msgstr "−"
+
+msgid "+"
+msgstr "+"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Volume"
+msgstr "音量"
+
+msgid "Record"
+msgstr "录音"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Working…"
+msgstr "处理中…"
+
+msgid "Monitor on"
+msgstr "监听已开启"
+
+msgid "Monitor off"
+msgstr "监听已关闭"
+
+msgid "Clean"
+msgstr "纯净"
+
+msgid "Studio"
+msgstr "录音室"
+
+msgid "KTV"
+msgstr "KTV"
+
+msgid "Theater"
+msgstr "剧院"
+
+msgid "Church"
+msgstr "教堂"
+
+msgid "TAKE"
+msgstr "录音片段"
+
+msgid "EFFECT"
+msgstr "效果"
+
+msgid "K3 · Rehearsal room"
+msgstr "K3 · 排练室"
+
+msgid "Diagnostics: "
+msgstr "诊断日志："
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Change projects folder?"
+msgstr "更换项目文件夹？"
+
+msgid "Playback will remain on the current project until you open another one."
+msgstr "在打开另一个项目前，播放会停留在当前项目。"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Change folder"
+msgstr "更换文件夹"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Choose where K3 stores projects and set your playback, separation, and language preferences. Changes save automatically."
+msgstr "选择项目存放位置，并调整播放、分离和语言偏好。更改会自动保存。"
+
+msgid "PROJECTS FOLDER"
+msgstr "项目文件夹"
+
+msgid "Choose a projects folder"
+msgstr "选择项目文件夹"
+
+msgid "DEFAULT SEPARATION PROFILE"
+msgstr "默认分离档位"
+
+msgid "LANGUAGE"
+msgstr "语言"
+
+msgid "GUI settings:"
+msgstr "GUI 设置："

@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use k3_core::VocalEffectPreset;
-use k3_gui::settings::{GuiSettings, RecordingSettings, WindowSize};
+use k3_gui::settings::{
+    GuiLanguage, GuiSeparationProfile, GuiSettings, RecordingSettings, WindowSize,
+};
 
 #[test]
 fn gui_settings_round_trip_without_reusing_tui_configuration() {
@@ -13,6 +15,8 @@ fn gui_settings_round_trip_without_reusing_tui_configuration() {
         recording: RecordingSettings {
             default_effect: VocalEffectPreset::Church,
         },
+        separation_profile: GuiSeparationProfile::Compatible,
+        language: GuiLanguage::TraditionalChinese,
         window: WindowSize {
             width: 1280,
             height: 800,
@@ -38,4 +42,6 @@ fn existing_gui_settings_default_to_clean_recordings() {
 
     let settings = GuiSettings::load_from(&path).unwrap();
     assert_eq!(settings.recording.default_effect, VocalEffectPreset::Clean);
+    assert_eq!(settings.separation_profile, GuiSeparationProfile::Quality);
+    assert_eq!(settings.language, GuiLanguage::English);
 }

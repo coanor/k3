@@ -89,6 +89,10 @@ pub struct GuiSettings {
     pub volume: f32,
     #[serde(default)]
     pub recording: RecordingSettings,
+    #[serde(default)]
+    pub separation_profile: GuiSeparationProfile,
+    #[serde(default)]
+    pub language: GuiLanguage,
     pub window: WindowSize,
     pub last_project_id: Option<String>,
 }
@@ -100,8 +104,84 @@ impl Default for GuiSettings {
             projects_root: None,
             volume: 1.0,
             recording: RecordingSettings::default(),
+            separation_profile: GuiSeparationProfile::default(),
+            language: GuiLanguage::default(),
             window: WindowSize::default(),
             last_project_id: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GuiSeparationProfile {
+    Fast,
+    Balanced,
+    #[default]
+    Quality,
+    Compatible,
+}
+
+impl GuiSeparationProfile {
+    #[must_use]
+    pub fn index(self) -> i32 {
+        match self {
+            Self::Fast => 0,
+            Self::Balanced => 1,
+            Self::Quality => 2,
+            Self::Compatible => 3,
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(index: i32) -> Option<Self> {
+        Some(match index {
+            0 => Self::Fast,
+            1 => Self::Balanced,
+            2 => Self::Quality,
+            3 => Self::Compatible,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuiLanguage {
+    #[default]
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "zh-Hans")]
+    SimplifiedChinese,
+    #[serde(rename = "zh-Hant")]
+    TraditionalChinese,
+}
+
+impl GuiLanguage {
+    #[must_use]
+    pub fn index(self) -> i32 {
+        match self {
+            Self::SimplifiedChinese => 0,
+            Self::English => 1,
+            Self::TraditionalChinese => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(index: i32) -> Option<Self> {
+        Some(match index {
+            0 => Self::SimplifiedChinese,
+            1 => Self::English,
+            2 => Self::TraditionalChinese,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn locale(self) -> &'static str {
+        match self {
+            Self::SimplifiedChinese => "zh-Hans",
+            Self::English => "en",
+            Self::TraditionalChinese => "zh-Hant",
         }
     }
 }
