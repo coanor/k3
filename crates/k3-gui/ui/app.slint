@@ -889,7 +889,7 @@ export component K3Window inherits Window {
                                         width: 174px;
                                         height: 42px;
                                         primary: true;
-                                        label: root.separation-selected-count > 1 ? Strings.queue-audio + " (" + root.separation-selected-count + ")" : root.separation-existing ? Strings.replace-stems : Strings.start-separation;
+                                        label: root.separation-selected-count > 1 ? (root.separation-existing ? Strings.queue-and-replace : Strings.queue-audio) + " (" + root.separation-selected-count + ")" : root.separation-existing ? Strings.replace-stems : Strings.start-separation;
                                         enabled: root.separation-selected-count > 0 && !root.recording-active;
                                         clicked => {
                                             root.queue-selected-sources(root.separation-profile);

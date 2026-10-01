@@ -82,8 +82,9 @@ Quality 或 Compatible 档位，再点击 `Queue selected`。默认使用 Qualit
 按 `Esc` 可从备歌页返回歌词；后台下载与分离任务继续执行。
 每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
 （Windows），需要先按第 3 节安装分离 worker；首次使用所选模型时可能下载权重。
-若批量选择中有同名工程，GUI 会跳过该文件并提示单独选择以确认替换。
-单独选择已有工程时，按钮会改为 `Replace stems` 并显示警告；此操作使用该工程已保存的源音频，
+若批量选择中有多个文件映射到同名工程，GUI 会跳过重复项。批量选择也可包含已有工程，
+界面会显示替换警告和 `Queue & replace` 按钮；只选一首已有工程时按钮为 `Replace stems`。
+替换使用该工程已保存的源音频，
 不会重新导入所选文件，也不会删除歌词和 take。若当前已载入该工程，替换前会停止并释放音频；
 分离队列结束后自动重新载入该工程，保持暂停。运行期间暂不能切换工程或工程目录。失败时可在 About 中找到
 GUI 诊断日志；若只复制 `k3-gui` 二进制而未保留同包的分离脚本，界面无法启动分轨。
@@ -195,6 +196,9 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
   ~/.local/share/icons/hicolor/scalable/apps/k3.svg
 ```
 
+桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
+登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
+
 ### 2.3 私有源码仓库发布公开二进制
 
 私有仓库中的 GitHub Release 只有获准访问仓库的人能下载。若要让所有人下载发行包、
@@ -216,9 +220,6 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
 未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。发行包包含 README、文档、
 分离脚本和运行所需的 Python worker 文件；公开发布前应检查这些内容。仓库目前尚未
 配置公开发行目标及令牌，因此只完成了发布流程，尚未公开任何发行包。
-
-桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
-登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
 
 ## 3. 安装本地分离 worker
 

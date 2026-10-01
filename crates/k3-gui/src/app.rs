@@ -593,7 +593,6 @@ fn select_separation_sources(
     sources: Vec<PathBuf>,
     root: &Path,
 ) -> (Vec<SelectedSeparation>, Vec<String>) {
-    let allow_replace = sources.len() == 1;
     let mut projects = HashSet::new();
     let mut selected = Vec::new();
     let mut skipped = Vec::new();
@@ -603,11 +602,6 @@ fn select_separation_sources(
             |name| name.to_string_lossy().into(),
         );
         match separation::destination(&source, root) {
-            Ok((_, exists)) if exists && !allow_replace => {
-                skipped.push(format!(
-                    "{name}: project already exists; select it alone to replace stems"
-                ));
-            }
             Ok((project, _)) if !projects.insert(project.to_string_lossy().to_lowercase()) => {
                 skipped.push(format!(
                     "{name}: another selected file has the same project name"
@@ -663,7 +657,7 @@ fn install_choose_separation_source(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
                 match result {
                     Ok((selected, skipped)) => {
                         let count = selected.len();
-                        let existing = count == 1 && selected[0].allow_replace;
+                        let existing = selected.iter().any(|item| item.allow_replace);
                         let display = if count == 1 {
                             selected[0].source.display().to_string()
                         } else {
@@ -2446,7 +2440,7 @@ mod selection_tests {
     use super::select_separation_sources;
 
     #[test]
-    fn batch_skips_existing_and_colliding_project_names() {
+    fn batch_allows_existing_projects_and_skips_colliding_names() {
         let sandbox = tempfile::tempdir().unwrap();
         let projects = sandbox.path().join("projects");
         fs::create_dir(&projects).unwrap();
@@ -2461,20 +2455,16 @@ mod selection_tests {
 
         let (selected, skipped) =
             select_separation_sources(vec![first.clone(), duplicate, existing.clone()], &projects);
-        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].source, first);
         assert!(!selected[0].allow_replace);
-        assert_eq!(skipped.len(), 2);
+        assert_eq!(selected[1].source, existing);
+        assert!(selected[1].allow_replace);
+        assert_eq!(skipped.len(), 1);
         assert!(
             skipped
                 .iter()
                 .any(|issue| issue.contains("same project name"))
         );
-        assert!(skipped.iter().any(|issue| issue.contains("already exists")));
-
-        let (selected, skipped) = select_separation_sources(vec![existing], &projects);
-        assert!(skipped.is_empty());
-        assert_eq!(selected.len(), 1);
-        assert!(selected[0].allow_replace);
     }
 }
