@@ -166,7 +166,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let snapshots = playback.subscribe()?;
     install_callbacks(&ui, &data, &playback, &recording, &settings_writer_handle);
     let netease_cancelled = netease_gui::install(&ui, &data);
-    install_focus_refresh(&ui, &data, &settings_writer_handle);
+    install_window_events(&ui, &data, &settings_writer_handle);
 
     let pump_running = Arc::new(AtomicBool::new(true));
     let snapshot_listener = start_snapshot_listener(
@@ -212,7 +212,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn install_focus_refresh(
+fn install_window_events(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
     settings_writer: &SettingsWriterHandle,
@@ -222,6 +222,14 @@ fn install_focus_refresh(
     let settings_writer = settings_writer.clone();
     let mut was_focused = true;
     ui.unwrap().window().on_winit_window_event(move |_, event| {
+        if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
+            && event.state == winit::event::ElementState::Pressed
+            && !event.repeat
+            && event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)
+            && ui.upgrade().is_some_and(|ui| ui.invoke_close_top_layer())
+        {
+            return EventResult::PreventDefault;
+        }
         if let winit::event::WindowEvent::Focused(focused) = event {
             if *focused && !was_focused {
                 let root = data

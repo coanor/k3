@@ -203,6 +203,26 @@ export component K3Window inherits Window {
         root.overlay = Overlay.none;
     }
 
+    public function close-top-layer() -> bool {
+        if (root.overlay != Overlay.none) {
+            if (root.overlay == Overlay.lyrics-search) {
+                root.dismiss-lyrics-search();
+            } else {
+                root.overlay = Overlay.none;
+            }
+            return true;
+        }
+        if (root.view-mode == ViewMode.setup && root.projects-root != "") {
+            root.view-mode = ViewMode.rehearsal;
+            return true;
+        }
+        if (root.separation-panel-open) {
+            root.separation-panel-open = false;
+            return true;
+        }
+        return false;
+    }
+
     function playback-state-text() -> string {
         if (root.playback-state == PlaybackState.unavailable) { return Strings.playback-unavailable; }
         if (root.playback-state == PlaybackState.loading) { return Strings.loading-audio; }
@@ -222,21 +242,7 @@ export component K3Window inherits Window {
     shortcuts := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
-                if (root.overlay != Overlay.none) {
-                    if (root.overlay == Overlay.lyrics-search) {
-                        root.dismiss-lyrics-search();
-                    } else {
-                        root.overlay = Overlay.none;
-                    }
-                    return accept;
-                }
-                if (root.view-mode == ViewMode.setup && root.projects-root != "") {
-                    root.view-mode = ViewMode.rehearsal; return accept;
-                }
-                if (root.separation-panel-open && !root.netease-busy) {
-                    root.separation-panel-open = false; return accept;
-                }
-                return reject;
+                return root.close-top-layer() ? accept : reject;
             }
             if (root.overlay != Overlay.none) { return reject; }
             if (event.text == " " && root.playback-ready) {
@@ -673,7 +679,7 @@ export component K3Window inherits Window {
                             width: root.separation-panel-open ? 112px : 126px;
                             height: 28px;
                             label: root.separation-panel-open ? Strings.back-to-lyrics : Strings.separate-song;
-                            enabled: !root.recording-active && !root.separation-running && !root.netease-busy;
+                            enabled: !root.recording-active;
                             clicked => { root.separation-panel-open = !root.separation-panel-open; }
                         }
                     }

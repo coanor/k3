@@ -77,6 +77,7 @@ target/release/k3-gui
 要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
 Quality 或 Compatible 档位，再点击 `Queue selected`。默认使用 Quality；所选歌曲按顺序进入
 分离队列，也可以在分离期间继续选歌追加。只选一首时按钮显示 `Create and separate`。
+按 `Esc` 可从备歌页返回歌词；后台下载与分离任务继续执行。
 每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
 （Windows），需要先按第 3 节安装分离 worker；首次使用所选模型时可能下载权重。
 若批量选择中有同名工程，GUI 会跳过该文件并提示单独选择以确认替换。
