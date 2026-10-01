@@ -290,18 +290,20 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
             }
             PlaybackCommand::Toggle => self.audio(AudioCommand::Toggle),
             PlaybackCommand::SeekBy(seconds) => {
+                let position = self
+                    .snapshot
+                    .duration
+                    .map_or(self.snapshot.position, |duration| {
+                        self.snapshot.position.min(duration)
+                    });
                 let target = if seconds.is_negative() {
-                    self.snapshot
-                        .position
-                        .saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
+                    position.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
                 } else {
-                    self.snapshot
-                        .position
-                        .saturating_add(Duration::from_secs(seconds.unsigned_abs()))
+                    position.saturating_add(Duration::from_secs(seconds.unsigned_abs()))
                 };
-                self.audio(AudioCommand::SeekTo(target))
+                self.seek_to(target)
             }
-            PlaybackCommand::SeekTo(position) => self.audio(AudioCommand::SeekTo(position)),
+            PlaybackCommand::SeekTo(position) => self.seek_to(position),
             PlaybackCommand::Restart => self.audio(AudioCommand::SeekTo(Duration::ZERO)),
             PlaybackCommand::SwitchTrack(kind) => self.apply_track_switch(kind),
             PlaybackCommand::SetVolume(volume) => {
@@ -310,6 +312,24 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
             PlaybackCommand::SetKeyShift(semitones) => self.apply_key_shift(semitones, true),
             PlaybackCommand::Refresh => self.refresh(),
             PlaybackCommand::Retry => self.retry(),
+        }
+    }
+
+    fn seek_to(&mut self, position: Duration) -> Result<(), PlaybackFailure> {
+        let position = self
+            .snapshot
+            .duration
+            .map_or(position, |duration| position.min(duration));
+        if self.snapshot.status == PlaybackStatus::Finished
+            && self
+                .snapshot
+                .duration
+                .is_none_or(|duration| position < duration)
+        {
+            let track = self.snapshot.track.ok_or(PlaybackFailure::NoProject)?;
+            self.load_track(track, position, true)
+        } else {
+            self.audio(AudioCommand::SeekTo(position))
         }
     }
 

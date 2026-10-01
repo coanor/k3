@@ -97,6 +97,28 @@ fn playback_service_does_not_discard_newer_snapshots_when_commands_burst() {
 }
 
 #[test]
+fn queued_relative_seeks_accumulate_in_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let service = PlaybackService::start(FakeAudio::default());
+    service.execute(PlaybackCommand::Load(project)).unwrap();
+
+    service.dispatch(PlaybackCommand::SeekBy(5)).unwrap();
+    service.dispatch(PlaybackCommand::SeekBy(5)).unwrap();
+    assert_eq!(
+        service.execute(PlaybackCommand::Refresh).unwrap().position,
+        Duration::from_secs(10)
+    );
+
+    service.dispatch(PlaybackCommand::SeekBy(-5)).unwrap();
+    service.dispatch(PlaybackCommand::SeekBy(-5)).unwrap();
+    assert_eq!(
+        service.execute(PlaybackCommand::Refresh).unwrap().position,
+        Duration::ZERO
+    );
+}
+
+#[test]
 fn track_switch_publishes_loading_before_the_new_track_is_ready() {
     let directory = tempfile::tempdir().unwrap();
     let project = LoadedProject::open(&create_project(directory.path())).unwrap();
@@ -229,6 +251,62 @@ fn finished_track_can_be_started_again_with_toggle_or_restart() {
 }
 
 #[test]
+fn seeking_backward_from_finished_restarts_the_track_at_the_requested_position() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let service = PlaybackService::start(FinishOnRefreshAudio::default());
+    service.execute(PlaybackCommand::Load(project)).unwrap();
+    assert_eq!(
+        service.execute(PlaybackCommand::Refresh).unwrap().status,
+        PlaybackStatus::Finished
+    );
+
+    let moved = service.execute(PlaybackCommand::SeekBy(-5)).unwrap();
+    assert_eq!(moved.status, PlaybackStatus::Playing);
+    assert_eq!(moved.position, Duration::from_secs(25));
+
+    service.execute(PlaybackCommand::Refresh).unwrap();
+    let moved = service
+        .execute(PlaybackCommand::SeekTo(Duration::from_secs(10)))
+        .unwrap();
+    assert_eq!(moved.status, PlaybackStatus::Playing);
+    assert_eq!(moved.position, Duration::from_secs(10));
+}
+
+#[test]
+fn seeking_past_the_end_clamps_before_the_next_relative_seek() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let service = PlaybackService::start(FakeAudio::default());
+    service.execute(PlaybackCommand::Load(project)).unwrap();
+    service
+        .execute(PlaybackCommand::SeekTo(Duration::from_secs(118)))
+        .unwrap();
+
+    assert_eq!(
+        service
+            .execute(PlaybackCommand::SeekBy(5))
+            .unwrap()
+            .position,
+        Duration::from_secs(120)
+    );
+    assert_eq!(
+        service
+            .execute(PlaybackCommand::SeekBy(-5))
+            .unwrap()
+            .position,
+        Duration::from_secs(115)
+    );
+    assert_eq!(
+        service
+            .execute(PlaybackCommand::SeekTo(Duration::from_secs(200)))
+            .unwrap()
+            .position,
+        Duration::from_secs(120)
+    );
+}
+
+#[test]
 fn project_without_playable_media_replaces_the_previous_snapshot() {
     let first_directory = tempfile::tempdir().unwrap();
     let missing_directory = tempfile::tempdir().unwrap();
@@ -283,14 +361,23 @@ struct FinishOnRefreshAudio {
 impl PlaybackBackend for FinishOnRefreshAudio {
     fn execute(&mut self, command: AudioCommand) -> Result<AudioSnapshot, String> {
         match command {
-            AudioCommand::Load { should_play, .. } => {
+            AudioCommand::Load {
+                position,
+                should_play,
+                ..
+            } => {
                 self.snapshot.status = if should_play {
                     PlaybackStatus::Playing
                 } else {
                     PlaybackStatus::Paused
                 };
+                self.snapshot.position = position;
+                self.snapshot.duration = Some(Duration::from_secs(30));
             }
-            AudioCommand::Refresh => self.snapshot.status = PlaybackStatus::Finished,
+            AudioCommand::Refresh => {
+                self.snapshot.status = PlaybackStatus::Finished;
+                self.snapshot.position = Duration::from_secs(30);
+            }
             AudioCommand::Toggle | AudioCommand::SeekTo(_) | AudioCommand::SetVolume(_) => {}
         }
         Ok(self.snapshot.clone())

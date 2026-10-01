@@ -71,6 +71,8 @@ export component K3Window inherits Window {
     in-out property <string> current-project-id;
     in property <PlaybackState> playback-state: PlaybackState.unavailable;
     property <bool> playback-ready: root.playback-state == PlaybackState.paused || root.playback-state == PlaybackState.playing || root.playback-state == PlaybackState.finished;
+    property <bool> can-seek-back: root.playback-ready && root.position-seconds > 0.05;
+    property <bool> can-seek-forward: root.playback-ready && root.playback-state != PlaybackState.finished && (root.duration-seconds <= 0 || root.position-seconds < root.duration-seconds - 0.05);
     property <bool> playing: root.playback-state == PlaybackState.playing;
     in-out property <float> position-seconds: 0;
     in property <float> duration-seconds: 0;
@@ -228,10 +230,10 @@ export component K3Window inherits Window {
             if (event.text == " " && root.playback-ready) {
                 root.playback-command(PlaybackAction.toggle); return accept;
             }
-            if (event.text == Key.LeftArrow && root.playback-ready) {
+            if (event.text == Key.LeftArrow && root.can-seek-back) {
                 root.playback-command(PlaybackAction.back); return accept;
             }
-            if (event.text == Key.RightArrow && root.playback-ready) {
+            if (event.text == Key.RightArrow && root.can-seek-forward) {
                 root.playback-command(PlaybackAction.forward); return accept;
             }
             if (event.text == Key.UpArrow) {
@@ -1115,7 +1117,7 @@ export component K3Window inherits Window {
                             width: 52px;
                             height: 54px;
                             label: Strings.seek-back;
-                            enabled: root.playback-ready;
+                            enabled: root.can-seek-back;
                             clicked => { root.playback-command(PlaybackAction.back); }
                         }
                         TransportIconButton {
@@ -1142,7 +1144,7 @@ export component K3Window inherits Window {
                             width: 52px;
                             height: 54px;
                             label: Strings.seek-forward;
-                            enabled: root.playback-ready;
+                            enabled: root.can-seek-forward;
                             clicked => { root.playback-command(PlaybackAction.forward); }
                         }
                         ActionButton {
