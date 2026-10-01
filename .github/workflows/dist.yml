@@ -120,6 +120,13 @@ jobs:
             }
           }
 
+      - name: Verify UTF-8 manifests in Windows PowerShell
+        shell: pwsh
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   build:
     name: Build ${{ matrix.package }}
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
@@ -210,6 +217,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $packageDir = Join-Path "dist" $env:PACKAGE_NAME
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           $binary = "target/$env:BUILD_TARGET/release/$env:EXECUTABLE_NAME"

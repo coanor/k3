@@ -150,7 +150,7 @@ if (-not $health.ok -or -not $health.result.runtime.audio_separator_installed) {
 }
 
 if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
-    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not ($config.PSObject.Properties.Name -contains "separation")) {
         $config | Add-Member -MemberType NoteProperty -Name "separation" -Value ([PSCustomObject]@{})
     }

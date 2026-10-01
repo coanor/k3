@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+# Windows PowerShell 5.1 默认使用本机代码页输出；GUI 通过管道按 UTF-8 记录诊断。
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+try { [Console]::OutputEncoding = $OutputEncoding } catch { }
 
 function ConvertTo-Boolean {
     param([Parameter(Mandatory = $true)][string]$Value, [string]$Name)
@@ -43,7 +46,7 @@ function Invoke-K3 {
 function Write-SeparationOutputs {
     param([Parameter(Mandatory = $true)][string]$Project)
 
-    $document = Get-Content -LiteralPath (Join-Path $Project "project.json") -Raw | ConvertFrom-Json
+    $document = Get-Content -LiteralPath (Join-Path $Project "project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($document.separation.status -ne "ready") {
         throw "project 未保存 ready 状态的分离 manifest：$Project"
     }
@@ -63,7 +66,7 @@ function Write-SeparationOutputs {
 
 $configPath = Join-Path $PSScriptRoot "config.json"
 $config = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-    Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 } else {
     $null
 }
