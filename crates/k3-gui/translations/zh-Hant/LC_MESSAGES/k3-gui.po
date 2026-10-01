@@ -675,3 +675,18 @@ msgstr "分離失敗。請在“關於”中查看診斷紀錄，並檢查分離
 
 msgid "Audio"
 msgstr "音訊"
+
+msgid "clean"
+msgstr "純淨"
+
+msgid "studio"
+msgstr "錄音室"
+
+msgid "ktv"
+msgstr "KTV"
+
+msgid "theater"
+msgstr "劇院"
+
+msgid "church"
+msgstr "教堂"

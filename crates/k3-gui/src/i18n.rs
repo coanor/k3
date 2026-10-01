@@ -254,5 +254,9 @@ mod tests {
             ),
             "已保存来自 Mic 的 2.5 秒录音 · 警告：clipped"
         );
+        assert_eq!(
+            message("church saved · playing", GuiLanguage::SimplifiedChinese),
+            "已保存 教堂 效果 · 正在播放"
+        );
     }
 }
