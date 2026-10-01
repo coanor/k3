@@ -177,6 +177,8 @@ pub(crate) fn run(request: &SeparationRequest, script: &Path) -> Result<PathBuf,
 fn platform_command(script: &Path) -> Command {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
         let mut command = Command::new("powershell.exe");
         command
             .arg("-NoProfile")
@@ -185,6 +187,8 @@ fn platform_command(script: &Path) -> Command {
             .arg("Bypass")
             .arg("-File")
             .arg(script);
+        // GUI 分离任务通过管道收集诊断输出，不需要 Windows 控制台窗口。
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         command
     }
     #[cfg(not(target_os = "windows"))]

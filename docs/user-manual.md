@@ -73,7 +73,8 @@ target/release/k3-gui
 顶层信息按钮会打开 About 界面，其中显示 GUI 滚动诊断日志的位置。音频设备、媒体读取和
 工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
 回退命令。Windows 双击 `k3-gui.exe` 不会附带命令行窗口；启动失败时会显示含诊断日志路径的
-错误弹窗。维护者的平台与性能验收步骤见 [GUI 验收记录](gui-acceptance.md)。
+错误弹窗。GUI 后台分离也不会弹出命令行窗口。维护者的平台与性能验收步骤见
+[GUI 验收记录](gui-acceptance.md)。
 
 要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
 Quality 或 Compatible 档位，再点击 `Queue selected`。默认使用 Quality；所选歌曲按顺序进入
