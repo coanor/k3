@@ -22,6 +22,7 @@ struct NetEaseUi {
     risk: RiskStore,
     songs: Mutex<Vec<Song>>,
     selected_ids: Mutex<HashSet<u64>>,
+    downloaded_ids: Mutex<HashSet<u64>>,
     downloads: Mutex<DownloadQueue>,
     generation: AtomicU64,
     cancelled: Arc<AtomicBool>,
@@ -103,6 +104,7 @@ pub(super) fn install(ui: &K3Window, data: &Arc<Mutex<AppData>>) -> Arc<AtomicBo
         risk,
         songs: Mutex::new(Vec::new()),
         selected_ids: Mutex::new(HashSet::new()),
+        downloaded_ids: Mutex::new(HashSet::new()),
         downloads: Mutex::new(DownloadQueue::default()),
         generation: AtomicU64::new(0),
         cancelled: Arc::clone(&cancelled),
@@ -124,7 +126,7 @@ pub(super) fn install(ui: &K3Window, data: &Arc<Mutex<AppData>>) -> Arc<AtomicBo
     install_chrome_login(ui, &net, data);
     install_qr_login(ui, &net, data);
     install_logout(ui, &net);
-    install_catalog_callbacks(ui, &net);
+    install_catalog_callbacks(ui, &net, data);
     install_selection_callback(ui, &net);
     install_download_callback(ui, &net, data);
     cancelled
@@ -307,6 +309,7 @@ fn install_logout(ui: &K3Window, net: &Arc<NetEaseUi>) {
                 Ok(()) => {
                     net.songs.lock().unwrap().clear();
                     net.selected_ids.lock().unwrap().clear();
+                    net.downloaded_ids.lock().unwrap().clear();
                     *net.downloads.lock().unwrap() = DownloadQueue::default();
                     ui.set_netease_logged_in(false);
                     ui.set_netease_account("".into());
@@ -322,10 +325,11 @@ fn install_logout(ui: &K3Window, net: &Arc<NetEaseUi>) {
     }
 }
 
-fn install_catalog_callbacks(ui: &K3Window, net: &Arc<NetEaseUi>) {
+fn install_catalog_callbacks(ui: &K3Window, net: &Arc<NetEaseUi>, data: &Arc<Mutex<AppData>>) {
     {
         let weak = ui.as_weak();
         let net = Arc::clone(net);
+        let data = Arc::clone(data);
         ui.on_netease_search(move |query| {
             let query = query.trim().to_owned();
             if query.is_empty() {
@@ -334,13 +338,14 @@ fn install_catalog_callbacks(ui: &K3Window, net: &Arc<NetEaseUi>) {
                 }
                 return;
             }
-            load_songs(&weak, &net, Some(query));
+            load_songs(&weak, &net, &data, Some(query));
         });
     }
     {
         let weak = ui.as_weak();
         let net = Arc::clone(net);
-        ui.on_netease_liked(move || load_songs(&weak, &net, None));
+        let data = Arc::clone(data);
+        ui.on_netease_liked(move || load_songs(&weak, &net, &data, None));
     }
 }
 
@@ -510,6 +515,9 @@ fn finish_download(
             .push(format!("{}: {error}", job.song.title));
     }
     drop(downloads);
+    if outcome.is_ok() {
+        net.downloaded_ids.lock().unwrap().insert(job.song.id);
+    }
     match outcome {
         Ok(path) => match separation::destination(&path, &job.projects_root) {
             Ok((_, true)) if retryable => {
@@ -595,6 +603,7 @@ impl NetEaseUi {
     fn refresh_song_items(&self, ui: &K3Window) {
         let songs = self.songs.lock().unwrap();
         let selected = self.selected_ids.lock().unwrap();
+        let downloaded = self.downloaded_ids.lock().unwrap();
         let downloads = self.downloads.lock().unwrap();
         let items = songs
             .iter()
@@ -615,6 +624,7 @@ impl NetEaseUi {
                 available: song.available,
                 selected: selected.contains(&song.id),
                 queued: downloads.contains(song.id),
+                downloaded: downloaded.contains(&song.id),
             })
             .collect::<Vec<_>>();
         ui.set_netease_selected_count(visible_count(selected.len()));
@@ -684,7 +694,12 @@ fn finish_error(
     });
 }
 
-fn load_songs(weak: &slint::Weak<K3Window>, net: &Arc<NetEaseUi>, query: Option<String>) {
+fn load_songs(
+    weak: &slint::Weak<K3Window>,
+    net: &Arc<NetEaseUi>,
+    data: &Arc<Mutex<AppData>>,
+    query: Option<String>,
+) {
     let Some(ui) = weak.upgrade() else { return };
     if ui.get_netease_busy() || !ui.get_netease_logged_in() {
         return;
@@ -701,6 +716,10 @@ fn load_songs(weak: &slint::Weak<K3Window>, net: &Arc<NetEaseUi>, query: Option<
     );
     let weak = weak.clone();
     let net = Arc::clone(net);
+    let root = data
+        .lock()
+        .ok()
+        .and_then(|state| state.settings.projects_root.clone());
     thread::spawn(move || {
         let result = match query {
             Some(query) => net.client.search(&query, 0, 50).map(|page| page.songs),
@@ -715,11 +734,27 @@ fn load_songs(weak: &slint::Weak<K3Window>, net: &Arc<NetEaseUi>, query: Option<
             match result {
                 Ok(songs) => {
                     let count = songs.len();
+                    let cached = root.as_ref().map_or(Ok(HashSet::new()), |root| {
+                        let ids = songs.iter().map(|song| song.id).collect::<Vec<_>>();
+                        net.client
+                            .downloaded_song_ids(&root.join(".netease-audio"), &ids)
+                    });
                     *net.songs.lock().unwrap() = songs;
                     net.selected_ids.lock().unwrap().clear();
+                    let cache_warning = match cached {
+                        Ok(ids) => {
+                            *net.downloaded_ids.lock().unwrap() = ids;
+                            String::new()
+                        }
+                        Err(error) => {
+                            net.downloaded_ids.lock().unwrap().clear();
+                            format!("; downloaded status unavailable: {error}")
+                        }
+                    };
                     net.refresh_song_items(&ui);
                     ui.set_netease_message(
-                        format!("Found {count} songs; select any number to queue").into(),
+                        format!("Found {count} songs; select any number to queue{cache_warning}")
+                            .into(),
                     );
                 }
                 Err(error) => {
@@ -781,6 +816,7 @@ mod tests {
             risk: RiskStore::at(sandbox.path().join("risk.json")),
             songs: Mutex::new(Vec::new()),
             selected_ids: Mutex::new(HashSet::new()),
+            downloaded_ids: Mutex::new(HashSet::new()),
             downloads: Mutex::new(DownloadQueue::default()),
             generation: AtomicU64::new(0),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -830,6 +866,7 @@ mod tests {
             risk: RiskStore::at(sandbox.path().join("risk.json")),
             songs: Mutex::new(vec![job(1).song, job(2).song]),
             selected_ids: Mutex::new(HashSet::new()),
+            downloaded_ids: Mutex::new(HashSet::new()),
             downloads: Mutex::new(DownloadQueue::default()),
             generation: AtomicU64::new(0),
             cancelled: Arc::new(AtomicBool::new(false)),

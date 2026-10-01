@@ -39,6 +39,7 @@ export struct NeteaseSongItem {
     available: bool,
     selected: bool,
     queued: bool,
+    downloaded: bool,
 }
 
 export component K3Window inherits Window {
@@ -975,13 +976,13 @@ export component K3Window inherits Window {
                                         ListView {
                                             for song[index] in root.netease-songs: Rectangle {
                                                 height: 40px;
-                                                background: song.selected ? Tokens.raised : transparent;
+                                                background: song.selected || song.queued || song.downloaded ? Tokens.raised : transparent;
                                                 Rectangle {
                                                     x: 8px; y: 11px;
                                                     width: 17px; height: 17px;
                                                     border-width: 1px;
-                                                    border-color: song.selected ? Tokens.lyric-current : Tokens.muted;
-                                                    background: song.selected ? Tokens.lyric-current : transparent;
+                                                    border-color: song.selected || song.queued || song.downloaded ? Tokens.lyric-current : Tokens.muted;
+                                                    background: song.selected || song.queued || song.downloaded ? Tokens.lyric-current : transparent;
                                                 }
                                                 Text {
                                                     x: 33px; y: 4px;
@@ -999,10 +1000,10 @@ export component K3Window inherits Window {
                                                     font-size: 10px;
                                                     overflow: elide;
                                                 }
-                                                if song.queued: Text {
+                                                if song.queued || song.downloaded: Text {
                                                     x: parent.width - 68px; y: 11px;
                                                     width: 60px;
-                                                    text: Strings.netease-queued;
+                                                    text: song.queued ? Strings.netease-queued : Strings.netease-downloaded;
                                                     color: Tokens.lyric-current;
                                                     font-size: 10px;
                                                     horizontal-alignment: right;

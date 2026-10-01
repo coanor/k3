@@ -350,6 +350,10 @@ fn download_uses_highest_available_quality_tags_and_deduplicates() {
     assert_eq!(tag.artist().as_deref(), Some("Beyond"));
     assert_eq!(tag.album().as_deref(), Some("精选"));
     assert_eq!(tag.pictures().len(), 1);
+    assert_eq!(
+        client.downloaded_song_ids(&music_root, &[7, 8]).unwrap(),
+        [7].into_iter().collect()
+    );
 
     assert!(matches!(
         client
@@ -363,6 +367,12 @@ fn download_uses_highest_available_quality_tags_and_deduplicates() {
     ));
 
     fs::remove_file(&path).unwrap();
+    assert!(
+        client
+            .downloaded_song_ids(&music_root, &[7])
+            .unwrap()
+            .is_empty()
+    );
     assert!(matches!(
         client
             .download_song(
