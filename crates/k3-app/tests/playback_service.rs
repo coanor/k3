@@ -7,7 +7,7 @@ use std::{
 
 use k3_app::{
     AudioCommand, AudioSnapshot, LoadedProject, PlaybackBackend, PlaybackCommand, PlaybackEngine,
-    PlaybackService, PlaybackStatus, ProjectLibrary, SessionPlayback, TrackKind,
+    PlaybackService, PlaybackStatus, ProjectLibrary, ProjectTrack, SessionPlayback, TrackKind,
 };
 use k3_core::{CreateProject, FileProjectRepository, ProjectMutation, ProjectRepository};
 
@@ -50,6 +50,24 @@ fn playback_service_loads_paused_then_applies_user_commands() {
 
     let moved = service.execute(PlaybackCommand::SeekBy(5)).unwrap();
     assert_eq!(moved.position, Duration::from_secs(5));
+}
+
+#[test]
+fn loading_a_selected_take_starts_that_take_from_the_beginning() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let take_path = project.track(TrackKind::Original).unwrap().path.clone();
+    project.tracks.push(ProjectTrack {
+        kind: TrackKind::Take,
+        path: take_path,
+    });
+    let mut engine = PlaybackEngine::new(FakeAudio::default());
+
+    let snapshot = engine.execute(PlaybackCommand::LoadTake(project));
+
+    assert_eq!(snapshot.track, Some(TrackKind::Take));
+    assert_eq!(snapshot.status, PlaybackStatus::Playing);
+    assert_eq!(snapshot.position, Duration::ZERO);
 }
 
 #[test]

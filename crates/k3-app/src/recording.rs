@@ -46,6 +46,7 @@ struct ActiveRecording {
     playback: SessionPlayback,
     paths: RecordingPaths,
     timeline: Vec<RecordingTimelineAnchor>,
+    effect_preset: VocalEffectPreset,
 }
 
 impl GuiRecordingController {
@@ -64,6 +65,7 @@ impl GuiRecordingController {
         project_root: &Path,
         monitoring: bool,
         volume: f32,
+        effect_preset: VocalEffectPreset,
     ) -> Result<GuiRecordingStarted, Box<dyn Error>> {
         if self.active.is_some() {
             return Err("a recording is already active".into());
@@ -108,6 +110,7 @@ impl GuiRecordingController {
                 capture_frame: 0,
                 song_position: Duration::ZERO,
             }],
+            effect_preset,
         });
         Ok(GuiRecordingStarted { device })
     }
@@ -196,6 +199,7 @@ fn finish_recording(active: ActiveRecording) -> Result<GuiRecordingResult, Box<d
         playback: _,
         paths,
         timeline,
+        effect_preset,
     } = active;
     let RecordingSummary {
         device,
@@ -203,7 +207,14 @@ fn finish_recording(active: ActiveRecording) -> Result<GuiRecordingResult, Box<d
         warning,
     } = recorder.stop()?;
     place_recording_on_timeline(&paths.dry_temporary_path, &paths.dry_final_path, &timeline)?;
-    save_completed_recording(&mut session, paths, device, duration, warning)
+    save_completed_recording(
+        &mut session,
+        paths,
+        device,
+        duration,
+        warning,
+        effect_preset,
+    )
 }
 
 fn save_completed_recording(
@@ -212,9 +223,10 @@ fn save_completed_recording(
     device: String,
     duration: Duration,
     warning: Option<String>,
+    effect_preset: VocalEffectPreset,
 ) -> Result<GuiRecordingResult, Box<dyn Error>> {
     let dry_path = ProjectPath::new(paths.dry_relative_path)?;
-    let mut take = Take::new(paths.id.clone(), dry_path);
+    let mut take = Take::new(paths.id.clone(), dry_path).with_effect_preset(effect_preset);
     let mix_result = match session.project().separation() {
         SeparationState::Ready(manifest) => render_take_mix(
             &manifest.accompaniment.resolve(session.project().root()),
@@ -222,7 +234,7 @@ fn save_completed_recording(
             &paths.mix_temporary_path,
             session.project().latency_compensation_ms(),
             session.project().key_shift_semitones(),
-            VocalEffectPreset::Clean,
+            effect_preset,
         )
         .and_then(|()| {
             fs::rename(&paths.mix_temporary_path, &paths.mix_final_path).map_err(Into::into)
@@ -263,7 +275,7 @@ fn save_completed_recording(
 mod tests {
     use super::{recording_paths, save_completed_recording};
     use crate::{LoadedProject, TrackKind};
-    use k3_core::{FileProjectRepository, ProjectRepository, RecordingSession};
+    use k3_core::{FileProjectRepository, ProjectRepository, RecordingSession, VocalEffectPreset};
     use std::{fs, time::Duration};
 
     #[test]
@@ -315,12 +327,14 @@ mod tests {
             "test microphone".into(),
             Duration::from_millis(4),
             None,
+            VocalEffectPreset::Church,
         )
         .unwrap();
 
         let saved = FileProjectRepository.open(root).unwrap();
         let take = saved.takes().last().unwrap();
         assert!(take.mix_audio().is_some());
+        assert_eq!(take.effect_preset(), VocalEffectPreset::Church);
         let mut dry_reader = hound::WavReader::open(take.dry_audio().resolve(root)).unwrap();
         assert!(
             dry_reader
@@ -339,6 +353,10 @@ mod tests {
             .samples::<f32>()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
+        assert!(
+            samples.len() > 8,
+            "church mix should include its reverb tail"
+        );
         assert!(
             samples.iter().any(|sample| *sample > 0.1),
             "saved take has no backing audio: {samples:?}"

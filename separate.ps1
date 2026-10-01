@@ -111,16 +111,15 @@ if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
     throw "找不到 Windows 分离 worker：$worker；请先运行 .\install-separator.ps1。"
 }
 
+$configuredProfile = Get-PropertyValue -Object $separationConfig -Name "profile" -Default "quality"
 $profile = if (-not [string]::IsNullOrWhiteSpace($env:K3_PROFILE)) {
     $env:K3_PROFILE
-} elseif ($null -ne $config) {
-    Get-PropertyValue -Object $separationConfig -Name "profile" -Default "quality"
 } else {
-    "quality"
+    $configuredProfile
 }
 $model = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL)) {
     $env:K3_MODEL
-} elseif ($null -ne $config) {
+} elseif ($profile -eq $configuredProfile) {
     Get-PropertyValue -Object $separationConfig -Name "model" -Default $null
 } else {
     $null
@@ -134,7 +133,7 @@ $modelDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL_DIR)) {
 }
 $segmentSize = if (-not [string]::IsNullOrWhiteSpace($env:K3_SEGMENT_SIZE)) {
     $env:K3_SEGMENT_SIZE
-} elseif ($null -ne $config) {
+} elseif ($profile -eq $configuredProfile) {
     Get-PropertyValue -Object $separationConfig -Name "segment_size" -Default $null
 } else {
     $null

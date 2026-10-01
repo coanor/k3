@@ -73,6 +73,7 @@ pub trait PlaybackBackend: Send + 'static {
 #[derive(Clone, Debug)]
 pub enum PlaybackCommand {
     Load(LoadedProject),
+    LoadTake(LoadedProject),
     Toggle,
     SeekBy(i64),
     SeekTo(Duration),
@@ -281,7 +282,10 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
 
     fn apply_command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackFailure> {
         match command {
-            PlaybackCommand::Load(project) => self.load(project, false, Duration::ZERO),
+            PlaybackCommand::Load(project) => self.load(project, false, Duration::ZERO, None),
+            PlaybackCommand::LoadTake(project) => {
+                self.load(project, true, Duration::ZERO, Some(TrackKind::Take))
+            }
             PlaybackCommand::Toggle | PlaybackCommand::Restart
                 if self.snapshot.status == PlaybackStatus::Finished =>
             {
@@ -338,6 +342,7 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
         project: LoadedProject,
         should_play: bool,
         position: Duration,
+        preferred_track: Option<TrackKind>,
     ) -> Result<(), PlaybackFailure> {
         self.snapshot.project_generation = self.snapshot.project_generation.wrapping_add(1);
         self.project = Some(project);
@@ -348,10 +353,8 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
         self.snapshot.error = None;
         self.snapshot.reload_required = false;
         self.sync_project_snapshot();
-        let track = self
-            .project
-            .as_ref()
-            .and_then(LoadedProject::default_track)
+        let track = preferred_track
+            .or_else(|| self.project.as_ref().and_then(LoadedProject::default_track))
             .ok_or(PlaybackFailure::NoPlayableTrack)?;
         self.snapshot.track = Some(track);
         self.load_track(track, position, should_play)

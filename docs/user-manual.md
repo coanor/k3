@@ -68,17 +68,19 @@ target/release/k3-gui
 ```
 
 首次启动只需选择已有 K3 工程所在目录。GUI 与 CLI/TUI 共享工程目录中的
-`project.json`，但 GUI 的工程根目录、主音量、窗口尺寸和上次工程保存在独立的
+`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、窗口尺寸和上次工程保存在独立的
 `gui.json` 中，不复用 TUI 配置。GUI 再次启动时会加载上次工程，但始终从头保持暂停。
 顶层信息按钮会打开 About 界面，其中显示 GUI 滚动诊断日志的位置。音频设备、媒体读取和
 工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
 回退命令。维护者的平台与性能验收步骤见 [GUI 验收记录](gui-acceptance.md)。
 
-要在 GUI 中加入新歌，点击右侧 `Separate song`，选择本地音频文件和 Fast、Balanced、
-Quality 或 Compatible 档位，再点击 `Create and separate`。分离在后台运行，成功后左侧
-工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
+要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
+Quality 或 Compatible 档位，再点击 `Queue selected`。默认使用 Quality；所选歌曲按顺序进入
+分离队列，也可以在分离期间继续选歌追加。只选一首时按钮显示 `Create and separate`。
+每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
 （Windows），需要先按第 3 节安装分离 worker；首次使用所选模型时可能下载权重。
-如果同名工程已存在，按钮会改为 `Replace stems` 并显示警告；此操作使用该工程已保存的源音频，
+若批量选择中有同名工程，GUI 会跳过该文件并提示单独选择以确认替换。
+单独选择已有工程时，按钮会改为 `Replace stems` 并显示警告；此操作使用该工程已保存的源音频，
 不会重新导入所选文件，也不会删除歌词和 take，
 但不能替换当前已加载的工程。运行期间暂不能切换工程或工程目录。失败时可在 About 中找到
 GUI 诊断日志；若只复制 `k3-gui` 二进制而未保留同包的分离脚本，界面无法启动分轨。
@@ -90,8 +92,9 @@ GUI 诊断日志；若只复制 `k3-gui` 二进制而未保留同包的分离脚
 或打开 `Liked songs`，点击多首歌曲前的方框，再点 `Queue selected songs`。下载期间仍可
 继续搜索、选择其他歌曲并追加到队列；同一首歌不会重复入队。下载任务依次执行，每首下载
 完成后进入逐首执行的分离队列，下一首下载可与当前分离同时进行；
-下载的音频保存在工程根目录的 `.netease-audio/NetEase`。同名工程已存在时
-不会覆盖工程或自动改用新下载的音频。`Replace stems` 仍使用该工程保存的旧音源；若要用
+下载的音频保存在工程根目录的 `.netease-audio/NetEase`。同名工程已存在且分离成功时
+不会覆盖工程或自动改用新下载的音频；若工程尚未分离成功、保存的音源与缓存下载完全一致，
+再次加入队列会重试分离。`Replace stems` 仍使用该工程保存的旧音源；若要用
 下载的新音频创建工程，须先移走同名旧工程。不可用歌曲或会话失效会在右栏显示原因；
 会话失效时下载队列暂停，重新登录后继续。关闭窗口会取消仍在进行的下载。
 网易云状态、分轨状态及其他主要错误提示旁的 `Copy` 按钮可将完整文字复制到剪贴板，
@@ -101,8 +104,13 @@ GUI 打开具有伴奏音轨的工程后，可点击底部 Play 左侧的 Record
 系统默认麦克风录音。开始录音时会默认开启实时麦克风监听；点击 Play 右侧的 Monitor 耳机图标或按 `m`
 可随时关闭或重新开启，建议佩戴耳机以避免扬声器回授。再次点击变为 Stop 的录音图标或按 `r` 会停止并保存录音。录音写入
 `takes/take-<时间>-dry.wav`，同时更新 `project.json`；保存后 GUI 会重新加载工程，点击
-`Take` 或按 `4` 可立即试听最新 dry take。GUI 当前尚不提供 take 列表、删除和效果预设，
-这些操作仍使用 TUI。
+`Take` 或按 `4` 可立即试听当前所选 take 的 mix；若 mix 不存在则回退到 dry。
+底部唯一的 `Effect` 下拉框可选择 `Clean`、`Studio`、`KTV`、`Theater` 或 `Church`。
+选中后立即写入 GUI 的 `gui.json` 中的 `recording.default_effect`，之后开始的 GUI 录音会使用该效果；
+如果当前有 take，K3 同时在后台用原始 dry 重建它的 mix，更新 `project.json` 中该 take 的效果并播放。
+停止新录音时也会用选定效果渲染 mix，原始 dry 不会被覆盖。
+`Take` 下拉框可选择任何已有录音。切换 take 时，K3 会在需要时为新选中的 take
+应用同一效果并播放。渲染期间不能切换 take 或开始录音。GUI 当前尚不提供 take 删除；删除操作仍使用 TUI。
 
 录音期间仍可调整进度、暂停或继续、切换音轨、升降调、调整音量和切换监听；工程切换会暂时禁用。若关闭窗口，
 正在进行的录音会被放弃并清理临时文件。伴奏、默认输入设备或输出设备不可用时，GUI 会在
@@ -259,13 +267,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 脚本通过 Windows Python Launcher（`py.exe`）寻找 Python 3.11，创建
 `.venv-separator`，安装模型运行环境，并将 worker 和模型目录写入同目录的
-`config.json`。默认模型目录为 `%LOCALAPPDATA%\k3\models`；模型在第一次分离时
-下载。检查 worker：
+`config.json`。默认模型目录为发行包内的 `models`，分离日志位于 `logs`，安装缓存位于
+`.cache`；可在运行安装脚本前用 `K3_MODEL_DIR`、`K3_LOG_DIR` 和 `PIP_CACHE_DIR`
+指定其他盘符。模型在第一次分离时下载。检查 worker：
 
 ```powershell
+$config = Get-Content .\config.json -Raw | ConvertFrom-Json
 '{"id":"health","method":"health"}' |
   .\.venv-separator\Scripts\k3-separator.exe `
-    --model-dir "$env:LOCALAPPDATA\k3\models"
+    --model-dir $config.separation.model_dir
 ```
 
 用 `separate.ps1` 创建同名 project 并分离。省略 `-d` 时读取同目录
@@ -281,8 +291,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 参数位置不固定。环境变量 `K3_OUTPUT_DIR`、`K3_BIN`、`K3_WORKER`、
 `K3_PROFILE`、`K3_MODEL`、`K3_MODEL_DIR`、`K3_SEGMENT_SIZE`、
-`K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。默认保留和声，
-因此输出包含版本化的 `vocals-<id>.wav`、`backing-vocals-<id>.wav` 和含和声的
+`K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。
+当 `K3_PROFILE` 与配置中的 `separation.profile` 不同时，脚本使用新档位的默认模型和
+分块大小，不沿用原档位专用的 `separation.model` 与 `separation.segment_size`；
+仍可用 `K3_MODEL`、`K3_SEGMENT_SIZE` 显式指定。默认保留和声，因此输出包含版本化的
+`vocals-<id>.wav`、`backing-vocals-<id>.wav` 和含和声的
 `accompaniment-<id>.wav`。脚本会从 `project.json` 的 separation manifest 输出本次
 实际文件路径。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖 stem，
 但保留歌词、take、效果和其他 project 文件。
@@ -846,8 +859,8 @@ worker 默认不会在已有 stem 时开始新的分离。确认现有结果可�
 
 ### 工程显示 `failed`
 
-失败信息会保存进 `project.json`。当前版本没有失败重试状态转换；保留原始
-歌曲，修复环境后新建工程再运行。
+失败信息会保存进 `project.json`。修复环境后，可重新运行分离脚本对已有工程
+重新分离；GUI 网易云来源在缓存音频与工程保存的音源完全一致时，也可重新加入队列重试。
 
 ## 10. 当前限制
 

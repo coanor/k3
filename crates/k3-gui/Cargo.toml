@@ -8,6 +8,7 @@ license.workspace = true
 directories = "=6.0.0"
 fontique = { version = "=0.10.0", features = ["fontconfig-dlopen"] }
 k3-app = { path = "../k3-app" }
+k3-core = { path = "../k3-core" }
 k3 = { path = "../k3-cli" }
 qrcode = { version = "0.14.1", default-features = false }
 rfd = "=0.17.2"

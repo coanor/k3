@@ -1,10 +1,13 @@
 use std::{
     env,
+    fs::File,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     process::Command,
 };
 
 use crate::logging::DiagnosticLog;
+use k3_core::{FileProjectRepository, ProjectRepository, SeparationState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Profile {
@@ -18,9 +21,10 @@ impl Profile {
     pub(crate) fn from_index(index: i32) -> Self {
         match index {
             0 => Self::Fast,
+            1 => Self::Balanced,
             2 => Self::Quality,
             3 => Self::Compatible,
-            _ => Self::Balanced,
+            _ => Self::Quality,
         }
     }
 
@@ -65,6 +69,43 @@ pub(crate) fn destination(source: &Path, projects_root: &Path) -> Result<(PathBu
     }
     let exists = project.join("project.json").is_file();
     Ok((project, exists))
+}
+
+/// A cached download may resume an unfinished project only when it is the same audio.
+pub(crate) fn retryable_unprepared_destination(source: &Path, projects_root: &Path) -> bool {
+    let Ok((project_path, true)) = destination(source, projects_root) else {
+        return false;
+    };
+    let Ok(project) = FileProjectRepository.open(&project_path) else {
+        return false;
+    };
+    if !matches!(
+        project.separation(),
+        SeparationState::Failed { .. } | SeparationState::NotRequested
+    ) {
+        return false;
+    }
+    same_file_contents(source, &project.source_path()).unwrap_or(false)
+}
+
+fn same_file_contents(first: &Path, second: &Path) -> std::io::Result<bool> {
+    if first.metadata()?.len() != second.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut first = BufReader::new(File::open(first)?);
+    let mut second = BufReader::new(File::open(second)?);
+    let mut left = [0_u8; 64 * 1024];
+    let mut right = [0_u8; 64 * 1024];
+    loop {
+        let count = first.read(&mut left)?;
+        if count == 0 {
+            return Ok(true);
+        }
+        second.read_exact(&mut right[..count])?;
+        if left[..count] != right[..count] {
+            return Ok(false);
+        }
+    }
 }
 
 pub(crate) fn bundled_script() -> Result<PathBuf, String> {
@@ -156,7 +197,8 @@ fn platform_command(script: &Path) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Profile, SeparationRequest, destination, run};
+    use super::{Profile, SeparationRequest, destination, retryable_unprepared_destination, run};
+    use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
     use std::{fs, path::Path};
 
     #[test]
@@ -189,6 +231,38 @@ mod tests {
                 .unwrap_err()
                 .contains("not a K3 project")
         );
+    }
+
+    #[test]
+    fn failed_project_retries_only_with_the_same_cached_audio() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let projects = sandbox.path().join("projects");
+        let source = sandbox.path().join("song.wav");
+        fs::write(&source, b"audio").unwrap();
+        let project = projects.join("song");
+        FileProjectRepository
+            .create(CreateProject {
+                root: project.clone(),
+                song: source.clone(),
+                lyrics: None,
+                title: None,
+            })
+            .unwrap();
+        let document_path = project.join("project.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&document_path).unwrap()).unwrap();
+        document["separation"] = serde_json::json!({
+            "status": "failed", "details": { "message": "model_not_allowed" }
+        });
+        fs::write(&document_path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+        assert!(retryable_unprepared_destination(&source, &projects));
+        fs::write(&source, b"audix").unwrap();
+        assert!(!retryable_unprepared_destination(&source, &projects));
+        fs::write(&source, b"audio").unwrap();
+        document["separation"] = serde_json::json!({ "status": "running" });
+        fs::write(&document_path, serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(!retryable_unprepared_destination(&source, &projects));
     }
 
     #[test]

@@ -3578,6 +3578,7 @@ dependencies = [
  "fontique",
  "k3",
  "k3-app",
+ "k3-core",
  "qrcode",
  "rfd",
  "serde",

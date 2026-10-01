@@ -17,6 +17,15 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $PSScriptRoot "config.json"
 }
 
+$runtimeCache = Join-Path $PSScriptRoot ".cache"
+$tempDir = Join-Path $runtimeCache "temp"
+New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+$env:TEMP = $tempDir
+$env:TMP = $tempDir
+if ([string]::IsNullOrWhiteSpace($env:PIP_CACHE_DIR)) {
+    $env:PIP_CACHE_DIR = Join-Path $runtimeCache "pip"
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Executable,
@@ -117,8 +126,19 @@ if ($Backend -eq "gpu" -and -not $runtimeStatus.cuda_available) {
     throw "已安装 GPU worker，但 PyTorch 无法使用 CUDA。"
 }
 
-$modelDir = Join-Path $env:LOCALAPPDATA "k3\models"
-New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+$modelDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL_DIR)) {
+    [IO.Path]::GetFullPath($env:K3_MODEL_DIR)
+} else {
+    Join-Path $PSScriptRoot "models"
+}
+$logDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_LOG_DIR)) {
+    [IO.Path]::GetFullPath($env:K3_LOG_DIR)
+} else {
+    Join-Path $PSScriptRoot "logs"
+}
+New-Item -ItemType Directory -Force -Path $modelDir, $logDir | Out-Null
+$env:TORCH_HOME = Join-Path $modelDir "torch"
+$env:HF_HOME = Join-Path $modelDir "huggingface"
 $healthText = '{"id":"health","method":"health"}' |
     & $worker --model-dir $modelDir
 if ($LASTEXITCODE -ne 0) {
@@ -136,6 +156,7 @@ if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
     }
     Set-JsonProperty -Object $config.separation -Name "worker" -Value $worker
     Set-JsonProperty -Object $config.separation -Name "model_dir" -Value $modelDir
+    Set-JsonProperty -Object $config.separation -Name "log_dir" -Value $logDir
     $json = $config | ConvertTo-Json -Depth 10
     [IO.File]::WriteAllText(
         [IO.Path]::GetFullPath($ConfigPath),

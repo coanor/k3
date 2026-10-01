@@ -106,16 +106,18 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo check --workspace --all-targets --locked
 
-      - name: Parse Windows separation wrapper
+      - name: Parse Windows separation scripts
         shell: pwsh
         run: |
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'separate.ps1'), [ref]$null, [ref]$errors
-          )
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
+          foreach ($script in @('separate.ps1', 'install-separator.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$null, [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
           }
 
   build:

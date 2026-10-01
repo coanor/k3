@@ -48,6 +48,24 @@ fn loaded_project_exposes_a_dry_gui_take_for_immediate_playback() {
         Some(project_root.join("takes/take-gui-dry.wav").as_path())
     );
     assert!(loaded.track(TrackKind::Take).unwrap().available());
+
+    let second_relative = ProjectPath::new("takes/take-second-dry.wav").unwrap();
+    fs::write(second_relative.resolve(&project_root), b"second dry take").unwrap();
+    let mut project = FileProjectRepository.open(&project_root).unwrap();
+    let mut recording = RecordingSession::new(project);
+    recording.arm().unwrap();
+    recording.start().unwrap();
+    recording
+        .stop(Take::new("take-second", second_relative))
+        .unwrap();
+    FileProjectRepository.save(recording.project_mut()).unwrap();
+    project = FileProjectRepository.open(&project_root).unwrap();
+
+    let selected = LoadedProject::from_project_with_lyrics_for_take(&project, "take-gui").unwrap();
+    assert_eq!(
+        selected.track(TrackKind::Take).unwrap().path.as_deref(),
+        Some(project_root.join("takes/take-gui-dry.wav").as_path())
+    );
 }
 
 fn create_project(root: &Path) -> std::path::PathBuf {

@@ -469,12 +469,15 @@ fn launch_next_download(
                     .ok_or_else(|| NeteaseError::Protocol("cached audio is missing".into())),
                 DownloadOutcome::Unavailable { reason, .. } => Err(NeteaseError::Protocol(reason)),
             });
+        let retryable = outcome.as_ref().ok().is_some_and(|path| {
+            separation::retryable_unprepared_destination(path, &job.projects_root)
+        });
         let _ = slint::invoke_from_event_loop(move || {
             if net.cancelled.load(Ordering::Acquire) {
                 return;
             }
             let Some(ui) = weak.upgrade() else { return };
-            finish_download(&ui, &weak, &net, &data, &job, outcome);
+            finish_download(&ui, &weak, &net, &data, &job, outcome, retryable);
         });
     });
 }
@@ -486,6 +489,7 @@ fn finish_download(
     data: &Arc<Mutex<AppData>>,
     job: &DownloadJob,
     outcome: Result<PathBuf, NeteaseError>,
+    retryable: bool,
 ) {
     if matches!(outcome, Err(NeteaseError::LoginRequired)) {
         net.downloads.lock().unwrap().pause_active();
@@ -508,6 +512,23 @@ fn finish_download(
     drop(downloads);
     match outcome {
         Ok(path) => match separation::destination(&path, &job.projects_root) {
+            Ok((_, true)) if retryable => {
+                let waiting = super::queue_netease_separation(
+                    ui,
+                    data,
+                    path,
+                    &job.projects_root,
+                    job.profile_index,
+                    true,
+                );
+                ui.set_netease_message(
+                    format!(
+                        "Retrying separation for {} · {waiting} waiting",
+                        job.song.title
+                    )
+                    .into(),
+                );
+            }
             Ok((_, true)) => {
                 let issue = format!(
                     "{}: a same-name project exists; move it before importing this audio",
@@ -517,7 +538,14 @@ fn finish_download(
                 ui.set_netease_message(format!("Downloaded, but not separated: {issue}").into());
             }
             Ok((_, false)) => {
-                let waiting = super::queue_netease_separation(ui, data, path, job.profile_index);
+                let waiting = super::queue_netease_separation(
+                    ui,
+                    data,
+                    path,
+                    &job.projects_root,
+                    job.profile_index,
+                    false,
+                );
                 ui.set_netease_message(
                     format!(
                         "Downloaded {} · {waiting} waiting to separate",

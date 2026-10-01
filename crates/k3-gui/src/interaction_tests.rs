@@ -65,11 +65,25 @@ fn netease_selection_can_be_queued_during_a_download_and_separation() {
     let data = Arc::new(Mutex::new(app_data_with_projects(Vec::new(), Uuid::nil())));
     data.lock().unwrap().separation_running = true;
     assert_eq!(
-        queue_netease_separation(&ui, &data, PathBuf::from("one.wav"), 1),
+        queue_netease_separation(
+            &ui,
+            &data,
+            PathBuf::from("one.wav"),
+            &PathBuf::from("."),
+            1,
+            false
+        ),
         1
     );
     assert_eq!(
-        queue_netease_separation(&ui, &data, PathBuf::from("two.wav"), 2),
+        queue_netease_separation(
+            &ui,
+            &data,
+            PathBuf::from("two.wav"),
+            &PathBuf::from("."),
+            2,
+            false
+        ),
         2
     );
 
@@ -97,6 +111,7 @@ fn recording_shortcuts_keep_all_rehearsal_controls_available() {
     let ui = K3Window::new().expect("test UI should construct");
     ui.set_view_mode(ViewMode::Rehearsal);
     ui.set_playback_state(PlaybackState::Paused);
+    ui.set_position_seconds(5.0);
     ui.set_original_available(true);
     ui.set_accompaniment_available(true);
     ui.set_vocals_available(true);
@@ -213,6 +228,9 @@ fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> A
         selected_id: Some(selected_id),
         pending_open_id: None,
         selected_document_revision: None,
+        takes: Vec::new(),
+        selected_take_id: None,
+        take_effect_running: false,
         presented_project_generation: 0,
         scan_generation: 0,
         open_generation: 0,
@@ -220,7 +238,11 @@ fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> A
         lyrics_context: None,
         lyrics_choices: Vec::new(),
         separation_running: false,
-        queued_netease_separations: VecDeque::new(),
+        active_separation_project: None,
+        selected_separation_sources: Vec::new(),
+        queued_separations: VecDeque::new(),
+        separation_completed: 0,
+        separation_errors: Vec::new(),
     }
 }
 
@@ -320,8 +342,8 @@ fn custom_buttons_activate_on_first_click() {
     ui.show().expect("test UI should show");
     window.draw_if_needed(|_| {});
     click(&ui, LogicalPosition::new(268.0, 142.0));
-    click(&ui, LogicalPosition::new(630.0, 759.0));
-    click(&ui, LogicalPosition::new(162.0, 759.0));
+    click(&ui, LogicalPosition::new(630.0, 715.0));
+    click(&ui, LogicalPosition::new(162.0, 715.0));
     click(&ui, LogicalPosition::new(150.0, 200.0));
 
     assert_eq!(
@@ -353,11 +375,11 @@ fn transport_record_button_enables_monitoring_by_default() {
 
     ui.show().expect("test UI should show");
     window.draw_if_needed(|_| {});
-    click(&ui, LogicalPosition::new(557.0, 759.0));
+    click(&ui, LogicalPosition::new(557.0, 715.0));
     assert!(ui.get_monitoring());
     ui.set_recording_state(RecordingState::Recording);
-    click(&ui, LogicalPosition::new(671.0, 759.0));
-    click(&ui, LogicalPosition::new(557.0, 759.0));
+    click(&ui, LogicalPosition::new(671.0, 715.0));
+    click(&ui, LogicalPosition::new(557.0, 715.0));
 
     assert_eq!(recording.borrow().as_slice(), [true, false]);
     assert_eq!(monitoring.borrow().as_slice(), [true, false]);
@@ -393,6 +415,7 @@ fn global_shortcuts_emit_playback_volume_track_and_refresh_intents() {
     let ui = K3Window::new().expect("test UI should construct");
     ui.set_view_mode(ViewMode::Rehearsal);
     ui.set_playback_state(PlaybackState::Paused);
+    ui.set_position_seconds(5.0);
     ui.set_original_available(true);
     ui.set_accompaniment_available(true);
     ui.set_vocals_available(true);

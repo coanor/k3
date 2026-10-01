@@ -7,6 +7,7 @@ use std::{
 };
 
 use directories::ProjectDirs;
+use k3_core::VocalEffectPreset;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -86,6 +87,8 @@ pub struct GuiSettings {
     pub schema_version: u32,
     pub projects_root: Option<PathBuf>,
     pub volume: f32,
+    #[serde(default)]
+    pub recording: RecordingSettings,
     pub window: WindowSize,
     pub last_project_id: Option<String>,
 }
@@ -96,10 +99,17 @@ impl Default for GuiSettings {
             schema_version: SETTINGS_SCHEMA_VERSION,
             projects_root: None,
             volume: 1.0,
+            recording: RecordingSettings::default(),
             window: WindowSize::default(),
             last_project_id: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordingSettings {
+    #[serde(default)]
+    pub default_effect: VocalEffectPreset,
 }
 
 impl GuiSettings {

@@ -222,7 +222,12 @@ impl LoadedProject {
         Ok(Self::from_project_with_lyrics(&project)?)
     }
 
-    pub(crate) fn from_project_with_lyrics(project: &Project) -> Result<Self, io::Error> {
+    /// Builds playback data from an already opened project, including its lyrics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project's lyrics cannot be read.
+    pub fn from_project_with_lyrics(project: &Project) -> Result<Self, io::Error> {
         let mut loaded = Self::from_project(project);
         loaded.lyrics = project
             .lyrics()
@@ -231,6 +236,33 @@ impl LoadedProject {
             .map(fs::read_to_string)
             .transpose()?
             .map(|text| LyricsTimeline::parse(&text));
+        Ok(loaded)
+    }
+
+    /// Builds playback data for one existing take while keeping the project's other tracks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the take is missing or its lyrics cannot be read.
+    pub fn from_project_with_lyrics_for_take(
+        project: &Project,
+        take_id: &str,
+    ) -> Result<Self, LoadProjectError> {
+        let take = project
+            .take(take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?;
+        let mut loaded = Self::from_project_with_lyrics(project)?;
+        let path = take
+            .mix_audio()
+            .unwrap_or_else(|| take.dry_audio())
+            .resolve(project.root());
+        if let Some(track) = loaded
+            .tracks
+            .iter_mut()
+            .find(|track| track.kind == TrackKind::Take)
+        {
+            track.path = Some(path);
+        }
         Ok(loaded)
     }
 
