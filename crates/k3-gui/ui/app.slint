@@ -977,13 +977,21 @@ export component K3Window inherits Window {
                                         ListView {
                                             for song[index] in root.netease-songs: Rectangle {
                                                 height: 40px;
+                                                property <color> check-color: song.queued ? Tokens.lyric-current : song.downloaded ? Tokens.downloaded : Tokens.cue;
                                                 background: song.selected || song.queued || song.downloaded ? Tokens.raised : transparent;
                                                 Rectangle {
                                                     x: 8px; y: 11px;
                                                     width: 17px; height: 17px;
                                                     border-width: 1px;
-                                                    border-color: song.selected || song.queued || song.downloaded ? Tokens.lyric-current : Tokens.muted;
-                                                    background: song.selected || song.queued || song.downloaded ? Tokens.lyric-current : transparent;
+                                                    border-color: song.selected || song.queued || song.downloaded ? check-color : Tokens.muted;
+                                                    background: song.selected || song.queued || song.downloaded ? check-color : transparent;
+                                                }
+                                                if song.selected || song.queued || song.downloaded: Image {
+                                                    x: 11px; y: 14px;
+                                                    width: 11px; height: 11px;
+                                                    source: @image-url("../assets/check.svg");
+                                                    image-fit: contain;
+                                                    colorize: Tokens.stage;
                                                 }
                                                 Text {
                                                     x: 33px; y: 4px;
@@ -1005,7 +1013,7 @@ export component K3Window inherits Window {
                                                     x: parent.width - 68px; y: 11px;
                                                     width: 60px;
                                                     text: song.queued ? Strings.netease-queued : Strings.netease-downloaded;
-                                                    color: Tokens.lyric-current;
+                                                    color: check-color;
                                                     font-size: 10px;
                                                     horizontal-alignment: right;
                                                 }
