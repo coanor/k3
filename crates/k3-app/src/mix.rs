@@ -99,17 +99,24 @@ pub fn render_take_mix(
         sample_format: hound::SampleFormat::Float,
     };
     let mut effect = VocalEffect::new(effect_preset, dry_spec.sample_rate);
-    let output_frames = frames.saturating_add(effect.tail_frames());
+    let minimum_frames = frames.saturating_add(effect.tail_frames());
     let mut writer = hound::WavWriter::create(destination, spec)?;
-    for frame in 0..output_frames {
+    let mut frame = 0;
+    loop {
+        let backing_left = backing.next();
+        let backing_right = backing.next();
+        if frame >= minimum_frames && backing_left.is_none() && backing_right.is_none() {
+            break;
+        }
         let dry_frame = i64::try_from(frame)? + voice_offset_frames;
         let left = dry_sample(&dry_samples, dry_channels, frames, dry_frame, 0) * VOICE_GAIN;
         let right = dry_sample(&dry_samples, dry_channels, frames, dry_frame, 1) * VOICE_GAIN;
         let (left, right) = effect.process(left, right);
-        let backing_left = backing.next().unwrap_or(0.0);
-        let backing_right = backing.next().unwrap_or(0.0);
-        writer.write_sample((left + backing_left * BACKING_GAIN).clamp(-1.0, 1.0))?;
-        writer.write_sample((right + backing_right * BACKING_GAIN).clamp(-1.0, 1.0))?;
+        writer
+            .write_sample((left + backing_left.unwrap_or(0.0) * BACKING_GAIN).clamp(-1.0, 1.0))?;
+        writer
+            .write_sample((right + backing_right.unwrap_or(0.0) * BACKING_GAIN).clamp(-1.0, 1.0))?;
+        frame += 1;
     }
     writer.finalize()?;
     Ok(())
@@ -165,6 +172,30 @@ mod tests {
         assert_eq!(samples.len(), 8);
         assert!(samples.iter().all(|sample| (*sample - 0.53).abs() < 0.001));
         assert_eq!(hound::WavReader::open(dry).unwrap().duration(), 4);
+    }
+
+    #[test]
+    fn continues_backing_after_recording_stops() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let dry = sandbox.path().join("dry.wav");
+        let backing = sandbox.path().join("backing.wav");
+        let mix = sandbox.path().join("mix.wav");
+        write_wav(&dry, 1, &[0.1; 4]);
+        write_wav(&backing, 2, &[0.2; 16]);
+
+        render_take_mix(&backing, &dry, &mix, 0, 0, VocalEffectPreset::Clean).unwrap();
+
+        let mut reader = hound::WavReader::open(mix).unwrap();
+        let samples = reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(samples.len(), 16);
+        assert!(
+            samples[8..]
+                .iter()
+                .all(|sample| (*sample - 0.13).abs() < 0.001)
+        );
     }
 
     #[test]

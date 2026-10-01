@@ -105,6 +105,7 @@ GUI 打开具有伴奏音轨的工程后，可点击底部 Play 左侧的 Record
 可随时关闭或重新开启，建议佩戴耳机以避免扬声器回授。再次点击变为 Stop 的录音图标或按 `r` 会停止并保存录音。录音写入
 `takes/take-<时间>-dry.wav`，同时更新 `project.json`；保存后 GUI 会重新加载工程，点击
 `Take` 或按 `4` 可立即试听当前所选 take 的 mix；若 mix 不存在则回退到 dry。
+如果提前结束录音，mix 中的伴奏仍会播放到歌曲结束。
 底部唯一的 `Effect` 下拉框可选择 `Clean`、`Studio`、`KTV`、`Theater` 或 `Church`。
 选中后立即写入 GUI 的 `gui.json` 中的 `recording.default_effect`，之后开始的 GUI 录音会使用该效果；
 如果当前有 take，K3 同时在后台用原始 dry 重建它的 mix，更新 `project.json` 中该 take 的效果并播放。
