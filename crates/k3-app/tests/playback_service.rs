@@ -53,6 +53,23 @@ fn playback_service_loads_paused_then_applies_user_commands() {
 }
 
 #[test]
+fn unloading_a_project_releases_audio_and_preserves_volume() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = LoadedProject::open(&create_project(directory.path())).unwrap();
+    let mut engine = PlaybackEngine::new(FakeAudio::default());
+    engine.execute(PlaybackCommand::SetVolume(0.4));
+    let loaded = engine.execute(PlaybackCommand::Load(project));
+
+    let unloaded = engine.execute(PlaybackCommand::Unload);
+
+    assert_eq!(unloaded.project_id, None);
+    assert_eq!(unloaded.status, PlaybackStatus::Unavailable);
+    assert_eq!(unloaded.track, None);
+    assert_eq!(unloaded.volume, 0.4);
+    assert!(unloaded.project_generation > loaded.project_generation);
+}
+
+#[test]
 fn loading_a_selected_take_starts_that_take_from_the_beginning() {
     let directory = tempfile::tempdir().unwrap();
     let mut project = LoadedProject::open(&create_project(directory.path())).unwrap();
@@ -396,6 +413,7 @@ impl PlaybackBackend for FinishOnRefreshAudio {
                 self.snapshot.status = PlaybackStatus::Finished;
                 self.snapshot.position = Duration::from_secs(30);
             }
+            AudioCommand::Unload => self.snapshot = AudioSnapshot::default(),
             AudioCommand::Toggle | AudioCommand::SeekTo(_) | AudioCommand::SetVolume(_) => {}
         }
         Ok(self.snapshot.clone())
@@ -428,6 +446,12 @@ impl PlaybackBackend for FakeAudio {
                     PlaybackStatus::Playing
                 } else {
                     PlaybackStatus::Paused
+                };
+            }
+            AudioCommand::Unload => {
+                self.snapshot = AudioSnapshot {
+                    volume: self.snapshot.volume,
+                    ..AudioSnapshot::default()
                 };
             }
             AudioCommand::Toggle => {

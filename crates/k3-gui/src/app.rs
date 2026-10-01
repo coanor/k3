@@ -43,6 +43,7 @@ struct AppData {
     selected_take_id: Option<String>,
     take_effect_running: bool,
     presented_project_generation: u64,
+    discard_snapshots_through_generation: Option<u64>,
     scan_generation: u64,
     open_generation: u64,
     lyrics_generation: u64,
@@ -50,6 +51,7 @@ struct AppData {
     lyrics_choices: Vec<LyricsChoice>,
     separation_running: bool,
     active_separation_project: Option<PathBuf>,
+    reopen_after_separation: Option<Uuid>,
     selected_separation_sources: Vec<SelectedSeparation>,
     queued_separations: VecDeque<QueuedSeparation>,
     separation_completed: usize,
@@ -159,6 +161,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         selected_take_id: None,
         take_effect_running: false,
         presented_project_generation: 0,
+        discard_snapshots_through_generation: None,
         scan_generation: 0,
         open_generation: 0,
         lyrics_generation: 0,
@@ -166,6 +169,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         lyrics_choices: Vec::new(),
         separation_running: false,
         active_separation_project: None,
+        reopen_after_separation: None,
         selected_separation_sources: Vec::new(),
         queued_separations: VecDeque::new(),
         separation_completed: 0,
@@ -276,7 +280,7 @@ fn install_callbacks(
     install_recording_callbacks(ui, data, playback, recording, settings_writer);
     install_take_callbacks(ui, data, playback, recording);
     install_lyrics_callbacks(ui, data, recording);
-    install_separation_callbacks(ui, data, settings_writer);
+    install_separation_callbacks(ui, data, playback, settings_writer);
 }
 
 fn install_lyrics_callbacks(
@@ -577,11 +581,12 @@ fn lyrics_context_matches(data: &Mutex<AppData>, context: &LyricsContext) -> boo
 fn install_separation_callbacks(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
+    playback: &Arc<PlaybackService>,
     settings_writer: &SettingsWriterHandle,
 ) {
     install_choose_separation_source(ui, data);
     install_queue_selected_sources(ui, data);
-    install_start_separation(ui, data, settings_writer);
+    install_start_separation(ui, data, playback, settings_writer);
 }
 
 fn select_separation_sources(
@@ -758,10 +763,12 @@ fn install_queue_selected_sources(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
 fn install_start_separation(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
+    playback: &Arc<PlaybackService>,
     settings_writer: &SettingsWriterHandle,
 ) {
     let weak = ui.as_weak();
     let data = Arc::clone(data);
+    let playback = Arc::clone(playback);
     let settings_writer = settings_writer.clone();
     ui.on_start_separation(move |source, profile_index, allow_replace| {
         let Some(ui) = weak.upgrade() else {
@@ -813,21 +820,56 @@ fn install_start_separation(
         if state.separation_running {
             return;
         }
-        if exists
-            && state.projects.iter().any(|item| {
-                (Some(item.id) == state.selected_id || Some(item.id) == state.pending_open_id)
-                    && item.path == project
-            })
-        {
+        if state.take_effect_running {
             ui.set_separation_state(SeparationState::Error);
-            ui.set_separation_message(
-                "Switch to another project before replacing the loaded song's stems.".into(),
-            );
+            ui.set_separation_message("Wait for take rendering to finish".into());
             return;
         }
+        let reload_id = exists
+            .then(|| {
+                state
+                    .projects
+                    .iter()
+                    .find(|item| {
+                        (Some(item.id) == state.selected_id
+                            || Some(item.id) == state.pending_open_id)
+                            && item.path == project
+                    })
+                    .map(|item| item.id)
+            })
+            .flatten();
         state.separation_running = true;
         state.active_separation_project = Some(project);
         drop(state);
+        if let Some(id) = reload_id {
+            match playback.execute(PlaybackCommand::Unload) {
+                Ok(snapshot) if snapshot.status != PlaybackStatus::Error => {
+                    if let Ok(mut state) = data.lock() {
+                        state.open_generation = state.open_generation.wrapping_add(1);
+                        state.pending_open_id = None;
+                        state.reopen_after_separation = Some(id);
+                        state.discard_snapshots_through_generation =
+                            Some(snapshot.project_generation);
+                    }
+                    ui.set_playback_state(PlaybackState::Loading);
+                }
+                result => {
+                    if let Ok(mut state) = data.lock() {
+                        state.separation_running = false;
+                        state.active_separation_project = None;
+                    }
+                    let message = match result {
+                        Ok(snapshot) => snapshot
+                            .error
+                            .unwrap_or_else(|| "Could not unload audio".into()),
+                        Err(error) => error.to_string(),
+                    };
+                    ui.set_separation_state(SeparationState::Error);
+                    ui.set_separation_message(message.into());
+                    return;
+                }
+            }
+        }
         ui.set_separation_state(SeparationState::Running);
         let name = request.source.file_name().map_or_else(
             || request.source.display().to_string(),
@@ -950,7 +992,8 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
         };
         let Some(next) = next else {
             ui.set_separation_queued_count(0);
-            if let Ok(state) = data.lock() {
+            let mut reopen_id = None;
+            if let Ok(mut state) = data.lock() {
                 if state.separation_completed > 0 || !state.separation_errors.is_empty() {
                     let summary = format!(
                         "Separated {} song(s); {} failed{}",
@@ -968,6 +1011,10 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
                     });
                     ui.set_separation_message(summary.into());
                 }
+                reopen_id = state.reopen_after_separation.take();
+            }
+            if let Some(id) = reopen_id {
+                ui.invoke_open_project(id.to_string().into());
             }
             return;
         };
@@ -2191,9 +2238,16 @@ fn apply_published_snapshot(
     let mut presentation_changed = false;
     let mut settings = None;
     if let Ok(mut data) = data.lock() {
+        if data
+            .discard_snapshots_through_generation
+            .is_some_and(|generation| snapshot.project_generation <= generation)
+        {
+            return;
+        }
         if !snapshot_matches_pending_open(data.pending_open_id, project_id) {
             return;
         }
+        data.discard_snapshots_through_generation = None;
         data.pending_open_id = None;
         selected_changed = data.selected_id != Some(project_id);
         presentation_changed = should_apply_project_snapshot(

@@ -45,6 +45,7 @@ impl PlaybackBackend for RodioBackend {
                     self.player = Some(player);
                 }
             }
+            AudioCommand::Unload => self.player = None,
             AudioCommand::Toggle => self
                 .player
                 .as_ref()

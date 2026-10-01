@@ -55,6 +55,7 @@ pub enum AudioCommand {
         should_play: bool,
         key_shift_semitones: i8,
     },
+    Unload,
     Toggle,
     SeekTo(Duration),
     SetVolume(f32),
@@ -74,6 +75,7 @@ pub trait PlaybackBackend: Send + 'static {
 pub enum PlaybackCommand {
     Load(LoadedProject),
     LoadTake(LoadedProject),
+    Unload,
     Toggle,
     SeekBy(i64),
     SeekTo(Duration),
@@ -285,6 +287,16 @@ impl<B: PlaybackBackend> PlaybackEngine<B> {
             PlaybackCommand::Load(project) => self.load(project, false, Duration::ZERO, None),
             PlaybackCommand::LoadTake(project) => {
                 self.load(project, true, Duration::ZERO, Some(TrackKind::Take))
+            }
+            PlaybackCommand::Unload => {
+                self.audio(AudioCommand::Unload)?;
+                self.project = None;
+                self.snapshot = PlaybackSnapshot {
+                    project_generation: self.snapshot.project_generation.wrapping_add(1),
+                    volume: self.snapshot.volume,
+                    ..PlaybackSnapshot::default()
+                };
+                Ok(())
             }
             PlaybackCommand::Toggle | PlaybackCommand::Restart
                 if self.snapshot.status == PlaybackStatus::Finished =>
