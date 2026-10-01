@@ -284,3 +284,54 @@ jobs:
               --generate-notes \
               --title "$RELEASE_TAG"
           fi
+
+  public-release:
+    name: Publish binaries to public repository
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.PUBLIC_RELEASE_REPO != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download all distributions
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify distribution checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 | sort -k2 > dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Publish public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          PUBLIC_RELEASE_REPO: ${{ vars.PUBLIC_RELEASE_REPO }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || { echo '缺少 PUBLIC_RELEASE_TOKEN secret' >&2; exit 1; }
+          [[ "$PUBLIC_RELEASE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo 'PUBLIC_RELEASE_REPO 必须是 owner/repo' >&2
+            exit 1
+          }
+          visibility="$(gh repo view "$PUBLIC_RELEASE_REPO" --json visibility --jq '.visibility')"
+          [[ "$visibility" == PUBLIC ]] || { echo '目标仓库必须公开' >&2; exit 1; }
+          if gh release view "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
+            echo '公开发行版已存在，请使用新版本号' >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF
+          K3 $RELEASE_TAG 的预编译发行包。请下载对应平台的压缩包，并使用 SHA256SUMS 核对文件。
+
+          此仓库仅用于公开发行；K3 源代码仓库仍为私有。
+          EOF
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$PUBLIC_RELEASE_REPO" \
+            --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/k3-public-release-notes.md"

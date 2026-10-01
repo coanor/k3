@@ -195,6 +195,28 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
   ~/.local/share/icons/hicolor/scalable/apps/k3.svg
 ```
 
+### 2.3 私有源码仓库发布公开二进制
+
+私有仓库中的 GitHub Release 只有获准访问仓库的人能下载。若要让所有人下载发行包、
+同时保持 `coanor/k3` 私有，可另建一个只有说明文件的公开仓库（例如
+`coanor/k3-binaries`），将四个平台的发行包上传到该仓库的 Release。公开仓库自动生成的
+源码压缩包只包含公开仓库自身的内容，不包含私有 `k3` 源码。
+
+1. 创建公开仓库，例如 `gh repo create coanor/k3-binaries --public --add-readme`。
+2. 创建仅授权该公开仓库、具有 **Contents: Read and write** 权限的 GitHub fine-grained
+   personal access token。按 [GitHub 官方说明](https://docs.github.com/en/rest/releases/releases)
+   配置令牌的到期时间和仓库范围；私有仓库 workflow 自带的 `GITHUB_TOKEN` 不能写入另一仓库。
+3. 在私有 `coanor/k3` 仓库设置 Actions 变量 `PUBLIC_RELEASE_REPO=coanor/k3-binaries`，
+   并将令牌保存为 Actions secret `PUBLIC_RELEASE_TOKEN`。可使用 `gh variable set` 和
+   `gh secret set`，也可在仓库 Settings → Secrets and variables → Actions 中配置。
+4. 将待发布的版本合并到主分支、推送新的 `v*` tag。`Build distributions` 会先测试、
+   构建并校验发行包，然后保留原有私有 Release，同时向公开仓库发布同名 Release。
+   公开 Release 若已存在，任务会报错，不会悄悄覆盖已发布的文件。
+
+未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。发行包包含 README、文档、
+分离脚本和运行所需的 Python worker 文件；公开发布前应检查这些内容。仓库目前尚未
+配置公开发行目标及令牌，因此只完成了发布流程，尚未公开任何发行包。
+
 桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
 登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
 
