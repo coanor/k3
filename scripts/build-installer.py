@@ -83,7 +83,15 @@ def unix_payload(root: Path, staging: Path, prefix: str, cli_only: bool) -> Path
     if (payload / "k3-gui").exists():
         commands += ["k3-gui"]
     for command in commands:
-        (bin_dir / command).symlink_to(os.path.relpath(payload / command, bin_dir))
+        entry = bin_dir / command
+        if prefix == "opt":
+            entry.symlink_to(os.path.relpath(payload / command, bin_dir))
+        else:
+            # macOS current_exe 可能返回符号链接路径；先执行包内真实路径。
+            entry.write_text('#!/bin/sh\n'
+                             'k3_package_dir=$(CDPATH= cd "$(dirname "$0")/../lib/k3" && pwd -P) || exit 1\n'
+                             f'exec "$k3_package_dir/{command}" "$@"\n', encoding="utf-8")
+            entry.chmod(0o755)
     # 系统安装目录由 root 管理；用户只能在自己的工程目录写入输出。
     for path in [staging, *staging.rglob("*")]:
         if not path.is_symlink():

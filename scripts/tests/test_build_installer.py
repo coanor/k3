@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import os
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -64,7 +65,7 @@ class InstallerTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "Unix 安装载荷使用 Unix 权限与符号链接")
     def test_system_links_preserve_bundle_and_restrict_write_permissions(self):
-        for prefix in ("opt", "usr/local/lib"):
+        for prefix in ("opt",):
             with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
                 base = Path(directory)
                 root = base / "bundle"
@@ -85,6 +86,23 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual((payload / "runtime/python/bin/python3").read_bytes(), b"python")
                 self.assertEqual((payload / "k3").stat().st_mode & 0o777, 0o755)
                 self.assertEqual((payload / "models/model.onnx").stat().st_mode & 0o777, 0o644)
+
+    @unittest.skipIf(os.name == "nt", "macOS 命令入口需要 POSIX shell")
+    def test_macos_command_launches_the_real_program_with_unicode_arguments(self):
+        with tempfile.TemporaryDirectory(prefix="K3 安装 ") as directory:
+            base = Path(directory)
+            root = base / "bundle"
+            root.mkdir()
+            binary = root / "k3"
+            binary.write_text('#!/bin/sh\nprintf "%s\\n" "$0" "$@"\n')
+            binary.chmod(0o755)
+            staging = base / "payload"
+            payload = installer.unix_payload(root, staging, "usr/local/lib", True)
+            command = staging / "usr/local/bin/k3"
+            result = subprocess.check_output([str(command), "工程 空格", "中文"], text=True).splitlines()
+            # macOS current_exe 可能保留命令链接路径，入口必须先执行包内真实路径。
+            self.assertEqual(Path(result[0]).parent.resolve(), payload.resolve())
+            self.assertEqual(result[1:], ["工程 空格", "中文"])
 
 
 if __name__ == "__main__":

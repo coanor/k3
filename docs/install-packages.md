@@ -55,13 +55,14 @@ sudo installer -pkg k3-0.1.0-macos-aarch64.pkg -target /
 /usr/local/bin/k3 --help
 ```
 
-程序安装到 `/usr/local/lib/k3`，命令入口位于 `/usr/local/bin`；默认模型在安装目录内。
+程序安装到 `/usr/local/lib/k3`，命令入口位于 `/usr/local/bin`，通过脚本执行包内真实路径，
+确保分离启动器能找到同包 Python；默认模型在安装目录内。
 如果 `/usr/local/bin` 不在你的 PATH 中，请使用完整路径或将其加入 PATH。
 macOS 包提供 CLI/TUI；Intel 包不包含 Python、模型和分离启动器。
 额外模型同样需要指定个人可写的 `--model-dir`。
 
 macOS 的 `.pkg` 没有自动卸载入口。可用 `pkgutil --files io.github.coanor.k3` 查看登记文件，
-逐项删除确认属于 K3 的文件及命令链接后，再执行 `sudo pkgutil --forget io.github.coanor.k3`。
+逐项删除确认属于 K3 的文件及命令入口后，再执行 `sudo pkgutil --forget io.github.coanor.k3`。
 `--forget` 只移除安装记录，不会删除文件。不要删除个人工程目录。
 
 ## 构建与检查

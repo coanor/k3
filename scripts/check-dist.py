@@ -63,8 +63,11 @@ def check_root(root: Path, work: Path, cli_only: bool, command_dir: Path | None 
     # 将用户 Python 环境污染也纳入测试；原生 launcher 必须忽略它。
     environment = dict(os.environ, PYTHONHOME=str(work / "missing-python"),
                        PYTHONPATH=str(work / "missing-packages"), K3_LOG_DIR=str(work / "logs"))
-    response = run(commands / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
-                   text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
+    try:
+        response = run(commands / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
+                       text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"worker 健康检查失败：{error.stderr}") from error
     health = json.loads(response.stdout)
     if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
         raise RuntimeError(f"移动后 worker 健康检查失败：{health}")
