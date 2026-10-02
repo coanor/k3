@@ -11,7 +11,7 @@ Intel 与 Apple Silicon 二进制包，但 macOS 的音频设备和模型安装�
 
 基础程序需要：
 
-- Rust stable；
+- Rust 1.99.0（仅从源码构建需要，版本由仓库的 `rust-toolchain.toml` 固定）；
 - ALSA 开发库（Ubuntu/WSL 使用 `sudo apt install libasound2-dev`）；
 - Python 3.10 或更高版本；
 - `uv`；

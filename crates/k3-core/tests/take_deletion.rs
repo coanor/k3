@@ -130,13 +130,13 @@ fn keeps_shared_audio_and_removes_a_last_take_with_missing_media() {
     assert!(project.root().join("takes/first-mix.wav").exists());
     fs::remove_file(project.root().join("takes/first-dry.wav")).unwrap();
     fs::remove_file(project.root().join("takes/first-mix.wav")).unwrap();
-    assert!(
+    assert_eq!(
         FileProjectRepository
             .delete_take(project.root(), "first", remaining.document_revision())
             .unwrap()
             .project
-            .takes()
-            .is_empty()
+            .takes(),
+        []
     );
 }
 

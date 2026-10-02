@@ -1154,7 +1154,7 @@ print(json.dumps({"id": r["id"], "ok": False, "error": {
         assert!(error.len() < 5_000);
         assert!(error.contains(".failed"));
         assert!(!projects.join("失败歌曲").exists());
-        assert!(snapshot.projects.is_empty());
+        assert_eq!(snapshot.projects, Vec::new());
         assert_eq!(snapshot.sources.len(), 1);
         assert_eq!(snapshot.sources[0].project_state, SourceProjectState::New);
         assert_eq!(archived.len(), 1);
@@ -1163,7 +1163,7 @@ print(json.dumps({"id": r["id"], "ok": False, "error": {
         // 模拟旧版本遗留在项目根目录中的失败 project。
         fs::rename(archived[0].path(), projects.join("失败歌曲")).unwrap();
         let legacy_snapshot = scan(&config).unwrap();
-        assert!(legacy_snapshot.projects.is_empty());
+        assert_eq!(legacy_snapshot.projects, Vec::new());
         assert_eq!(
             legacy_snapshot.sources[0].project_state,
             SourceProjectState::New

@@ -476,7 +476,7 @@ fn launch_next_download(
                     .ok_or_else(|| NeteaseError::Protocol("cached audio is missing".into())),
                 DownloadOutcome::Unavailable { reason, .. } => Err(NeteaseError::Protocol(reason)),
             });
-        let retryable = outcome.as_ref().ok().is_some_and(|path| {
+        let retryable = outcome.as_ref().is_ok_and(|path| {
             separation::retryable_unprepared_destination(path, &job.projects_root)
         });
         let _ = slint::invoke_from_event_loop(move || {
@@ -776,7 +776,13 @@ fn qr_pixels(url: &str) -> Result<SharedPixelBuffer<Rgb8Pixel>, String> {
     let width = (modules + 8) * 4;
     let size = u32::try_from(width).map_err(|_| "Login QR code is too large")?;
     let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(size, size);
-    for (position, pixel) in pixels.make_mut_bytes().chunks_exact_mut(3).enumerate() {
+    for (position, pixel) in pixels
+        .make_mut_bytes()
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
         let x = position % width / 4;
         let y = position / width / 4;
         let dark = x >= 4

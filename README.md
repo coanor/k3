@@ -10,8 +10,15 @@ K3 是一个本地优先的 K 歌工作区，目前同时提供 Linux 桌面 GUI
 
 ## 构建与测试
 
+仓库通过 `rust-toolchain.toml` 固定 Rust 1.99.0，以及对应的 Clippy 和 rustfmt；
+本地与 GitHub Actions 使用同一版本。使用 rustup 时，在仓库中运行下列命令会自动
+选择并安装该工具链。升级编译器时应同时更新此文件并通过全部门禁。
+
 ```bash
-cargo test --workspace
+rustup show active-toolchain
+cargo test --workspace --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p k3 -- --help
 cargo run -p k3-gui
 ```

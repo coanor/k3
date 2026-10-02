@@ -805,7 +805,7 @@ fn live_endpoint_can_issue_a_qr_login_ticket() {
     let provider = super::WebNeteaseProvider::new();
     let ticket = provider.begin_login().unwrap();
 
-    assert!(!ticket.qr_lines().unwrap().is_empty());
+    assert_ne!(ticket.qr_lines().unwrap(), Vec::<String>::new());
 }
 
 #[test]

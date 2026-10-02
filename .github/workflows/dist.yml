@@ -30,11 +30,8 @@ jobs:
           libasound2-dev libfontconfig1-dev libxkbcommon-x11-0
           pkg-config libgl1-mesa-dri weston xvfb
 
-      - name: Select stable Rust
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup component add clippy
+      - name: Select repository Rust toolchain
+        run: rustup show active-toolchain
 
       - name: Run tests
         run: cargo test --workspace --locked
@@ -95,11 +92,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
-      - name: Select stable Rust
+      - name: Select repository Rust toolchain
         shell: pwsh
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
+        run: rustup show active-toolchain
 
       - name: Check Windows targets
         env:
@@ -176,11 +171,10 @@ jobs:
           sudo apt-get update && sudo apt-get install --yes
           libasound2-dev libfontconfig1-dev pkg-config
 
-      - name: Select stable Rust target
+      - name: Select repository Rust target
         shell: bash
         run: |
-          rustup update stable --no-self-update
-          rustup default stable
+          rustup show active-toolchain
           rustup target add "$BUILD_TARGET"
 
       - name: Build release binary
