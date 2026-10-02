@@ -45,7 +45,7 @@ struct AppData {
     selected_document_revision: Option<ProjectRevision>,
     takes: Vec<TakeChoice>,
     selected_take_id: Option<String>,
-    take_effect_running: bool,
+    take_operation_running: bool,
     presented_project_generation: u64,
     discard_snapshots_through_generation: Option<u64>,
     scan_generation: u64,
@@ -99,6 +99,13 @@ struct TakeChoice {
     id: String,
     effect: VocalEffectPreset,
     mix_ready: bool,
+}
+
+struct PendingTakeDeletion {
+    project_id: Uuid,
+    project_root: PathBuf,
+    take_id: String,
+    revision: Option<ProjectRevision>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,7 +196,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         selected_document_revision: None,
         takes: Vec::new(),
         selected_take_id: None,
-        take_effect_running: false,
+        take_operation_running: false,
         presented_project_generation: 0,
         discard_snapshots_through_generation: None,
         scan_generation: 0,
@@ -240,12 +247,26 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let ui_result = ui.run();
     netease_cancelled.store(true, Ordering::Release);
-    if let Ok(mut recording) = recording.lock() {
-        recording.abort();
+    let recording_result = recording
+        .lock()
+        .map_err(|error| format!("Cannot finish recording on close: {error}"))
+        .and_then(|mut recording| {
+            if recording.is_recording() {
+                recording
+                    .stop()
+                    .map(|_| ())
+                    .map_err(|error| format!("Cannot save recording on close: {error}"))
+            } else {
+                Ok(())
+            }
+        });
+    if let Err(error) = &recording_result
+        && let Ok(log) = DiagnosticLog::initialize()
+    {
+        log.record(error);
     }
     pump_running.store(false, Ordering::Release);
     let _ = snapshot_listener.join();
-    ui_result?;
     let physical = ui.window().size();
     let logical = physical.to_logical(ui.window().scale_factor());
     if let Ok(mut data) = data.lock() {
@@ -256,6 +277,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     settings_writer.finish();
+    ui_result?;
+    recording_result?;
     Ok(())
 }
 
@@ -918,7 +941,7 @@ fn install_start_separation(
         if state.separation_running {
             return;
         }
-        if state.take_effect_running && state.project_is_open(&project) {
+        if state.take_operation_running && state.project_is_open(&project) {
             ui.set_separation_state(SeparationState::Error);
             ui.set_separation_message("Wait for take rendering to finish".into());
             return;
@@ -1100,7 +1123,7 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
             }
             // Keep FIFO order, but wait only when the next job would replace
             // the project currently being recorded or rendered.
-            if (ui.get_recording_state() != RecordingState::Idle || state.take_effect_running)
+            if (ui.get_recording_state() != RecordingState::Idle || state.take_operation_running)
                 && state
                     .queued_separations
                     .front()
@@ -1220,7 +1243,7 @@ fn install_save_root_callback(
             }
             if data.lock().is_ok_and(|data| {
                 data.separation_running
-                    || data.take_effect_running
+                    || data.take_operation_running
                     || !data.queued_separations.is_empty()
             }) {
                 if let Some(ui) = ui.upgrade() {
@@ -1329,7 +1352,7 @@ fn request_project_open(
 ) {
     if data
         .lock()
-        .is_ok_and(|data| data.project_is_separating(id) || data.take_effect_running)
+        .is_ok_and(|data| data.project_is_separating(id) || data.take_operation_running)
     {
         return;
     }
@@ -1402,7 +1425,7 @@ fn install_recording_callbacks(
         ui.on_select_effect(move |index| {
             let Some(window) = weak.upgrade() else { return };
             if window.get_recording_state() != RecordingState::Idle
-                || window.get_take_effect_busy()
+                || window.get_take_busy()
                 || window.get_loading()
                 || window.get_current_project_separating()
             {
@@ -1476,6 +1499,165 @@ fn install_take_callbacks(
 ) {
     install_select_take_callback(ui, data, playback, recording);
     install_apply_take_effect_callback(ui, data, playback, recording);
+    install_delete_take_callbacks(ui, data, playback, recording);
+}
+
+fn install_delete_take_callbacks(
+    ui: &K3Window,
+    data: &Arc<Mutex<AppData>>,
+    playback: &Arc<PlaybackService>,
+    recording: &Arc<Mutex<GuiRecordingController>>,
+) {
+    let pending = Arc::new(Mutex::new(None::<PendingTakeDeletion>));
+    {
+        let weak = ui.as_weak();
+        let data = Arc::clone(data);
+        let pending = Arc::clone(&pending);
+        ui.on_begin_delete_take(move || {
+            let Some(window) = weak.upgrade() else { return };
+            if window.get_recording_state() != RecordingState::Idle
+                || window.get_loading()
+                || window.get_take_busy()
+                || window.get_current_project_separating()
+            {
+                return;
+            }
+            let selection = data.lock().ok().and_then(|state| {
+                let project_id = state.selected_id?;
+                let take_id = state.selected_take_id.clone()?;
+                state.takes.iter().find(|take| take.id == take_id)?;
+                let project_root = state
+                    .projects
+                    .iter()
+                    .find(|p| p.id == project_id)?
+                    .path
+                    .clone();
+                Some(PendingTakeDeletion {
+                    project_id,
+                    project_root,
+                    take_id,
+                    revision: state.selected_document_revision.clone(),
+                })
+            });
+            if let Some(selection) = selection {
+                window.set_delete_take_name(selection.take_id.clone().into());
+                if let Ok(mut pending) = pending.lock() {
+                    *pending = Some(selection);
+                    window.set_overlay(Overlay::ConfirmTakeDelete);
+                }
+            }
+        });
+    }
+    {
+        let pending = Arc::clone(&pending);
+        ui.on_cancel_delete_take(move || {
+            if let Ok(mut pending) = pending.lock() {
+                *pending = None;
+            }
+        });
+    }
+    let weak = ui.as_weak();
+    let data = Arc::clone(data);
+    let playback = Arc::clone(playback);
+    let recording = Arc::clone(recording);
+    ui.on_confirm_delete_take(move || {
+        let Some(window) = weak.upgrade() else { return };
+        let Some(selection) = pending.lock().ok().and_then(|mut pending| pending.take()) else {
+            return;
+        };
+        window.set_overlay(Overlay::None);
+        let valid = data.lock().is_ok_and(|mut state| {
+            if state.take_operation_running
+                || state.project_is_separating(selection.project_id)
+                || state.selected_id != Some(selection.project_id)
+                || state.selected_take_id.as_deref() != Some(selection.take_id.as_str())
+                || window.get_recording_state() != RecordingState::Idle
+            {
+                return false;
+            }
+            state.take_operation_running = true;
+            state.open_generation = state.open_generation.wrapping_add(1);
+            state.pending_open_id = None;
+            true
+        });
+        if !valid {
+            return;
+        }
+        window.set_take_busy(true);
+        window.set_recording_message("Deleting selected take…".into());
+        begin_project_load(&window);
+        let data = Arc::clone(&data);
+        let playback = Arc::clone(&playback);
+        let recording = Arc::clone(&recording);
+        let weak = weak.clone();
+        thread::spawn(move || {
+            let result = (|| -> Result<_, String> {
+                let unloaded = playback
+                    .execute(PlaybackCommand::Unload)
+                    .map_err(|e| e.to_string())?;
+                if unloaded.status == PlaybackStatus::Error {
+                    return Err(unloaded
+                        .error
+                        .unwrap_or_else(|| "Could not unload audio".into()));
+                }
+                if let Ok(mut state) = data.lock() {
+                    state.discard_snapshots_through_generation = Some(unloaded.project_generation);
+                }
+                FileProjectRepository
+                    .delete_take(
+                        &selection.project_root,
+                        &selection.take_id,
+                        selection.revision.as_ref(),
+                    )
+                    .map_err(|e| e.to_string())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak.upgrade() else { return };
+                if let Ok(mut state) = data.lock() {
+                    state.take_operation_running = false;
+                    if let Ok(deleted) = &result {
+                        let index = state
+                            .takes
+                            .iter()
+                            .position(|take| take.id == selection.take_id)
+                            .unwrap_or(0);
+                        state.selected_take_id = deleted
+                            .project
+                            .takes()
+                            .get(index.min(deleted.project.takes().len().saturating_sub(1)))
+                            .map(|take| take.id().to_owned());
+                    }
+                }
+                window.set_take_busy(false);
+                window.set_take_effect_message(SharedString::default());
+                request_project_open(
+                    &weak,
+                    &data,
+                    &playback,
+                    &recording,
+                    selection.project_id,
+                    None,
+                    false,
+                );
+                match result {
+                    Ok(deleted) => {
+                        let warning = deleted
+                            .cleanup_warning
+                            .map_or_else(String::new, |warning| format!(" · Warning: {warning}"));
+                        window.set_recording_message(
+                            format!("Deleted take {}{warning}", selection.take_id).into(),
+                        );
+                        clear_general_error(&window);
+                    }
+                    Err(error) => {
+                        window.set_recording_message(SharedString::default());
+                        show_error(&window, format!("Cannot delete take: {error}"));
+                    }
+                }
+                start_next_queued_separation(&window, &data);
+            });
+        });
+    });
 }
 
 fn install_select_take_callback(
@@ -1501,7 +1683,7 @@ fn install_select_take_callback(
                 data.lock().ok().and_then(|state| {
                     let project_id = state.selected_id?;
                     let take = state.takes.get(index)?;
-                    (!state.take_effect_running).then(|| {
+                    (!state.take_operation_running).then(|| {
                         let effect = state.settings.recording.default_effect;
                         let needs_render = take.effect != effect || !take.mix_ready;
                         (project_id, take.id.clone(), effect, needs_render)
@@ -1557,7 +1739,7 @@ fn install_apply_take_effect_callback(
                 return;
             };
             let selection = data.lock().ok().and_then(|mut state| {
-                if state.take_effect_running {
+                if state.take_operation_running {
                     return None;
                 }
                 let project_id = state.selected_id?;
@@ -1569,14 +1751,14 @@ fn install_apply_take_effect_callback(
                     .path
                     .clone();
                 let revision = state.selected_document_revision.clone();
-                state.take_effect_running = true;
+                state.take_operation_running = true;
                 Some((project_id, project_root, take_id, revision))
             });
             let Some((project_id, project_root, take_id, revision)) = selection else {
                 return;
             };
             if let Some(window) = ui.upgrade() {
-                window.set_take_effect_busy(true);
+                window.set_take_busy(true);
                 window.set_take_effect_message("Rendering selected take…".into());
                 clear_general_error(&window);
             }
@@ -1598,9 +1780,9 @@ fn install_apply_take_effect_callback(
                         return;
                     };
                     if let Ok(mut state) = data.lock() {
-                        state.take_effect_running = false;
+                        state.take_operation_running = false;
                     }
-                    window.set_take_effect_busy(false);
+                    window.set_take_busy(false);
                     match result {
                         Ok(()) => {
                             window.set_take_effect_message(
@@ -1689,7 +1871,7 @@ fn start_gui_recording(
         return;
     }
     let selection = data.lock().ok().and_then(|data| {
-        if data.take_effect_running {
+        if data.take_operation_running {
             return None;
         }
         let selected = data.selected_id?;
@@ -1903,10 +2085,7 @@ fn install_playback_callbacks(
         let playback = Arc::clone(playback);
         let recording = Arc::clone(recording);
         ui.unwrap().on_set_key(move |semitones| {
-            if ui
-                .upgrade()
-                .is_some_and(|window| window.get_take_effect_busy())
-            {
+            if ui.upgrade().is_some_and(|window| window.get_take_busy()) {
                 return;
             }
             let Ok(semitones) = i8::try_from(semitones) else {
@@ -1926,9 +2105,7 @@ fn install_playback_callbacks(
         let recording = Arc::clone(recording);
         ui.unwrap().on_switch_track(move |track| {
             if track == TrackSelection::Take
-                && ui
-                    .upgrade()
-                    .is_some_and(|window| window.get_take_effect_busy())
+                && ui.upgrade().is_some_and(|window| window.get_take_busy())
             {
                 return;
             }

@@ -232,7 +232,7 @@ fn app_data_with_projects(projects: Vec<ProjectSummary>, selected_id: Uuid) -> A
         selected_document_revision: None,
         takes: Vec::new(),
         selected_take_id: None,
-        take_effect_running: false,
+        take_operation_running: false,
         presented_project_generation: 0,
         discard_snapshots_through_generation: None,
         scan_generation: 0,

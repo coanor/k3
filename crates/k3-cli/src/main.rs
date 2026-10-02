@@ -4,7 +4,11 @@ mod tui;
 
 use k3::netease;
 
-use std::{error::Error, path::PathBuf};
+use std::{
+    error::Error,
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
@@ -80,6 +84,17 @@ enum Command {
         take: String,
         #[arg(long, value_enum)]
         preset: EffectArgument,
+    },
+    /// 删除指定录音及其干声、混音文件；确认提示默认保留。
+    DeleteTake {
+        #[arg(long)]
+        project: PathBuf,
+        /// 录音 ID；latest 表示最新一条录音。
+        #[arg(long, default_value = "latest")]
+        take: String,
+        /// 明确确认删除，跳过交互提示。
+        #[arg(long)]
+        yes: bool,
     },
     /// Open the terminal interface. Press q to exit.
     Tui {
@@ -245,6 +260,37 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     no_lyrics_download,
                     netease_lyrics,
                 )?;
+            }
+        }
+        Command::DeleteTake { project, take, yes } => {
+            let loaded = repository.open(&project)?;
+            let take_id = if take == "latest" {
+                loaded
+                    .takes()
+                    .last()
+                    .ok_or("project has no recorded takes")?
+                    .id()
+                    .to_owned()
+            } else {
+                loaded
+                    .take(&take)
+                    .ok_or_else(|| format!("take is not part of this project: {take}"))?;
+                take
+            };
+            if !yes {
+                print!("Delete take {take_id} and its dry/mix audio? [y/N] ");
+                io::stdout().flush()?;
+                let mut answer = String::new();
+                io::stdin().read_line(&mut answer)?;
+                if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+                    println!("Take kept");
+                    return Ok(());
+                }
+            }
+            let deleted = repository.delete_take(&project, &take_id, loaded.document_revision())?;
+            println!("Deleted take {take_id}");
+            if let Some(warning) = deleted.cleanup_warning {
+                eprintln!("k3: warning: {warning}");
             }
         }
     }

@@ -575,6 +575,13 @@ pub trait ProjectRepository {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileProjectRepository;
 
+/// 删除一条录音后的最新工程和文件清理结果。
+#[derive(Debug)]
+pub struct TakeDeletion {
+    pub project: Project,
+    pub cleanup_warning: Option<String>,
+}
+
 /// A narrow project change that can be safely applied to the latest on-disk document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectMutation {
@@ -583,6 +590,111 @@ pub enum ProjectMutation {
 }
 
 impl FileProjectRepository {
+    /// 在工程锁内删除指定 take，提交工程前暂存独占的 dry 与 mix 文件。
+    ///
+    /// 缺失的音频不妨碍移除记录；其他 take 共用的文件保留。提交失败时恢复暂存文件。
+    ///
+    /// # Errors
+    ///
+    /// 工程版本变化、take 不存在、文件越界或文件移动、工程保存失败时返回错误。
+    pub fn delete_take(
+        &self,
+        project_dir: &Path,
+        take_id: &str,
+        expected_revision: Option<&ProjectRevision>,
+    ) -> Result<TakeDeletion, ProjectError> {
+        let root = project_dir.canonicalize()?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(".project.lock"))?;
+        lock.lock()?;
+        let mut project = self.open(&root)?;
+        if expected_revision.is_some_and(|expected| project.document_revision() != Some(expected)) {
+            return Err(ProjectError::ConcurrentModification(root));
+        }
+        let index = project
+            .takes
+            .iter()
+            .position(|take| take.id() == take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?;
+        let removed = project.takes.remove(index);
+        let mut media = Vec::new();
+        for path in std::iter::once(removed.dry_audio()).chain(removed.mix_audio()) {
+            if !path.as_str().starts_with("takes/") {
+                return Err(ProjectError::Invalid(format!(
+                    "cannot delete take media outside takes/: {}",
+                    path.as_str()
+                )));
+            }
+            if project
+                .takes
+                .iter()
+                .any(|take| take.dry_audio() == path || take.mix_audio() == Some(path))
+                || &project.source == path
+                || project.lyrics.as_ref() == Some(path)
+            {
+                continue;
+            }
+            let full = path.resolve(&root);
+            match fs::symlink_metadata(&full) {
+                Ok(metadata) => {
+                    if metadata.is_dir()
+                        || !full
+                            .parent()
+                            .ok_or_else(|| ProjectError::UnsafePath(path.as_str().into()))?
+                            .canonicalize()?
+                            .starts_with(root.join("takes"))
+                    {
+                        return Err(ProjectError::UnsafePath(path.as_str().into()));
+                    }
+                    if !media.contains(&full) {
+                        media.push(full);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let staging = root.join(format!(".take-delete-{}", Uuid::new_v4()));
+        fs::create_dir(&staging)?;
+        let mut staged = Vec::new();
+        let result = (|| -> Result<(), ProjectError> {
+            for (index, original) in media.into_iter().enumerate() {
+                let temporary = staging.join(index.to_string());
+                fs::rename(&original, &temporary)?;
+                staged.push((original, temporary));
+            }
+            save_unlocked(&mut project)
+        })();
+        if let Err(error) = result {
+            let mut restore_failed = false;
+            for (original, temporary) in staged.iter().rev() {
+                restore_failed |= fs::rename(temporary, original).is_err();
+            }
+            if restore_failed {
+                return Err(ProjectError::Invalid(format!(
+                    "{error}; cannot restore all take files; recover them from {}",
+                    staging.display()
+                )));
+            }
+            let _ = fs::remove_dir(&staging);
+            return Err(error);
+        }
+        let cleanup_warning = fs::remove_dir_all(&staging).err().map(|error| {
+            format!(
+                "take removed, but audio cleanup failed at {}: {error}",
+                staging.display()
+            )
+        });
+        Ok(TakeDeletion {
+            project,
+            cleanup_warning,
+        })
+    }
+
     /// Locks a project briefly, reloads its latest document, applies one narrow change, and saves.
     ///
     /// # Errors

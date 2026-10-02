@@ -4,7 +4,7 @@ import { ActionButton, CopyableMessage, PlayButton, SectionLabel, Tokens, TrackP
 import "../assets/fonts/SourceHanSansCN-Regular.otf";
 
 export enum ViewMode { setup, rehearsal }
-export enum Overlay { none, about, settings, confirm-root-change, lyrics-search }
+export enum Overlay { none, about, settings, confirm-root-change, lyrics-search, confirm-take-delete }
 export enum ErrorKind { none, general, playback }
 export enum PlaybackState { unavailable, loading, paused, playing, finished, error }
 export enum PlaybackAction { toggle, back, forward, restart, retry }
@@ -100,10 +100,13 @@ export component K3Window inherits Window {
     in-out property <int> effect-index: 0;
     in property <[string]> take-options;
     in-out property <int> selected-take-index: 0;
-    in property <bool> take-effect-busy: false;
+    in property <bool> take-busy: false;
     in property <string> take-effect-message;
     in-out property <bool> monitoring: false;
     in property <string> recording-message;
+    in property <string> delete-take-name;
+    property <length> take-menu-x;
+    property <length> take-menu-y;
     in-out property <string> lyrics-query;
     in-out property <LyricsPanelState> lyrics-panel-state: LyricsPanelState.idle;
     in-out property <string> lyrics-panel-message;
@@ -156,6 +159,9 @@ export component K3Window inherits Window {
     callback select-effect(int);
     callback select-existing-take(int);
     callback apply-take-effect(int);
+    callback begin-delete-take;
+    callback cancel-delete-take;
+    callback confirm-delete-take;
     callback set-monitoring(bool);
     callback begin-lyrics-search;
     callback close-lyrics-search;
@@ -198,7 +204,7 @@ export component K3Window inherits Window {
     }
 
     function toggle-recording() {
-        if (root.take-effect-busy) { return; }
+        if (root.take-busy) { return; }
         if (root.recording-state == RecordingState.idle) {
             if (root.loading || root.current-project-separating) { return; }
             if (!root.monitoring) {
@@ -226,11 +232,42 @@ export component K3Window inherits Window {
         root.overlay = Overlay.none;
     }
 
+    function play-from-take-menu() {
+        take-actions-popup.close();
+        root.select-existing-take(root.selected-take-index);
+    }
+
+    function show-take-menu(x: length, y: length) {
+        root.take-menu-x = x;
+        root.take-menu-y = y;
+        take-actions-popup.show();
+    }
+
+    function delete-from-take-menu() {
+        take-actions-popup.close();
+        root.begin-delete-take();
+    }
+
+    function dismiss-take-deletion() {
+        root.cancel-delete-take();
+        root.overlay = Overlay.none;
+        shortcuts.focus();
+    }
+
     public function close-top-layer() -> bool {
+        if (take-actions-popup.is-open) {
+            take-actions-popup.close();
+            shortcuts.focus();
+            return true;
+        }
         if (root.overlay != Overlay.none) {
             if (root.overlay == Overlay.lyrics-search) {
                 root.dismiss-lyrics-search();
             } else {
+                if (root.overlay == Overlay.confirm-take-delete) {
+                    root.dismiss-take-deletion();
+                    return true;
+                }
                 root.overlay = Overlay.none;
             }
             return true;
@@ -286,7 +323,10 @@ export component K3Window inherits Window {
             if (event.text == "1" && root.original-available) { root.switch-track(TrackSelection.original); return accept; }
             if (event.text == "2" && root.accompaniment-available) { root.switch-track(TrackSelection.accompaniment); return accept; }
             if (event.text == "3" && root.vocals-available) { root.switch-track(TrackSelection.vocals); return accept; }
-            if (event.text == "4" && root.take-available && !root.take-effect-busy) { root.switch-track(TrackSelection.take); return accept; }
+            if (event.text == "4" && root.take-available && !root.take-busy) { root.switch-track(TrackSelection.take); return accept; }
+            if (event.text == Key.Delete && root.take-options.length > 0 && !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating) {
+                root.begin-delete-take(); return accept;
+            }
             if (event.text == "," && root.playback-ready && root.key-shift > -6) { root.set-key(root.key-shift - 1); return accept; }
             if (event.text == "." && root.playback-ready && root.key-shift < 6) { root.set-key(root.key-shift + 1); return accept; }
             if (event.text == "/" && root.playback-ready && root.key-shift != 0) { root.set-key(0); return accept; }
@@ -527,7 +567,7 @@ export component K3Window inherits Window {
                                 }
                             }
                             project-focus := FocusScope {
-                                enabled: !root.recording-active && !root.take-effect-busy && project.status != ProjectState.separating;
+                                enabled: !root.recording-active && !root.take-busy && project.status != ProjectState.separating;
                                 key-pressed(event) => {
                                     if (event.text == Key.Return || event.text == " ") {
                                         root.open-project(project.id);
@@ -537,7 +577,7 @@ export component K3Window inherits Window {
                                 }
                             }
                             project-touch := TouchArea {
-                                enabled: !root.recording-active && !root.take-effect-busy && project.status != ProjectState.separating;
+                                enabled: !root.recording-active && !root.take-busy && project.status != ProjectState.separating;
                                 clicked => {
                                     project-focus.focus();
                                     root.open-project(project.id);
@@ -1187,7 +1227,7 @@ export component K3Window inherits Window {
                                 label: Strings.take;
                                 unavailable-reason: Strings.take-unavailable;
                                 active: root.active-track == TrackSelection.take;
-                                enabled: root.take-available && !root.take-effect-busy;
+                                enabled: root.take-available && !root.take-busy;
                                 selected => { root.switch-track(TrackSelection.take); }
                             }
                         }
@@ -1213,7 +1253,7 @@ export component K3Window inherits Window {
                             accessible-name: root.recording-state == RecordingState.recording ? Strings.stop-recording : Strings.record;
                             active: root.recording-state == RecordingState.recording;
                             accent: true;
-                            enabled: !root.take-effect-busy && (root.recording-state == RecordingState.recording || (root.recording-state == RecordingState.idle && root.accompaniment-available && !root.current-project-separating && !root.loading));
+                            enabled: !root.take-busy && (root.recording-state == RecordingState.recording || (root.recording-state == RecordingState.idle && root.accompaniment-available && !root.current-project-separating && !root.loading));
                             clicked => { root.toggle-recording(); }
                         }
                         PlayButton {
@@ -1329,7 +1369,7 @@ export component K3Window inherits Window {
                         height: 32px;
                         model: [Strings.effect-clean, Strings.effect-studio, Strings.effect-ktv, Strings.effect-theater, Strings.effect-church];
                         current-index <=> root.effect-index;
-                        enabled: root.recording-state == RecordingState.idle && !root.take-effect-busy && !root.loading && !root.current-project-separating;
+                        enabled: root.recording-state == RecordingState.idle && !root.take-busy && !root.loading && !root.current-project-separating;
                         accessible-label: Strings.take-effect;
                         selected => { root.select-effect(effect-select.current-index); }
                     }
@@ -1345,9 +1385,19 @@ export component K3Window inherits Window {
                         height: 32px;
                         model: root.take-options;
                         current-index <=> root.selected-take-index;
-                        enabled: root.recording-state == RecordingState.idle && !root.take-effect-busy && !root.loading && !root.current-project-separating;
+                        enabled: root.recording-state == RecordingState.idle && !root.take-busy && !root.loading && !root.current-project-separating;
                         accessible-label: Strings.existing-take;
                         selected => { root.select-existing-take(take-select.current-index); }
+                    }
+                    if root.take-options.length > 0: ActionButton {
+                        width: 32px;
+                        height: 32px;
+                        icon: @image-url("../assets/more.svg");
+                        accessible-name: Strings.take-actions;
+                        enabled: !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating;
+                        clicked => {
+                            root.show-take-menu(self.absolute-position.x, self.absolute-position.y);
+                        }
                     }
                     Text {
                         text: root.localize-message(root.take-effect-message, root.language-index);
@@ -1357,6 +1407,59 @@ export component K3Window inherits Window {
                         overflow: elide;
                         horizontal-stretch: 1;
                     }
+                }
+            }
+        }
+    }
+
+    take-actions-popup := PopupWindow {
+        x: root.take-menu-x;
+        y: root.take-menu-y - self.height;
+        width: 200px;
+        height: 100px;
+        Rectangle {
+            background: Tokens.raised;
+            border-radius: 6px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+                ActionButton {
+                    label: Strings.play-selected-take;
+                    clicked => { root.play-from-take-menu(); }
+                }
+                ActionButton {
+                    label: Strings.delete-selected-take;
+                    clicked => { root.delete-from-take-menu(); }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.confirm-take-delete: Rectangle {
+        background: #15162bee;
+        TouchArea { clicked => { root.dismiss-take-deletion(); } }
+        Rectangle {
+            width: min(460px, parent.width - 80px);
+            height: 260px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Tokens.panel;
+            border-radius: 10px;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                Text { text: Strings.delete-take-title; color: Tokens.ink; font-size: 22px; font-weight: 650; }
+                Text { text: root.delete-take-name; color: Tokens.cue; font-size: 13px; overflow: elide; }
+                Text { text: Strings.delete-take-copy; color: Tokens.muted; font-size: 13px; wrap: word-wrap; vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    ActionButton {
+                        init => { self.focus-button(); }
+                        label: Strings.keep-take;
+                        primary: true;
+                        clicked => { root.dismiss-take-deletion(); }
+                    }
+                    ActionButton { label: Strings.delete-take; clicked => { root.confirm-delete-take(); shortcuts.focus(); } }
                 }
             }
         }

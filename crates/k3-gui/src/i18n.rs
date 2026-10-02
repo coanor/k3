@@ -34,6 +34,8 @@ const TEMPLATES: &[&str] = &[
     "Separated {count} song(s); {failed} failed{details}",
     ". Last error: {error}",
     "Cannot render take: {error}",
+    "Cannot delete take: {error}",
+    "Deleted take {take_id}",
     "{effect} saved · playing",
     "Recording · {device}",
     "Cannot start recording: {error}",
@@ -91,7 +93,7 @@ fn translate_line(source: &str, catalog: &HashMap<String, String>) -> String {
         return translated.clone();
     }
     if let Some((saved, warning)) = source.split_once(" · Warning: ")
-        && saved.starts_with("Saved ")
+        && (saved.starts_with("Saved ") || saved.starts_with("Deleted take "))
     {
         return format!(
             "{}{}",

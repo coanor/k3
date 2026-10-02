@@ -708,3 +708,33 @@ msgstr "教堂"
 
 msgid "Stop the recording before replacing this project's stems"
 msgstr "請先停止錄音，再替換此專案的分軌"
+
+msgid "Take actions"
+msgstr "錄音操作"
+
+msgid "Play selected take"
+msgstr "播放所選錄音"
+
+msgid "Delete selected take…"
+msgstr "刪除所選錄音…"
+
+msgid "Delete this take?"
+msgstr "刪除這條錄音？"
+
+msgid "The dry recording and its mix will be removed. Keep the take unless you want to delete it."
+msgstr "將刪除這條錄音的原始乾聲和混音。預設保留；只有確認不需要時才刪除。"
+
+msgid "Keep take"
+msgstr "保留錄音"
+
+msgid "Delete take"
+msgstr "刪除錄音"
+
+msgid "Deleting selected take…"
+msgstr "正在刪除所選錄音…"
+
+msgid "Deleted take {take_id}"
+msgstr "已刪除錄音 {take_id}"
+
+msgid "Cannot delete take: {error}"
+msgstr "無法刪除錄音：{error}"

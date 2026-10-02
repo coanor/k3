@@ -410,6 +410,7 @@ struct App {
     monitoring_enabled: bool,
     selected_take: Option<usize>,
     effect_selecting: bool,
+    pending_take_delete: Option<String>,
     default_effect: VocalEffectPreset,
     lyrics: Option<LyricsTimeline>,
     lyrics_origin: Option<String>,
@@ -437,6 +438,7 @@ impl App {
             monitoring_enabled: false,
             selected_take,
             effect_selecting: false,
+            pending_take_delete: None,
             default_effect,
             lyrics,
             lyrics_origin: None,
@@ -448,6 +450,18 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyCode) -> bool {
+        if self.pending_take_delete.is_some() {
+            if matches!(key, KeyCode::Char('y' | 'Y')) {
+                self.delete_selected_take();
+            } else if matches!(
+                key,
+                KeyCode::Enter | KeyCode::Esc | KeyCode::Char('n' | 'N' | 'q')
+            ) {
+                self.pending_take_delete = None;
+                self.recording_message = Some("Take kept".into());
+            }
+            return false;
+        }
         if self.lyrics_query_editor.is_some() {
             self.handle_lyrics_query_key(key);
             return false;
@@ -480,6 +494,14 @@ impl App {
             (RecordingState::Idle, KeyCode::Char(']')) => self.select_take(1),
             (RecordingState::Idle, KeyCode::Char('e')) => self.begin_effect_selection(),
             (RecordingState::Idle, KeyCode::Char('4')) => self.play_selected_take(),
+            (RecordingState::Idle, KeyCode::Delete) => {
+                self.pending_take_delete = self
+                    .selected_take
+                    .map(|index| self.session.project().takes()[index].id().to_owned());
+                if self.pending_take_delete.is_none() {
+                    self.recording_message = Some("Current project has no takes".into());
+                }
+            }
             (RecordingState::Idle, KeyCode::Char(',')) => self.adjust_key(-1),
             (RecordingState::Idle, KeyCode::Char('.')) => self.adjust_key(1),
             (RecordingState::Idle, KeyCode::Char('/')) => self.reset_key(),
@@ -809,6 +831,54 @@ impl App {
             || Some("playing selected take mix".into()),
             |error| Some(error.to_string()),
         );
+    }
+
+    fn delete_selected_take(&mut self) {
+        let Some(take_id) = self.pending_take_delete.take() else {
+            return;
+        };
+        if !self.save_project() {
+            return;
+        }
+        let previous_index = self.selected_take.unwrap_or(0);
+        let unloaded = self.playback.execute(PlaybackCommand::Unload);
+        if unloaded.status == PlaybackStatus::Error {
+            self.recording_message = Some("Cannot release audio before deleting the take".into());
+            return;
+        }
+        let result = FileProjectRepository.delete_take(
+            self.session.project().root(),
+            &take_id,
+            self.session.project().document_revision(),
+        );
+        match result {
+            Ok(deleted) => {
+                self.selected_take = (!deleted.project.takes().is_empty())
+                    .then(|| previous_index.min(deleted.project.takes().len() - 1));
+                self.session = RecordingSession::new(deleted.project);
+                self.project_dirty = false;
+                self.recording_message = Some(format!(
+                    "Deleted take {take_id}{}",
+                    deleted
+                        .cleanup_warning
+                        .map_or_else(String::new, |warning| format!(" · warning: {warning}"))
+                ));
+            }
+            Err(error) => {
+                self.recording_message = Some(format!("Cannot delete take: {error}"));
+            }
+        }
+        let loaded = self
+            .selected_take
+            .and_then(|index| {
+                k3_app::LoadedProject::from_project_with_lyrics_for_take(
+                    self.session.project(),
+                    self.session.project().takes()[index].id(),
+                )
+                .ok()
+            })
+            .unwrap_or_else(|| k3_app::LoadedProject::from_project(self.session.project()));
+        self.playback.execute(PlaybackCommand::Load(loaded));
     }
 
     fn begin_effect_selection(&mut self) {
@@ -1267,6 +1337,11 @@ fn handle_library_key(
     if library.confirm_exit {
         return Ok(confirm_library_exit(library, current, key));
     }
+    if let Some(app) = current
+        && app.pending_take_delete.is_some()
+    {
+        return Ok(app.handle_key(key));
+    }
     if library.music_source == MusicSource::Netease
         && library
             .netease
@@ -1589,6 +1664,24 @@ fn draw_project(
     frame.render_widget(lyric_panel, areas[1]);
 
     draw_project_footer(frame, areas[2], app, library_focused);
+    if let Some(take_id) = &app.pending_take_delete {
+        let popup = centered_popup(area, 58, 8);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(format!("Take: {take_id}")),
+                Line::from("Remove its dry recording and mix audio?"),
+                Line::from(""),
+                Line::from("Enter / Esc: Keep (default)    y: Delete"),
+            ])
+            .block(
+                Block::default()
+                    .title("Delete recorded take")
+                    .borders(Borders::ALL),
+            ),
+            popup,
+        );
+    }
 }
 
 fn lyrics_panel_title(app: &App, position: Duration, progress: &str) -> String {
@@ -1796,6 +1889,10 @@ fn draw_project_footer(
                 has_take && mode(FooterAction::SelectTake),
             ),
             ("e+1..5 effect", has_take && mode(FooterAction::Effect)),
+            (
+                "Del delete take",
+                has_take && mode(FooterAction::SelectTake),
+            ),
             ("/ reset Key", mode(FooterAction::Key)),
             ("l lyrics", mode(FooterAction::Lyrics) && !lyrics_searching),
             (

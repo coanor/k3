@@ -30,6 +30,7 @@ export component SectionLabel inherits Text {
 }
 
 export component ActionButton inherits Rectangle {
+    public function focus-button() { action-focus.focus(); }
     in property <string> label;
     in property <string> accessible-name: label;
     in property <image> icon;
