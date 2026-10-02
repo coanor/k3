@@ -9,7 +9,7 @@ K3 默认开启 `preserve_backing_vocals`。它先用所选主模型把原曲分
 
 **一般性推断：**双人同时唱时，Karaoke 2 可能将其中一人或部分重叠歌声判为“和声”，于是这部分歌声会进入最终伴奏。但用户已澄清当前双人合唱没有这个问题。K3 没有指定“歌手 A / 歌手 B”的身份输入；“把所有歌声移出伴奏”和“保留伴唱”是不同的输出目标。来源：[K3 实现](../python/separator/src/k3_separator/runtime.py)、[模型注册表](../python/separator/src/k3_separator/models.py)、[多歌手分离研究论文](https://arxiv.org/abs/2608.14516)。
 
-**最有信息量的对照**：用同一音源和同一主模型各分离一次，分别设 `preserve_backing_vocals=true` 和 `false`；分别试听第一种的 `backing-vocals.wav`、两种的 `vocals.wav` 与 `accompaniment.wav`。若关闭和声保留后第二人的声音不再出现在伴奏，问题主要在第二阶段／输出策略；若仍有残留，再检查第一阶段模型。Windows 安装包的 `config.json` 可设 `separation.preserve_backing_vocals=false`，脚本也接受 `K3_PRESERVE_BACKING_VOCALS=false`；GUI 设置目前仅提供 profile，并没有该开关。来源：[Windows 分离脚本](../separate.ps1)、[GUI 设置结构](../crates/k3-gui/src/settings.rs)、[worker 行为](../python/separator/src/k3_separator/service.py)。
+**和声策略的对照方法**：用同一音源和同一主模型各分离一次，分别设 `preserve_backing_vocals=true` 和 `false`；分别试听第一种的 `backing-vocals.wav`、两种的 `vocals.wav` 与 `accompaniment.wav`。若关闭和声保留后第二人的声音不再出现在伴奏，问题主要在第二阶段／输出策略；若仍有残留，再检查第一阶段模型。Windows 安装包的 `config.json` 可设 `separation.preserve_backing_vocals=false`，脚本也接受 `K3_PRESERVE_BACKING_VOCALS=false`；GUI 没有该开关。来源：[Windows 分离脚本](../separate.ps1)、[GUI 设置结构](../crates/k3-gui/src/settings.rs)、[worker 行为](../python/separator/src/k3_separator/service.py)。
 
 ### 已提供的《吕方－流浪花》实例
 
