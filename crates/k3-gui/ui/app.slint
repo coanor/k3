@@ -385,8 +385,9 @@ export component K3Window inherits Window {
                 HorizontalLayout {
                     height: 42px;
                     ActionButton {
-                        width: 90px;
-                        label: Strings.settings;
+                        width: 42px;
+                        accessible-name: Strings.settings;
+                        icon: @image-url("../assets/settings.svg");
                         clicked => { root.overlay = Overlay.settings; }
                     }
                     ActionButton {
@@ -445,8 +446,9 @@ export component K3Window inherits Window {
                         }
                         Rectangle { horizontal-stretch: 1; }
                         ActionButton {
-                            width: 80px;
-                            label: Strings.settings;
+                            width: 36px;
+                            accessible-name: Strings.settings;
+                            icon: @image-url("../assets/settings.svg");
                             clicked => { root.overlay = Overlay.settings; }
                         }
                         ActionButton {
