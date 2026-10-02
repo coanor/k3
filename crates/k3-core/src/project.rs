@@ -1,8 +1,9 @@
 use std::{
     fmt,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -11,6 +12,23 @@ use uuid::Uuid;
 
 const PROJECT_FILE: &str = "project.json";
 const PROJECT_DIRECTORIES: [&str; 5] = ["source", "stems", "takes", "lyrics", "exports"];
+
+/// Immutable identity of the exact project document read or committed by the repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectRevision(Arc<[u8]>);
+
+impl ProjectRevision {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Vec<u8>> for ProjectRevision {
+    fn from(document: Vec<u8>) -> Self {
+        Self(document.into())
+    }
+}
 
 /// A path stored relative to a project directory.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -43,7 +61,9 @@ impl ProjectPath {
         &self.0
     }
 
-    fn resolve(&self, root: &Path) -> PathBuf {
+    /// Resolves this safe relative path below a project root.
+    #[must_use]
+    pub fn resolve(&self, root: &Path) -> PathBuf {
         root.join(&self.0)
     }
 }
@@ -327,6 +347,8 @@ impl Take {
 pub struct Project {
     #[serde(skip)]
     root: PathBuf,
+    #[serde(skip)]
+    loaded_document: Option<ProjectRevision>,
     schema_version: u32,
     id: Uuid,
     title: String,
@@ -344,6 +366,12 @@ impl Project {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Returns the exact serialized document revision loaded or committed under the project lock.
+    #[must_use]
+    pub fn document_revision(&self) -> Option<&ProjectRevision> {
+        self.loaded_document.as_ref()
     }
 
     #[must_use]
@@ -364,6 +392,24 @@ impl Project {
     #[must_use]
     pub fn source_path(&self) -> PathBuf {
         self.source.resolve(&self.root)
+    }
+
+    /// 更新 project 内部复制的原始音源路径。
+    ///
+    /// 调用方必须先把新音源放入 project 的 `source/` 目录；此方法只更新持久化引用，
+    /// 不会触碰歌词、takes 或其他用户内容。
+    ///
+    /// # Errors
+    ///
+    /// 当路径不位于 `source/` 目录下时返回 [`ProjectError::Invalid`]。
+    pub fn replace_source(&mut self, source: ProjectPath) -> Result<(), ProjectError> {
+        if !source.as_str().starts_with("source/") {
+            return Err(ProjectError::Invalid(
+                "source must be stored below source/".into(),
+            ));
+        }
+        self.source = source;
+        Ok(())
     }
 
     #[must_use]
@@ -522,12 +568,265 @@ pub trait ProjectRepository {
     /// # Errors
     ///
     /// Returns an error when validation, serialization, or filesystem operations fail.
-    fn save(&self, project: &Project) -> Result<(), ProjectError>;
+    fn save(&self, project: &mut Project) -> Result<(), ProjectError>;
 }
 
 /// JSON and filesystem implementation of [`ProjectRepository`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileProjectRepository;
+
+/// 删除一条录音后的最新工程和文件清理结果。
+#[derive(Debug)]
+pub struct TakeDeletion {
+    pub project: Project,
+    pub cleanup_warning: Option<String>,
+}
+
+/// A narrow project change that can be safely applied to the latest on-disk document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectMutation {
+    SetKeyShift(i8),
+    SetLatencyCompensation(i32),
+}
+
+impl FileProjectRepository {
+    /// 在短期工程锁内提交已完成的新混音，再清理不再引用的旧混音。
+    ///
+    /// 新混音必须使用独立文件；提交失败时工程对象和旧文件保持原样，调用方清理新文件。
+    /// 返回的警告只表示提交成功后旧文件未能清理。
+    ///
+    /// # Errors
+    ///
+    /// 工程版本变化、take 不存在、新文件越界或不可读、工程保存失败时返回错误。
+    pub fn commit_take_render(
+        &self,
+        project: &mut Project,
+        take_id: &str,
+        preset: VocalEffectPreset,
+        mix_audio: ProjectPath,
+    ) -> Result<Option<String>, ProjectError> {
+        let previous = project
+            .take(take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?
+            .mix_audio()
+            .cloned();
+        if previous.as_ref() == Some(&mix_audio) {
+            return Err(ProjectError::Invalid(
+                "new mix must use an independent file".into(),
+            ));
+        }
+        let new_file = checked_take_media_path(project.root(), &mix_audio)?;
+        ensure_readable_file(&new_file)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(project.root.join(".project.lock"))?;
+        lock.lock()?;
+        let current = fs::read(project.root.join(PROJECT_FILE))?;
+        if project.document_revision().map(ProjectRevision::as_bytes) != Some(current.as_slice()) {
+            return Err(ProjectError::ConcurrentModification(project.root.clone()));
+        }
+        let mut updated = project.clone();
+        updated.set_take_render(take_id, preset, mix_audio)?;
+        save_unlocked(&mut updated)?;
+        *project = updated;
+
+        let cleanup =
+            (|| -> Result<(), ProjectError> {
+                let Some(previous) = previous else {
+                    return Ok(());
+                };
+                if project.takes.iter().any(|take| {
+                    take.dry_audio() == &previous || take.mix_audio() == Some(&previous)
+                }) || project.source == previous
+                    || project.lyrics.as_ref() == Some(&previous)
+                {
+                    return Ok(());
+                }
+                let old_file = checked_take_media_path(project.root(), &previous)?;
+                match fs::remove_file(old_file) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                    _ => Ok(()),
+                }
+            })();
+        Ok(cleanup
+            .err()
+            .map(|error| format!("mix saved, but old mix cleanup failed: {error}")))
+    }
+
+    /// 在工程锁内删除指定 take，提交工程前暂存独占的 dry 与 mix 文件。
+    ///
+    /// 缺失的音频不妨碍移除记录；其他 take 共用的文件保留。提交失败时恢复暂存文件。
+    ///
+    /// # Errors
+    ///
+    /// 工程版本变化、take 不存在、文件越界或文件移动、工程保存失败时返回错误。
+    pub fn delete_take(
+        &self,
+        project_dir: &Path,
+        take_id: &str,
+        expected_revision: Option<&ProjectRevision>,
+    ) -> Result<TakeDeletion, ProjectError> {
+        let root = project_dir.canonicalize()?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(".project.lock"))?;
+        lock.lock()?;
+        let mut project = self.open(&root)?;
+        if expected_revision.is_some_and(|expected| project.document_revision() != Some(expected)) {
+            return Err(ProjectError::ConcurrentModification(root));
+        }
+        let index = project
+            .takes
+            .iter()
+            .position(|take| take.id() == take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?;
+        let removed = project.takes.remove(index);
+        let mut media = Vec::new();
+        for path in std::iter::once(removed.dry_audio()).chain(removed.mix_audio()) {
+            if !path.as_str().starts_with("takes/") {
+                return Err(ProjectError::Invalid(format!(
+                    "cannot delete take media outside takes/: {}",
+                    path.as_str()
+                )));
+            }
+            if project
+                .takes
+                .iter()
+                .any(|take| take.dry_audio() == path || take.mix_audio() == Some(path))
+                || &project.source == path
+                || project.lyrics.as_ref() == Some(path)
+            {
+                continue;
+            }
+            let full = path.resolve(&root);
+            match fs::symlink_metadata(&full) {
+                Ok(metadata) => {
+                    if metadata.is_dir()
+                        || !full
+                            .parent()
+                            .ok_or_else(|| ProjectError::UnsafePath(path.as_str().into()))?
+                            .canonicalize()?
+                            .starts_with(root.join("takes"))
+                    {
+                        return Err(ProjectError::UnsafePath(path.as_str().into()));
+                    }
+                    if !media.contains(&full) {
+                        media.push(full);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let staging = root.join(format!(".take-delete-{}", Uuid::new_v4()));
+        fs::create_dir(&staging)?;
+        let mut staged = Vec::new();
+        let result = (|| -> Result<(), ProjectError> {
+            for (index, original) in media.into_iter().enumerate() {
+                let temporary = staging.join(index.to_string());
+                fs::rename(&original, &temporary)?;
+                staged.push((original, temporary));
+            }
+            save_unlocked(&mut project)
+        })();
+        if let Err(error) = result {
+            let mut restore_failed = false;
+            for (original, temporary) in staged.iter().rev() {
+                restore_failed |= fs::rename(temporary, original).is_err();
+            }
+            if restore_failed {
+                return Err(ProjectError::Invalid(format!(
+                    "{error}; cannot restore all take files; recover them from {}",
+                    staging.display()
+                )));
+            }
+            let _ = fs::remove_dir(&staging);
+            return Err(error);
+        }
+        let cleanup_warning = fs::remove_dir_all(&staging).err().map(|error| {
+            format!(
+                "take removed, but audio cleanup failed at {}: {error}",
+                staging.display()
+            )
+        });
+        Ok(TakeDeletion {
+            project,
+            cleanup_warning,
+        })
+    }
+
+    /// Locks a project briefly, reloads its latest document, applies one narrow change, and saves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project cannot be locked, opened, changed, or saved.
+    pub fn apply(
+        &self,
+        project_dir: &Path,
+        mutation: ProjectMutation,
+    ) -> Result<Project, ProjectError> {
+        self.apply_checked(project_dir, mutation, None)
+            .map(|(project, _)| project)
+    }
+
+    /// Applies a narrow change and reports whether the locked document differed from a frontend's
+    /// loaded revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project cannot be locked, opened, changed, or saved.
+    pub fn apply_checked(
+        &self,
+        project_dir: &Path,
+        mutation: ProjectMutation,
+        expected_revision: Option<&ProjectRevision>,
+    ) -> Result<(Project, bool), ProjectError> {
+        let root = project_dir.canonicalize()?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(".project.lock"))?;
+        lock.lock()?;
+        let current_document = fs::read(root.join(PROJECT_FILE))?;
+        let changed_since_load = expected_revision
+            .is_some_and(|expected| expected.as_bytes() != current_document.as_slice());
+        let mut project = self.open(&root)?;
+        match mutation {
+            ProjectMutation::SetKeyShift(semitones) => {
+                project.set_key_shift_semitones(semitones)?;
+            }
+            ProjectMutation::SetLatencyCompensation(milliseconds) => {
+                project.set_latency_compensation_ms(milliseconds);
+            }
+        }
+        save_unlocked(&mut project)?;
+        Ok((project, changed_since_load))
+    }
+}
+
+fn checked_take_media_path(root: &Path, path: &ProjectPath) -> Result<PathBuf, ProjectError> {
+    if !path.as_str().starts_with("takes/") {
+        return Err(ProjectError::UnsafePath(path.as_str().into()));
+    }
+    let full = path.resolve(root);
+    if !full
+        .parent()
+        .ok_or_else(|| ProjectError::UnsafePath(path.as_str().into()))?
+        .canonicalize()?
+        .starts_with(root.join("takes"))
+    {
+        return Err(ProjectError::UnsafePath(path.as_str().into()));
+    }
+    Ok(full)
+}
 
 impl ProjectRepository for FileProjectRepository {
     fn create(&self, request: CreateProject) -> Result<Project, ProjectError> {
@@ -555,8 +854,9 @@ impl ProjectRepository for FileProjectRepository {
             .and_then(|name| name.to_str())
             .unwrap_or("Untitled")
             .to_owned();
-        let project = Project {
+        let mut project = Project {
             root,
+            loaded_document: None,
             schema_version: 1,
             id: Uuid::new_v4(),
             title: request.title.unwrap_or(inferred_title),
@@ -569,7 +869,7 @@ impl ProjectRepository for FileProjectRepository {
             effects_schema_version: 1,
         };
         project.validate()?;
-        self.save(&project)?;
+        self.save(&mut project)?;
         Ok(project)
     }
 
@@ -578,28 +878,57 @@ impl ProjectRepository for FileProjectRepository {
         let input = fs::read(root.join(PROJECT_FILE))?;
         let mut project: Project = serde_json::from_slice(&input)?;
         project.root = root;
+        project.loaded_document = Some(input.into());
         project.validate()?;
         Ok(project)
     }
 
-    fn save(&self, project: &Project) -> Result<(), ProjectError> {
-        project.validate()?;
+    fn save(&self, project: &mut Project) -> Result<(), ProjectError> {
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(project.root.join(".project.lock"))?;
+        lock.lock()?;
         let destination = project.root.join(PROJECT_FILE);
-        let temporary = project.root.join("project.json.tmp");
-        let encoded = serde_json::to_vec_pretty(project)?;
-        let mut file = File::create(&temporary)?;
-        file.write_all(&encoded)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(temporary, destination)?;
-        Ok(())
+        match (&project.loaded_document, fs::read(&destination)) {
+            (Some(expected), Ok(current)) if current.as_slice() != expected.as_bytes() => {
+                return Err(ProjectError::ConcurrentModification(project.root.clone()));
+            }
+            (None, Ok(_)) => {
+                return Err(ProjectError::ConcurrentModification(project.root.clone()));
+            }
+            (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+            (_, Err(error)) => return Err(error.into()),
+            (Some(_), Ok(_)) => {}
+        }
+        save_unlocked(project)
     }
+}
+
+fn save_unlocked(project: &mut Project) -> Result<(), ProjectError> {
+    project.validate()?;
+    let destination = project.root.join(PROJECT_FILE);
+    let temporary = project.root.join("project.json.tmp");
+    let encoded = serde_json::to_vec_pretty(project)?;
+    let mut file = File::create(&temporary)?;
+    file.write_all(&encoded)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(temporary, destination)?;
+    let mut loaded_document = encoded;
+    loaded_document.push(b'\n');
+    project.loaded_document = Some(loaded_document.into());
+    Ok(())
 }
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
     #[error("project directory already exists: {0}")]
     AlreadyExists(PathBuf),
+    #[error("project changed on disk while it was open: {0}")]
+    ConcurrentModification(PathBuf),
     #[error("unsafe project-relative path: {0}")]
     UnsafePath(String),
     #[error("unsupported project schema version: {0}")]

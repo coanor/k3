@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 from .errors import WorkerError
 from .models import BACKING_VOCALS_MODEL_ID, ModelRegistry
 from .runtime import SeparationRuntime
+from .progress import ProgressReporter
 
 ALLOWED_OPTIONS = {
     "segment_size",
@@ -27,9 +29,15 @@ ALLOWED_OPTIONS = {
 class SeparationService:
     """Deep module exposing model discovery, health, and atomic two-stem separation."""
 
-    def __init__(self, registry: ModelRegistry, runtime: SeparationRuntime) -> None:
+    def __init__(
+        self,
+        registry: ModelRegistry,
+        runtime: SeparationRuntime,
+        progress: ProgressReporter | None = None,
+    ) -> None:
         self._registry = registry
         self._runtime = runtime
+        self._progress = progress or ProgressReporter()
 
     def handle(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
@@ -47,6 +55,7 @@ class SeparationService:
         raise WorkerError("method_not_found", f"unknown method: {method}")
 
     def _separate(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._progress.stage("preparing")
         input_path = _required_path(params, "input_path")
         if not input_path.is_file():
             raise WorkerError("input_not_found", f"input is not a file: {input_path}")
@@ -72,19 +81,28 @@ class SeparationService:
             else None
         )
         output_dir.mkdir(parents=True, exist_ok=True)
+        version = uuid.uuid4().hex
         destinations = {
-            "vocals": output_dir / "vocals.wav",
-            "accompaniment": output_dir / "accompaniment.wav",
+            "vocals": output_dir / f"vocals-{version}.wav",
+            "accompaniment": output_dir / f"accompaniment-{version}.wav",
         }
         if preserve_backing_vocals:
-            destinations["backing_vocals"] = output_dir / "backing-vocals.wav"
-        existing = [str(path) for path in destinations.values() if path.exists()]
+            destinations["backing_vocals"] = (
+                output_dir / f"backing-vocals-{version}.wav"
+            )
+        existing_patterns = ["vocals*.wav", "accompaniment*.wav"]
+        if preserve_backing_vocals:
+            existing_patterns.append("backing-vocals*.wav")
+        existing = [
+            str(path)
+            for pattern in existing_patterns
+            for path in output_dir.glob(pattern)
+        ]
         if existing and not overwrite:
             raise WorkerError("output_exists", f"refusing to overwrite: {', '.join(existing)}")
 
         scratch = Path(tempfile.mkdtemp(prefix=".k3-separate-", dir=output_dir))
         moved: list[Path] = []
-        backups: dict[Path, Path] = {}
         try:
             result = self._runtime.separate(
                 input_path, scratch, model, options, backing_vocals_model
@@ -106,28 +124,16 @@ class SeparationService:
                         "separation_failed", "runtime did not produce backing vocals"
                     )
                 sources["backing_vocals"] = result.backing_vocals
+            self._progress.stage("saving_project")
             for name, destination in destinations.items():
                 source = sources[name]
                 if not source.is_file() or source.stat().st_size == 0:
                     raise WorkerError("separation_failed", f"missing output: {source}")
-                if destination.exists():
-                    backup = scratch / f"previous-{destination.name}"
-                    os.replace(destination, backup)
-                    backups[destination] = backup
                 os.replace(source, destination)
                 moved.append(destination)
-            if not preserve_backing_vocals:
-                stale_backing = output_dir / "backing-vocals.wav"
-                if stale_backing.exists():
-                    backup = scratch / f"previous-{stale_backing.name}"
-                    os.replace(stale_backing, backup)
-                    backups[stale_backing] = backup
         except Exception:
             for path in moved:
                 path.unlink(missing_ok=True)
-            for destination, backup in backups.items():
-                if backup.exists():
-                    os.replace(backup, destination)
             raise
         finally:
             shutil.rmtree(scratch, ignore_errors=True)

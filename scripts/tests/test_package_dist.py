@@ -47,6 +47,7 @@ class PackageTests(unittest.TestCase):
         binary = root / f"k3{suffix}"
         binary.write_bytes(b"native program")
         (root / f"k3-separator{suffix}").write_bytes(b"native launcher")
+        (root / f"k3-gui{suffix}").write_bytes(b"native GUI")
         runtime = root / "runtime-source"
         for component in ("python", "bin", "models"):
             (runtime / component).mkdir(parents=True)
@@ -74,6 +75,11 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((package / "models/checkpoint.onnx").read_bytes(), b"checkpoint")
             self.assertTrue((package / "k3-separator").stat().st_mode & 0o111)
             self.assertTrue((package / "separate.sh").stat().st_mode & 0o111)
+            self.assertEqual((package / "k3-gui").read_bytes(), b"native GUI")
+            self.assertTrue((package / "share/applications/k3.desktop").is_file())
+            self.assertTrue((package / "share/icons/hicolor/scalable/apps/k3.svg").is_file())
+            self.assertTrue((package / "licenses/SourceHanSansCN-OFL.txt").is_file())
+            self.assertTrue((package / "licenses/LicenseRef-Slint-Royalty-free-2.0.md").is_file())
             expected = archive.with_name(archive.name + ".sha256").read_text().split()[0]
             self.assertEqual(expected, hashlib.sha256(archive.read_bytes()).hexdigest())
 
@@ -88,6 +94,8 @@ class PackageTests(unittest.TestCase):
                 self.assertIn("k3-windows-x86_64/runtime/python/python.exe", names)
                 self.assertIn("k3-windows-x86_64/models/checkpoint.onnx", names)
                 self.assertIn("k3-windows-x86_64/k3-separator.exe", names)
+                self.assertIn("k3-windows-x86_64/k3-gui.exe", names)
+                self.assertIn("k3-windows-x86_64/licenses/SourceHanSansCN-OFL.txt", names)
                 self.assertIn("k3-windows-x86_64/install-separator.ps1", names)
                 self.assertFalse(any("__pycache__" in name for name in names))
 

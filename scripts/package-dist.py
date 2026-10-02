@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def package(platform: str, name: str, binary: Path, runtime: Path | None,
-            cli_only: bool, dist: Path) -> Path:
+            cli_only: bool, dist: Path, gui_binary: Path | None = None) -> Path:
     if not re.fullmatch(r"k3-[a-z0-9_-]+", name):
         raise ValueError(f"无效包名：{name}")
     if not binary.is_file():
@@ -59,9 +59,28 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
             for filename in ("bundle-manifest.json", "requirements-resolved.txt"):
                 shutil.copy2(runtime / filename, root)
             shutil.copy2(REPO / "docs/offline-package.md", root / "INSTALL.md")
+            if platform in ("linux", "windows"):
+                gui = gui_binary or binary.with_name(f"k3-gui{extension}")
+                if not gui.is_file():
+                    raise ValueError(f"缺少 GUI 二进制：{gui}")
+                shutil.copy2(gui, root / f"k3-gui{extension}")
+                (root / f"k3-gui{extension}").chmod(0o755)
+                licenses = root / "licenses"
+                licenses.mkdir()
+                shutil.copy2(REPO / "crates/k3-gui/assets/fonts/OFL.txt",
+                             licenses / "SourceHanSansCN-OFL.txt")
+                shutil.copy2(REPO / "crates/k3-gui/assets/licenses/LicenseRef-Slint-Royalty-free-2.0.md",
+                             licenses)
             if platform == "linux":
                 shutil.copy2(REPO / "separate.sh", root)
                 (root / "separate.sh").chmod(0o755)
+                for source, destination in (
+                    ("crates/k3-gui/assets/k3.desktop", "share/applications/k3.desktop"),
+                    ("crates/k3-gui/assets/k3.svg", "share/icons/hicolor/scalable/apps/k3.svg"),
+                ):
+                    target = root / destination
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(REPO / source, target)
             if platform == "windows":
                 for filename in ("separate.ps1", "install-separator.ps1"):
                     shutil.copy2(REPO / filename, root)
@@ -99,9 +118,11 @@ def main() -> None:
     parser.add_argument("binary", type=Path)
     parser.add_argument("runtime", type=Path, nargs="?")
     parser.add_argument("--cli-only", action="store_true")
+    parser.add_argument("--gui-binary", type=Path, help="Linux/Windows 完整包的 GUI；默认取 CLI 同目录")
     parser.add_argument("--dist-dir", type=Path, default=Path(os.environ.get("DIST_DIR", REPO / "dist")))
     args = parser.parse_args()
-    package(args.platform, args.name, args.binary, args.runtime, args.cli_only, args.dist_dir)
+    package(args.platform, args.name, args.binary, args.runtime, args.cli_only, args.dist_dir,
+            args.gui_binary)
 
 
 if __name__ == "__main__":

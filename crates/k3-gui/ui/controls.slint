@@ -1,0 +1,328 @@
+import { Strings } from "strings.slint";
+
+export global Tokens {
+    // A rehearsal room, not a generic media player: indigo walls, paper lyrics,
+    // and one coral cue mark where the singer should enter.
+    out property <color> ink: #f4efe6;
+    out property <color> muted: #9f9caf;
+    out property <color> faint: #66657a;
+    out property <color> canvas: #15162b;
+    out property <color> stage: #0b0c14;
+    out property <color> panel: #1f2139;
+    out property <color> raised: #292b47;
+    out property <color> line: #393b58;
+    out property <color> cue: #ff776d;
+    out property <color> lyric-current: #ffd66b;
+    out property <color> downloaded: #67d7a0;
+    out property <color> lyric-upcoming: #a9a7b5;
+    out property <color> lyric-played: #414255;
+    out property <color> paper: #f4efe6;
+    out property <color> paper-ink: #242337;
+    out property <color> danger: #ff8c85;
+}
+
+export component SectionLabel inherits Text {
+    color: Tokens.muted;
+    font-family: "monospace";
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.3px;
+}
+
+export component SeparationProgressCard inherits Rectangle {
+    in property <string> song;
+    in property <string> stage;
+    in property <float> progress: -1;
+    in property <string> elapsed;
+    in property <int> queued;
+    in property <bool> clickable: false;
+    callback activated;
+    property <int> pulse: 0;
+
+    height: 112px;
+    border-radius: 6px;
+    background: Tokens.raised;
+    Timer {
+        interval: 50ms;
+        running: root.progress < 0;
+        triggered => { root.pulse = root.pulse >= 40 ? 0 : root.pulse + 1; }
+    }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        Text { text: root.song; color: Tokens.ink; font-size: 13px; overflow: elide; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.stage; color: Tokens.muted; font-size: 11px; horizontal-stretch: 1; overflow: elide; }
+            if root.progress >= 0: Text {
+                text: round(root.progress * 100) + "%";
+                accessible-label: Strings.stage-progress + " " + self.text;
+                color: Tokens.cue;
+                font-size: 11px;
+            }
+        }
+        Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Tokens.line;
+            clip: true;
+            Rectangle {
+                width: root.progress >= 0 ? parent.width * min(1, max(0, root.progress)) : parent.width * 0.25;
+                x: root.progress >= 0 ? 0px : (parent.width - self.width) * (root.pulse <= 20 ? root.pulse / 20.0 : (40 - root.pulse) / 20.0);
+                height: parent.height;
+                border-radius: 2px;
+                background: Tokens.cue;
+                animate width { duration: 180ms; }
+            }
+        }
+        Text {
+            text: Strings.elapsed + " " + root.elapsed + " · " + Strings.queued + " " + root.queued;
+            color: Tokens.faint;
+            font-size: 10px;
+            overflow: elide;
+        }
+    }
+    progress-focus := FocusScope {
+        enabled: root.clickable;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    if root.clickable: TouchArea {
+        accessible-role: button;
+        accessible-label: Strings.view-separation-progress;
+        clicked => { progress-focus.focus(); root.activated(); }
+    }
+    accessible-role: groupbox;
+    accessible-label: Strings.stage-progress;
+}
+
+export component ActionButton inherits Rectangle {
+    public function focus-button() { action-focus.focus(); }
+    in property <string> label;
+    in property <string> accessible-name: label;
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    callback clicked;
+
+    height: 36px;
+    min-width: 36px;
+    border-radius: root.primary ? 18px : 5px;
+    background: !root.enabled ? (root.primary ? Tokens.raised : transparent) : root.primary ? Tokens.cue : action-touch.has-hover || action-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.accessible-name;
+    accessible-enabled: root.enabled;
+
+    if root.icon.width > 0 && root.icon.height > 0: Image {
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        image-fit: contain;
+        colorize: !root.enabled ? Tokens.muted : root.primary ? Tokens.paper-ink : Tokens.ink;
+    }
+    if root.icon.width == 0 || root.icon.height == 0: Text {
+        text: root.label;
+        color: !root.enabled ? Tokens.muted : root.primary ? Tokens.paper-ink : Tokens.ink;
+        font-size: 12px;
+        font-weight: root.primary ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    action-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    action-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            action-focus.focus();
+            root.clicked();
+        }
+    }
+}
+
+export component CopyableMessage inherits HorizontalLayout {
+    in property <string> message;
+    in property <brush> message-color: Tokens.muted;
+    in property <length> message-font-size: 11px;
+    callback copy-requested(string);
+
+    height: 44px;
+    spacing: 8px;
+
+    message-input := TextInput {
+        text: root.message;
+        read-only: true;
+        single-line: false;
+        wrap: word-wrap;
+        color: root.message-color;
+        font-size: root.message-font-size;
+        vertical-alignment: center;
+        selection-background-color: Tokens.lyric-current;
+        selection-foreground-color: Tokens.paper-ink;
+        horizontal-stretch: 1;
+        accessible-role: text-input;
+        accessible-read-only: true;
+        accessible-label: Strings.status-message;
+    }
+    ActionButton {
+        width: 64px;
+        height: 32px;
+        label: Strings.copy;
+        accessible-name: Strings.copy-message;
+        clicked => { root.copy-requested(root.message); }
+    }
+}
+
+export component PlayButton inherits Rectangle {
+    in property <bool> playing;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    width: 54px;
+    height: 54px;
+    border-radius: 27px;
+    background: !root.enabled ? Tokens.raised : play-focus.has-focus ? Tokens.lyric-current : Tokens.paper;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.playing ? Strings.pause : Strings.play;
+    accessible-enabled: root.enabled;
+
+    Image {
+        width: 20px;
+        height: 20px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.playing ? @image-url("../assets/pause.svg") : @image-url("../assets/play.svg");
+        image-fit: contain;
+        colorize: Tokens.paper-ink;
+    }
+
+    play-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    play-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            play-focus.focus();
+            root.clicked();
+        }
+    }
+}
+
+export component TransportIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> accessible-name;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> accent: false;
+    callback clicked;
+
+    width: 54px;
+    height: 54px;
+    border-radius: 27px;
+    background: !root.enabled ? transparent : root.active ? Tokens.cue : transport-touch.has-hover || transport-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
+    opacity: root.enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: root.accessible-name;
+    accessible-enabled: root.enabled;
+
+    Image {
+        width: 20px;
+        height: 20px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        image-fit: contain;
+        colorize: root.active ? Tokens.paper-ink : root.accent ? Tokens.cue : Tokens.ink;
+    }
+
+    transport-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    transport-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            transport-focus.focus();
+            root.clicked();
+        }
+    }
+}
+
+export component TrackPill inherits Rectangle {
+    in property <string> label;
+    in property <string> unavailable-reason;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback selected;
+
+    height: 34px;
+    border-radius: 5px;
+    background: active ? Tokens.paper : track-touch.has-hover || track-focus.has-focus ? Tokens.raised : transparent;
+    border-width: 0px;
+    opacity: enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-description: enabled ? label : unavailable-reason;
+    accessible-enabled: enabled;
+
+    Text {
+        text: root.label;
+        color: root.active ? Tokens.paper-ink : Tokens.muted;
+        font-size: 12px;
+        font-weight: root.active ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    track-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.selected();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    track-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            track-focus.focus();
+            root.selected();
+        }
+    }
+}

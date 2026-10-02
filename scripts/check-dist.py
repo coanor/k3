@@ -78,22 +78,25 @@ def check(archive: Path, cli_only: bool) -> None:
         # SoundFile 支持模型输出的 IEEE float WAV；标准库 wave 只支持 PCM。
         audio_check = """
 import sys
+import json
 from pathlib import Path
 import numpy as np
 import soundfile as sf
-for name in ('vocals.wav', 'accompaniment.wav', 'backing-vocals.wav'):
-    audio, rate = sf.read(Path(sys.argv[1]) / name, always_2d=True)
+project = Path(sys.argv[1])
+manifest = json.loads((project / 'project.json').read_text(encoding='utf-8'))['separation']['details']
+for name in ('vocals', 'accompaniment', 'backing_vocals'):
+    audio, rate = sf.read(project / manifest[name], always_2d=True)
     if len(audio) == 0 or rate != 44100 or not np.isfinite(audio).all():
         raise RuntimeError(f'Invalid separated audio: {name}')
 """
-        run(python, "-I", "-c", audio_check, project / "stems", cwd=work)
+        run(python, "-I", "-c", audio_check, project, cwd=work)
         if os.name != "nt" and (root / "separate.sh").is_file():
             batch_environment = dict(environment, K3_PROFILE="fast", K3_AUTOCAST="false",
                                      K3_SEGMENT_SIZE="128")
             run(root / "separate.sh", "-f", song, "-d", work / "batch-projects",
                 env=batch_environment, cwd=work)
             run(python, "-I", "-c", audio_check,
-                work / "batch-projects" / song.stem / "stems", cwd=work)
+                work / "batch-projects" / song.stem, cwd=work)
         print("发行包校验通过：可移动、模型离线载入、CLI 默认分离与和声输出")
 
 

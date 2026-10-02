@@ -2,12 +2,18 @@ use std::{
     env, fs,
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Output, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
 };
 
 use k3_core::{
-    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure,
-    SeparationManifest, SeparationProfile, StemSeparator,
+    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, Project, ProjectPath,
+    SeparationFailure, SeparationManifest, SeparationProfile, SeparationState, StemSeparator,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,12 +33,27 @@ pub struct PythonSeparatorConfig {
 #[derive(Debug)]
 pub struct PythonStemSeparator {
     config: PythonSeparatorConfig,
+    cancellation: Arc<AtomicBool>,
 }
 
 impl PythonStemSeparator {
     #[must_use]
     pub fn new(config: PythonSeparatorConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            cancellation: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_cancellation(
+        config: PythonSeparatorConfig,
+        cancellation: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            config,
+            cancellation,
+        }
     }
 
     fn invoke(
@@ -40,6 +61,9 @@ impl PythonStemSeparator {
         input: &Path,
         profile: SeparationProfile,
     ) -> Result<SeparationManifest, String> {
+        if self.cancellation.load(Ordering::Acquire) {
+            return Err("separation cancelled".into());
+        }
         let output_dir = self.config.project_root.join("stems");
         if let Some(parent) = self.config.log_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -55,6 +79,26 @@ impl PythonStemSeparator {
                 self.config.log_path.display()
             )
         })?;
+        let request = WorkerRequest {
+            id: "k3-separate",
+            method: "separate",
+            params: WorkerParameters {
+                input_path: input,
+                output_dir: &output_dir,
+                profile,
+                model_id: self.config.model_id.as_deref(),
+                overwrite: self.config.overwrite,
+                preserve_backing_vocals: self.config.preserve_backing_vocals,
+                options: WorkerOptions {
+                    autocast: self.config.autocast,
+                    segment_size: self.config.segment_size,
+                },
+            },
+        };
+        let mut encoded_request = serde_json::to_vec(&request)
+            .map_err(|error| format!("cannot encode worker request: {error}"))?;
+        encoded_request.push(b'\n');
+
         let worker = resolve_worker(&self.config.worker);
         let mut command = Command::new(&worker);
         if let Some(model_dir) = &self.config.model_dir {
@@ -72,37 +116,20 @@ impl PythonStemSeparator {
                 )
             })?;
 
-        let request = WorkerRequest {
-            id: "k3-separate",
-            method: "separate",
-            params: WorkerParameters {
-                input_path: input,
-                output_dir: &output_dir,
-                profile,
-                model_id: self.config.model_id.as_deref(),
-                overwrite: self.config.overwrite,
-                preserve_backing_vocals: self.config.preserve_backing_vocals,
-                options: WorkerOptions {
-                    autocast: self.config.autocast,
-                    segment_size: self.config.segment_size,
-                },
+        let write_result = child.stdin.take().map_or_else(
+            || Err("separation worker stdin is unavailable".to_owned()),
+            |mut stdin| {
+                stdin
+                    .write_all(&encoded_request)
+                    .map_err(|error| format!("cannot write worker request: {error}"))
             },
-        };
-        {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| "separation worker stdin is unavailable".to_owned())?;
-            serde_json::to_writer(&mut stdin, &request)
-                .map_err(|error| format!("cannot encode worker request: {error}"))?;
-            stdin
-                .write_all(b"\n")
-                .map_err(|error| format!("cannot write worker request: {error}"))?;
+        );
+        if let Err(error) = write_result {
+            terminate_and_reap(&mut child);
+            return Err(error);
         }
 
-        let output = child
-            .wait_with_output()
-            .map_err(|error| format!("cannot wait for separation worker: {error}"))?;
+        let output = wait_for_output(&mut child, &self.cancellation)?;
         if !output.status.success() {
             return Err(format!(
                 "separation worker exited with status {}{}",
@@ -144,14 +171,14 @@ impl PythonStemSeparator {
         if result.provenance.profile != requested_profile {
             return Err("worker returned a different separation profile".into());
         }
-        validate_output_path(
+        let vocals = validated_project_path(
             &result.vocals,
-            &self.config.project_root.join("stems/vocals.wav"),
+            &self.config.project_root.join("stems"),
             "vocals",
         )?;
-        validate_output_path(
+        let accompaniment = validated_project_path(
             &result.accompaniment,
-            &self.config.project_root.join("stems/accompaniment.wav"),
+            &self.config.project_root.join("stems"),
             "accompaniment",
         )?;
         let backing_vocals = match (
@@ -160,14 +187,13 @@ impl PythonStemSeparator {
             result.provenance.backing_vocals_model,
         ) {
             (true, Some(path), Some(model)) => {
-                validate_output_path(
+                let project_path = validated_project_path(
                     &path,
-                    &self.config.project_root.join("stems/backing-vocals.wav"),
+                    &self.config.project_root.join("stems"),
                     "backing vocals",
                 )?;
                 Some((
-                    ProjectPath::new("stems/backing-vocals.wav")
-                        .map_err(|error| error.to_string())?,
+                    project_path,
                     Box::new(BackingVocalModelProvenance {
                         provider: model.provider,
                         architecture: model.architecture,
@@ -191,9 +217,8 @@ impl PythonStemSeparator {
         let (backing_vocals, backing_vocals_model) =
             backing_vocals.map_or((None, None), |(path, model)| (Some(path), Some(model)));
         Ok(SeparationManifest {
-            vocals: ProjectPath::new("stems/vocals.wav").map_err(|error| error.to_string())?,
-            accompaniment: ProjectPath::new("stems/accompaniment.wav")
-                .map_err(|error| error.to_string())?,
+            vocals,
+            accompaniment,
             backing_vocals,
             provenance: ModelProvenance {
                 provider: result.provenance.provider,
@@ -229,6 +254,96 @@ fn resolve_worker(worker: &Path) -> PathBuf {
         }
     }
     worker.to_path_buf()
+}
+
+pub fn separation_output_paths(project: &Project) -> Vec<PathBuf> {
+    let SeparationState::Ready(manifest) = project.separation() else {
+        return Vec::new();
+    };
+    [&manifest.vocals, &manifest.accompaniment]
+        .into_iter()
+        .chain(manifest.backing_vocals.iter())
+        .map(|path| path.resolve(project.root()))
+        .collect()
+}
+
+pub fn cleanup_obsolete_outputs(project_root: &Path, obsolete: &[PathBuf], retained: &[PathBuf]) {
+    let Ok(root) = project_root.canonicalize() else {
+        return;
+    };
+    let stems = root.join("stems");
+    for path in obsolete {
+        if retained.contains(path) {
+            continue;
+        }
+        let safe = path.strip_prefix(&stems).is_ok_and(|relative| {
+            relative.components().count() > 0
+                && relative
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+        }) && path.parent().is_some_and(|parent| {
+            parent
+                .canonicalize()
+                .is_ok_and(|parent| parent.starts_with(&stems))
+        });
+        if !safe {
+            eprintln!(
+                "Warning: skipped obsolete stem outside the project stems directory: {}",
+                path.display()
+            );
+            continue;
+        }
+        if let Err(error) = fs::remove_file(path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "Warning: could not remove obsolete stem {}: {error}",
+                path.display()
+            );
+        }
+    }
+}
+
+fn wait_for_output(child: &mut Child, cancellation: &AtomicBool) -> Result<Output, String> {
+    let Some(mut stdout) = child.stdout.take() else {
+        terminate_and_reap(child);
+        return Err("separation worker stdout is unavailable".to_owned());
+    };
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let status = loop {
+        if cancellation.load(Ordering::Acquire) {
+            terminate_and_reap(child);
+            break Err("separation cancelled".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_and_reap(child);
+                break Err(format!("cannot wait for separation worker: {error}"));
+            }
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "separation worker stdout reader panicked".to_owned())?
+        .map_err(|error| format!("cannot read separation worker response: {error}"))?;
+    let status = status?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
+fn terminate_and_reap(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 pub fn separation_log_path() -> io::Result<PathBuf> {
@@ -309,12 +424,16 @@ impl StemSeparator for PythonStemSeparator {
     }
 }
 
-fn validate_output_path(actual: &Path, expected: &Path, label: &str) -> Result<(), String> {
+fn validated_project_path(
+    actual: &Path,
+    expected_directory: &Path,
+    label: &str,
+) -> Result<ProjectPath, String> {
     let actual = fs::canonicalize(actual)
         .map_err(|error| format!("cannot resolve worker {label} output: {error}"))?;
-    let expected = fs::canonicalize(expected)
-        .map_err(|error| format!("cannot resolve expected {label} output: {error}"))?;
-    if actual != expected {
+    let expected_directory = fs::canonicalize(expected_directory)
+        .map_err(|error| format!("cannot resolve expected stems directory: {error}"))?;
+    if actual.parent() != Some(expected_directory.as_path()) {
         return Err(format!(
             "worker {label} output is outside the project stems directory: {}",
             actual.display()
@@ -327,7 +446,154 @@ fn validate_output_path(actual: &Path, expected: &Path, label: &str) -> Result<(
     {
         return Err(format!("worker {label} output is empty"));
     }
-    Ok(())
+    let file_name = actual
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("worker {label} output name is not valid UTF-8"))?;
+    ProjectPath::new(format!("stems/{file_name}")).map_err(|error| error.to_string())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs};
+    use k3_core::{SeparationProfile, StemSeparator};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_outside_project_through_directory_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems/external")).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[project.join("stems/external/sentinel.wav")],
+            &[],
+        );
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_when_stems_directory_is_redirected() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems")).unwrap();
+
+        cleanup_obsolete_outputs(&project, &[project.join("stems/sentinel.wav")], &[]);
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_removes_only_unretained_stems_and_unlinks_file_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        let obsolete = project.join("stems/obsolete.wav");
+        let retained = project.join("stems/retained.wav");
+        let external = sandbox.path().join("external.wav");
+        let link = project.join("stems/link.wav");
+        for path in [&obsolete, &retained, &external] {
+            fs::write(path, b"audio").unwrap();
+        }
+        std::os::unix::fs::symlink(&external, &link).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[
+                obsolete.clone(),
+                retained.clone(),
+                link.clone(),
+                external.clone(),
+            ],
+            std::slice::from_ref(&retained),
+        );
+
+        assert!(!obsolete.exists());
+        assert!(retained.exists());
+        assert!(fs::symlink_metadata(link).is_err());
+        assert_eq!(fs::read(external).unwrap(), b"audio");
+    }
+
+    #[test]
+    fn cancellation_terminates_and_reaps_worker_process() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let worker = sandbox.path().join("slow-worker");
+        let pid_path = sandbox.path().join("worker.pid");
+        fs::write(
+            &worker,
+            format!(
+                "#!/usr/bin/env python3\nimport os\nimport pathlib\nimport sys\nimport time\nsys.stdin.readline()\npathlib.Path({pid_path:?}).write_text(str(os.getpid()), encoding='utf-8')\nwhile True:\n    time.sleep(1)\n"
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&worker).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&worker, permissions).unwrap();
+        let source = sandbox.path().join("song.wav");
+        fs::write(&source, b"song").unwrap();
+        let project_root = sandbox.path().join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let separator_cancellation = cancellation.clone();
+        let handle = thread::spawn(move || {
+            let mut separator = PythonStemSeparator::with_cancellation(
+                PythonSeparatorConfig {
+                    worker,
+                    model_dir: None,
+                    project_root: project_root.clone(),
+                    log_path: project_root.join("separate.log"),
+                    model_id: None,
+                    overwrite: false,
+                    segment_size: None,
+                    autocast: true,
+                    preserve_backing_vocals: true,
+                },
+                separator_cancellation,
+            );
+            separator.separate(&source, SeparationProfile::Quality)
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = fs::read_to_string(&pid_path).expect("worker should report its pid");
+        cancellation.store(true, Ordering::Release);
+        let error = handle.join().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("separation cancelled"));
+        assert!(
+            !Command::new("kill")
+                .args(["-0", pid.trim()])
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "worker process {pid} survived cancellation"
+        );
+    }
 }
 
 #[derive(Debug, Serialize)]

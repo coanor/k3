@@ -1,0 +1,1839 @@
+import { AboutSlint, ComboBox, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
+import { Strings } from "strings.slint";
+import { ActionButton, CopyableMessage, PlayButton, SectionLabel, SeparationProgressCard, Tokens, TrackPill, TransportIconButton } from "controls.slint";
+import "../assets/fonts/SourceHanSansCN-Regular.otf";
+
+export enum ViewMode { setup, rehearsal }
+export enum Overlay { none, about, settings, confirm-root-change, lyrics-search, confirm-take-delete }
+export enum ErrorKind { none, general, playback }
+export enum PlaybackState { unavailable, loading, paused, playing, finished, error }
+export enum PlaybackAction { toggle, back, forward, restart, retry }
+export enum TrackSelection { original, accompaniment, vocals, take }
+export enum ProjectState { ready, repair-needed, separating }
+export enum RecordingState { idle, starting, recording, stopping }
+export enum LyricsPanelState { idle, preparing, searching, results, saving }
+export enum SeparationState { idle, running, success, error }
+
+export struct ProjectItem {
+    id: string,
+    title: string,
+    path: string,
+    status: ProjectState,
+    selected: bool,
+}
+
+export struct LyricItem {
+    text: string,
+    at-seconds: float,
+}
+
+export struct LyricsCandidateItem {
+    label: string,
+    origin: string,
+    preview: string,
+}
+
+export struct NeteaseSongItem {
+    title: string,
+    detail: string,
+    available: bool,
+    selected: bool,
+    queued: bool,
+    downloaded: bool,
+}
+
+export component K3Window inherits Window {
+    init => { Palette.color-scheme = ColorScheme.dark; }
+    title: Strings.window-title;
+    icon: @image-url("../assets/k3.svg");
+    background: Tokens.canvas;
+    default-font-family: "Source Han Sans CN";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    min-width: 960px;
+    min-height: 640px;
+
+    in property <[ProjectItem]> projects;
+    in property <[LyricItem]> lyrics;
+    in property <[LyricsCandidateItem]> lyrics-candidates;
+    in-out property <string> projects-root;
+    in-out property <string> search-query;
+    in-out property <ViewMode> view-mode: ViewMode.setup;
+    in-out property <bool> loading: false;
+    in-out property <Overlay> overlay: Overlay.none;
+    in-out property <bool> follow-lyrics: true;
+    in-out property <length> lyric-scroll-y: 0px;
+    animate lyric-scroll-y {
+        duration: root.follow-lyrics ? 280ms : 0ms;
+        easing: ease-out;
+    }
+    changed active-lyric => { root.follow-current-lyric(); }
+    changed follow-lyrics => { root.follow-current-lyric(); }
+    in-out property <int> focus-search-serial: 0;
+
+    in property <string> song-title: Strings.choose-project;
+    in property <string> error-message;
+    in property <string> log-path;
+    in property <string> settings-path;
+    in-out property <int> language-index: 1;
+    in-out property <ErrorKind> error-kind: ErrorKind.none;
+    in-out property <bool> project-changed: false;
+    in-out property <string> current-project-id;
+    in property <PlaybackState> playback-state: PlaybackState.unavailable;
+    property <bool> playback-ready: root.playback-state == PlaybackState.paused || root.playback-state == PlaybackState.playing || root.playback-state == PlaybackState.finished;
+    property <bool> can-seek-back: root.playback-ready && root.position-seconds > 0.05;
+    property <bool> can-seek-forward: root.playback-ready && root.playback-state != PlaybackState.finished && (root.duration-seconds <= 0 || root.position-seconds < root.duration-seconds - 0.05);
+    property <bool> playing: root.playback-state == PlaybackState.playing;
+    in-out property <float> position-seconds: 0;
+    in property <float> duration-seconds: 0;
+    in-out property <float> volume: 1;
+    in property <int> key-shift: 0;
+    in property <TrackSelection> active-track: TrackSelection.original;
+    in property <bool> original-available: false;
+    in property <bool> accompaniment-available: false;
+    in property <bool> vocals-available: false;
+    in property <bool> take-available: false;
+    in property <int> active-lyric: -1;
+    in property <int> lyric-countdown-index: -1;
+    in property <int> lyric-countdown-dots: 0;
+    in-out property <RecordingState> recording-state: RecordingState.idle;
+    in-out property <int> effect-index: 0;
+    in property <[string]> take-options;
+    in-out property <int> selected-take-index: 0;
+    in property <bool> take-busy: false;
+    in property <string> take-effect-message;
+    in-out property <bool> monitoring: false;
+    in property <string> recording-message;
+    in property <string> delete-take-name;
+    property <length> take-menu-x;
+    property <length> take-menu-y;
+    in-out property <string> lyrics-query;
+    in-out property <LyricsPanelState> lyrics-panel-state: LyricsPanelState.idle;
+    in-out property <string> lyrics-panel-message;
+    in-out property <int> selected-lyrics-candidate: -1;
+    in-out property <bool> separation-panel-open: false;
+    in-out property <string> separation-source;
+    in-out property <int> separation-selected-count: 0;
+    in-out property <string> separation-selection-message;
+    in-out property <int> separation-profile: 2;
+    in-out property <int> quality-model-index: 0;
+    in-out property <bool> separation-existing: false;
+    in-out property <SeparationState> separation-state: SeparationState.idle;
+    in-out property <string> separation-message;
+    in property <float> separation-progress: -1;
+    in property <string> separation-stage;
+    in property <string> separation-current-song;
+    in property <int> separation-elapsed-seconds;
+    in-out property <bool> netease-accepted: false;
+    in-out property <bool> netease-logged-in: false;
+    in-out property <bool> netease-busy: false;
+    in-out property <bool> netease-download-running: false;
+    in-out property <int> netease-selected-count: 0;
+    in-out property <int> netease-queued-count: 0;
+    in-out property <int> separation-queued-count: 0;
+    out property <bool> netease-can-queue: root.netease-logged-in && root.netease-selected-count > 0 && !root.netease-busy;
+    in-out property <string> netease-account;
+    in-out property <string> netease-message;
+    in-out property <string> netease-query;
+    in-out property <image> netease-qr;
+    in-out property <bool> netease-qr-visible: false;
+    in property <[NeteaseSongItem]> netease-songs;
+    property <bool> separation-running: root.separation-state == SeparationState.running;
+    property <length> separation-card-height: (root.netease-logged-in ? 1010px : root.netease-qr-visible ? 860px : root.netease-accepted ? 700px : 650px) + (root.separation-profile == 2 ? 104px : 0px) + (root.separation-selection-message != "" ? 44px : 0px) + (root.separation-running ? 132px : root.separation-queued-count > 0 ? 18px : 0px);
+    property <bool> recording-active: root.recording-state != RecordingState.idle;
+    in property <bool> current-project-separating: false;
+
+    callback choose-projects-root;
+    callback save-projects-root(string);
+    callback search(string);
+    callback refresh-library;
+    callback open-project(string);
+    callback playback-command(PlaybackAction);
+    callback seek-to(float);
+    callback set-volume(float);
+    callback save-volume(float);
+    callback select-language(int);
+    callback select-separation-profile(int);
+    callback select-quality-model(int);
+    pure callback localize-message(string, int) -> string;
+    localize-message(source, _language) => { return source; }
+    callback set-key(int);
+    callback switch-track(TrackSelection);
+    callback seek-lyric(float);
+    callback recording-command(bool);
+    callback select-effect(int);
+    callback select-existing-take(int);
+    callback begin-delete-take;
+    callback cancel-delete-take;
+    callback confirm-delete-take;
+    callback set-monitoring(bool);
+    callback begin-lyrics-search;
+    callback close-lyrics-search;
+    callback search-online-lyrics(string);
+    callback save-lyrics-candidate(int);
+    callback choose-separation-source;
+    callback queue-selected-sources(int);
+    callback start-separation(string, int, int, bool);
+    callback accept-netease-risk;
+    callback netease-login-qr;
+    callback netease-login-chrome;
+    callback netease-logout;
+    callback netease-search(string);
+    callback netease-liked;
+    callback netease-toggle-selection(int);
+    callback netease-queue-selected;
+
+    public function copy-message(message: string) {
+        clipboard-proxy.text = message;
+        clipboard-proxy.select-all();
+        clipboard-proxy.copy();
+    }
+
+    public function copy-netease-message() {
+        root.copy-message(root.localize-message(root.netease-message, root.language-index));
+    }
+
+    function format-time(seconds: float) -> string {
+        if (seconds <= 0) { return "0:00"; }
+        let total = round(seconds);
+        let minutes = floor(total / 60);
+        let remainder = total - minutes * 60;
+        return minutes + (remainder < 10 ? ":0" : ":") + remainder;
+    }
+
+    function follow-current-lyric() {
+        if (root.follow-lyrics && root.active-lyric >= 0) {
+            root.lyric-scroll-y = min(180px - root.active-lyric * 64px, 0px);
+        }
+    }
+
+    function toggle-recording() {
+        if (root.take-busy) { return; }
+        if (root.recording-state == RecordingState.idle) {
+            if (root.loading || root.current-project-separating) { return; }
+            if (!root.monitoring) {
+                root.monitoring = true;
+                root.set-monitoring(true);
+            }
+            root.recording-command(true);
+        } else if (root.recording-state == RecordingState.recording) {
+            if (root.monitoring) {
+                root.monitoring = false;
+                root.set-monitoring(false);
+            }
+            root.recording-command(false);
+        }
+    }
+
+    function toggle-monitoring() {
+        root.monitoring = !root.monitoring;
+        root.set-monitoring(root.monitoring);
+    }
+
+    function dismiss-lyrics-search() {
+        if (root.lyrics-panel-state == LyricsPanelState.saving) { return; }
+        root.close-lyrics-search();
+        root.overlay = Overlay.none;
+    }
+
+    function play-from-take-menu() {
+        take-actions-popup.close();
+        root.select-existing-take(root.selected-take-index);
+    }
+
+    function show-take-menu(x: length, y: length) {
+        root.take-menu-x = x;
+        root.take-menu-y = y;
+        take-actions-popup.show();
+    }
+
+    function delete-from-take-menu() {
+        take-actions-popup.close();
+        root.begin-delete-take();
+    }
+
+    function dismiss-take-deletion() {
+        root.cancel-delete-take();
+        root.overlay = Overlay.none;
+        shortcuts.focus();
+    }
+
+    public function close-top-layer() -> bool {
+        if (take-actions-popup.is-open) {
+            take-actions-popup.close();
+            shortcuts.focus();
+            return true;
+        }
+        if (root.overlay != Overlay.none) {
+            if (root.overlay == Overlay.lyrics-search) {
+                root.dismiss-lyrics-search();
+            } else {
+                if (root.overlay == Overlay.confirm-take-delete) {
+                    root.dismiss-take-deletion();
+                    return true;
+                }
+                root.overlay = Overlay.none;
+            }
+            return true;
+        }
+        if (root.view-mode == ViewMode.setup && root.projects-root != "") {
+            root.view-mode = ViewMode.rehearsal;
+            return true;
+        }
+        if (root.separation-panel-open) {
+            root.separation-panel-open = false;
+            return true;
+        }
+        return false;
+    }
+
+    function playback-state-text() -> string {
+        if (root.playback-state == PlaybackState.unavailable) { return Strings.playback-unavailable; }
+        if (root.playback-state == PlaybackState.loading) { return Strings.loading-audio; }
+        if (root.playback-state == PlaybackState.finished) { return Strings.playback-finished; }
+        if (root.playback-state == PlaybackState.error) { return Strings.playback-error; }
+        return "";
+    }
+
+    clipboard-proxy := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        read-only: true;
+    }
+
+    forward-focus: shortcuts;
+    shortcuts := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                return root.close-top-layer() ? accept : reject;
+            }
+            if (root.overlay != Overlay.none) { return reject; }
+            if (event.text == " " && root.playback-ready) {
+                root.playback-command(PlaybackAction.toggle); return accept;
+            }
+            if (event.text == Key.LeftArrow && root.can-seek-back) {
+                root.playback-command(PlaybackAction.back); return accept;
+            }
+            if (event.text == Key.RightArrow && root.can-seek-forward) {
+                root.playback-command(PlaybackAction.forward); return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.set-volume(min(1, root.volume + 0.05)); return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.set-volume(max(0, root.volume - 0.05)); return accept;
+            }
+            if (event.text == "1" && root.original-available) { root.switch-track(TrackSelection.original); return accept; }
+            if (event.text == "2" && root.accompaniment-available) { root.switch-track(TrackSelection.accompaniment); return accept; }
+            if (event.text == "3" && root.vocals-available) { root.switch-track(TrackSelection.vocals); return accept; }
+            if (event.text == "4" && root.take-available && !root.take-busy) { root.switch-track(TrackSelection.take); return accept; }
+            if (event.text == Key.Delete && root.take-options.length > 0 && !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating) {
+                root.begin-delete-take(); return accept;
+            }
+            if (event.text == "," && root.playback-ready && root.key-shift > -6) { root.set-key(root.key-shift - 1); return accept; }
+            if (event.text == "." && root.playback-ready && root.key-shift < 6) { root.set-key(root.key-shift + 1); return accept; }
+            if (event.text == "/" && root.playback-ready && root.key-shift != 0) { root.set-key(0); return accept; }
+            if (event.text == "l" && root.playback-ready && !root.recording-active) {
+                root.begin-lyrics-search(); return accept;
+            }
+            if (event.text == "r" && root.accompaniment-available && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
+                root.toggle-recording(); return accept;
+            }
+            if (event.text == "m" && (root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording)) {
+                root.toggle-monitoring();
+                return accept;
+            }
+            return reject;
+        }
+
+        KeyBinding {
+            keys: @keys(Control + R);
+            activated => { root.refresh-library(); }
+        }
+        KeyBinding {
+            keys: @keys(Control + F);
+            activated => { root.focus-search-serial += 1; }
+        }
+
+    if root.view-mode == ViewMode.setup: Rectangle {
+        background: Tokens.canvas;
+
+        Rectangle {
+            width: 640px;
+            height: 430px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            Rectangle {
+                width: 6px;
+                x: 0px;
+                y: 48px;
+                height: parent.height - 96px;
+                background: Tokens.cue;
+            }
+
+            VerticalLayout {
+                padding-left: 58px;
+                padding-right: 52px;
+                padding-top: 42px;
+                padding-bottom: 38px;
+                spacing: 20px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    Text {
+                        text: Strings.brand;
+                        color: Tokens.cue;
+                        font-size: 18px;
+                        font-weight: 800;
+                        letter-spacing: 4px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    SectionLabel {
+                        text: Strings.setup-eyebrow;
+                        vertical-alignment: center;
+                    }
+                    if root.projects-root != "": ActionButton {
+                        width: 30px;
+                        height: 30px;
+                        accessible-name: Strings.cancel-folder-selection;
+                        icon: @image-url("../assets/close.svg");
+                        clicked => { root.view-mode = ViewMode.rehearsal; }
+                    }
+                }
+                Text {
+                    text: Strings.setup-title;
+                    color: Tokens.ink;
+                    font-size: 34px;
+                    font-weight: 650;
+                }
+                Text {
+                    text: Strings.setup-copy;
+                    color: Tokens.muted;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    LineEdit {
+                        text <=> root.projects-root;
+                        placeholder-text: Strings.projects-root-placeholder;
+                        height: 42px;
+                    }
+                    ActionButton {
+                        width: 42px;
+                        height: 42px;
+                        accessible-name: Strings.browse-projects-folder;
+                        icon: @image-url("../assets/folder.svg");
+                        clicked => { root.choose-projects-root(); }
+                    }
+                }
+                if root.error-kind != ErrorKind.none: CopyableMessage {
+                    message: root.localize-message(root.error-message, root.language-index);
+                    message-color: Tokens.danger;
+                    message-font-size: 12px;
+                    copy-requested(message) => { root.copy-message(message); }
+                }
+                HorizontalLayout {
+                    height: 42px;
+                    ActionButton {
+                        width: 42px;
+                        accessible-name: Strings.settings;
+                        icon: @image-url("../assets/settings.svg");
+                        clicked => { root.overlay = Overlay.settings; }
+                    }
+                    ActionButton {
+                        width: 42px;
+                        accessible-name: Strings.about-k3;
+                        icon: @image-url("../assets/info.svg");
+                        clicked => { root.overlay = Overlay.about; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 142px;
+                        height: 42px;
+                        label: root.loading ? Strings.checking : Strings.open-songbook;
+                        primary: true;
+                        enabled: !root.loading && root.projects-root != "";
+                        clicked => { root.save-projects-root(root.projects-root); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.view-mode == ViewMode.rehearsal: VerticalLayout {
+        spacing: 0px;
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 304px;
+                background: Tokens.panel;
+                border-width: 0px;
+
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        height: 42px;
+                        VerticalLayout {
+                            spacing: 1px;
+                            Text {
+                                text: Strings.brand;
+                                color: Tokens.cue;
+                                font-size: 17px;
+                                font-weight: 800;
+                                letter-spacing: 3px;
+                            }
+                            Text {
+                                text: Strings.app-eyebrow;
+                                color: Tokens.faint;
+                                font-family: "monospace";
+                                font-size: 8px;
+                                letter-spacing: 1.2px;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        ActionButton {
+                            width: 36px;
+                            accessible-name: Strings.settings;
+                            icon: @image-url("../assets/settings.svg");
+                            clicked => { root.overlay = Overlay.settings; }
+                        }
+                        ActionButton {
+                            width: 36px;
+                            accessible-name: Strings.about-k3;
+                            icon: @image-url("../assets/info.svg");
+                            clicked => { root.overlay = Overlay.about; }
+                        }
+                    }
+
+                    search-input := LineEdit {
+                        property <int> focus-trigger: root.focus-search-serial;
+                        text <=> root.search-query;
+                        placeholder-text: Strings.search-projects;
+                        edited => { root.search(self.text); }
+                        changed focus-trigger => { self.focus(); }
+                    }
+
+                    HorizontalLayout {
+                        height: 24px;
+                        SectionLabel { text: Strings.projects; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        ActionButton {
+                            width: 28px;
+                            height: 28px;
+                            accessible-name: Strings.refresh-projects;
+                            icon: @image-url("../assets/refresh.svg");
+                            enabled: !root.separation-running;
+                            clicked => { root.refresh-library(); }
+                        }
+                    }
+
+                    ListView {
+                        vertical-stretch: 1;
+                        for project[index] in root.projects: project-row := Rectangle {
+                            height: 68px;
+                            border-radius: 5px;
+                            background: project.selected ? Tokens.raised : project-touch.has-hover ? #252742 : transparent;
+                            border-width: project.selected || project-focus.has-focus ? 1px : 0px;
+                            border-color: project-focus.has-focus ? Tokens.cue : Tokens.line;
+                            accessible-role: list-item;
+                            accessible-label: project.title;
+
+                            VerticalLayout {
+                                padding-left: 14px;
+                                padding-right: 12px;
+                                padding-top: 9px;
+                                padding-bottom: 9px;
+                                spacing: 3px;
+                                Text {
+                                    text: project.title;
+                                    color: project.selected ? Tokens.ink : #cbc7d2;
+                                    font-size: 14px;
+                                    font-weight: project.selected ? 600 : 400;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: project.status == ProjectState.separating ? Strings.separating : project.status == ProjectState.ready ? Strings.project-ready : Strings.project-repair-needed;
+                                    color: project.status == ProjectState.separating ? Tokens.cue : project.status == ProjectState.repair-needed ? Tokens.danger : Tokens.faint;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            project-focus := FocusScope {
+                                enabled: !root.recording-active && !root.take-busy && project.status != ProjectState.separating;
+                                key-pressed(event) => {
+                                    if (event.text == Key.Return || event.text == " ") {
+                                        root.open-project(project.id);
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+                            project-touch := TouchArea {
+                                enabled: !root.recording-active && !root.take-busy && project.status != ProjectState.separating;
+                                clicked => {
+                                    project-focus.focus();
+                                    root.open-project(project.id);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.separation-running: SeparationProgressCard {
+                        song: root.separation-current-song;
+                        stage: root.localize-message(root.separation-stage, root.language-index);
+                        progress: root.separation-progress;
+                        elapsed: root.format-time(root.separation-elapsed-seconds);
+                        queued: root.separation-queued-count;
+                        clickable: true;
+                        activated => { root.separation-panel-open = true; }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Tokens.line;
+                    }
+                    HorizontalLayout {
+                        height: 36px;
+                        horizontal-stretch: 1;
+                        spacing: 8px;
+                        Text {
+                            text: root.projects-root;
+                            color: Tokens.faint;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        ActionButton {
+                            width: 36px;
+                            accessible-name: Strings.change-projects-folder;
+                            icon: @image-url("../assets/folder.svg");
+                            enabled: !root.recording-active && !root.netease-busy;
+                            clicked => {
+                                if (root.playing) { root.overlay = Overlay.confirm-root-change; }
+                                else { root.view-mode = ViewMode.setup; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Tokens.stage;
+
+                VerticalLayout {
+                    padding-left: 44px;
+                    padding-right: 44px;
+                    padding-top: 24px;
+                    padding-bottom: 16px;
+                    spacing: 14px;
+
+                    HorizontalLayout {
+                        height: 62px;
+                        VerticalLayout {
+                            spacing: 5px;
+                            SectionLabel {
+                                text: root.playback-ready ? Strings.now-rehearsing : Strings.ready-room;
+                                color: root.playback-ready ? Tokens.cue : Tokens.faint;
+                            }
+                            Text {
+                                text: root.song-title;
+                                color: Tokens.ink;
+                                font-size: 24px;
+                                font-weight: 650;
+                                overflow: elide;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout {
+                            width: 280px;
+                            spacing: 4px;
+                            alignment: center;
+                            Text {
+                                text: root.recording-message != "" ? root.localize-message(root.recording-message, root.language-index) : root.playback-state-text();
+                                visible: self.text != "";
+                                color: root.recording-state == RecordingState.recording ? Tokens.cue : root.error-kind != ErrorKind.none ? Tokens.danger : Tokens.muted;
+                                font-size: 11px;
+                                horizontal-alignment: right;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: root.playback-ready ? root.format-time(root.position-seconds) + " / " + root.format-time(root.duration-seconds) : Strings.waiting-for-song;
+                                color: root.playback-ready ? Tokens.ink : Tokens.faint;
+                                font-family: "monospace";
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: right;
+                            }
+                        }
+                    }
+
+                    if root.error-kind != ErrorKind.none: Rectangle {
+                        height: 44px;
+                        border-radius: 5px;
+                        background: #3d2534;
+                        border-width: 1px;
+                        border-color: #5a2d31;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            Text {
+                                text: root.localize-message(root.error-message, root.language-index);
+                                color: Tokens.danger;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            ActionButton {
+                                width: 64px;
+                                height: 32px;
+                                label: Strings.copy;
+                                accessible-name: Strings.copy-message;
+                                clicked => { root.copy-message(root.localize-message(root.error-message, root.language-index)); }
+                            }
+                            if root.error-kind == ErrorKind.playback: ActionButton {
+                                width: 32px;
+                                height: 32px;
+                                accessible-name: Strings.retry-playback;
+                                icon: @image-url("../assets/refresh.svg");
+                                clicked => { root.playback-command(PlaybackAction.retry); }
+                            }
+                        }
+                    }
+
+                    if root.project-changed: Rectangle {
+                        height: 44px;
+                        border-radius: 5px;
+                        background: #343044;
+                        border-width: 1px;
+                        border-color: #6c6370;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            Text {
+                                text: Strings.project-changed;
+                                color: Tokens.ink;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            ActionButton {
+                                width: 32px;
+                                height: 32px;
+                                accessible-name: Strings.reload-project;
+                                icon: @image-url("../assets/refresh.svg");
+                                clicked => { root.open-project(root.current-project-id); }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        height: 22px;
+                        SectionLabel {
+                            text: root.separation-panel-open ? Strings.song-preparation : Strings.lyric-cue;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if !root.separation-panel-open && !root.follow-lyrics && root.lyrics.length > 0: ActionButton {
+                            width: 142px;
+                            height: 28px;
+                            label: Strings.follow-current-line;
+                            clicked => { root.follow-lyrics = true; }
+                        }
+                        if !root.separation-panel-open: ActionButton {
+                            width: 112px;
+                            height: 28px;
+                            label: Strings.search-lyrics;
+                            enabled: root.playback-ready && !root.recording-active;
+                            clicked => { root.begin-lyrics-search(); }
+                        }
+                        ActionButton {
+                            width: root.separation-panel-open ? 112px : 126px;
+                            height: 28px;
+                            label: root.separation-panel-open ? Strings.back-to-lyrics : Strings.separate-song;
+                            enabled: !root.recording-active;
+                            clicked => { root.separation-panel-open = !root.separation-panel-open; }
+                        }
+                    }
+
+                    if !root.separation-panel-open: Rectangle {
+                        vertical-stretch: 1;
+                        background: transparent;
+
+                        if root.lyrics.length == 0: VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Text {
+                                text: root.playback-ready ? Strings.instrumental-rehearsal : Strings.choose-song-from-left;
+                                color: Tokens.muted;
+                                font-size: 22px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.playback-ready ? Strings.no-synced-lyrics : Strings.controls-will-appear;
+                                color: Tokens.faint;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        if root.lyrics.length > 0: lyrics-list := ListView {
+                            viewport-y <=> root.lyric-scroll-y;
+                            scrolled => { root.follow-lyrics = false; }
+                            for lyric[index] in root.lyrics: lyric-row := Rectangle {
+                                property <int> cue-index: max(0, root.active-lyric);
+                                property <bool> current: index == self.cue-index;
+                                property <bool> played: index < self.cue-index;
+                                property <bool> countdown: index == root.lyric-countdown-index && root.lyric-countdown-dots > 0;
+
+                                height: 64px;
+                                background: transparent;
+
+                                Rectangle {
+                                    x: (parent.width - self.width) / 2;
+                                    y: parent.height - 5px;
+                                    width: 42px;
+                                    height: 3px;
+                                    border-radius: 2px;
+                                    background: Tokens.lyric-current;
+                                    opacity: lyric-row.current ? 1 : 0;
+                                    animate opacity { duration: 180ms; easing: ease-out; }
+                                }
+                                if lyric-row.countdown: Rectangle {
+                                    x: (parent.width - self.width) / 2;
+                                    y: 3px;
+                                    width: 36px;
+                                    height: 6px;
+                                    background: transparent;
+
+                                    Rectangle {
+                                        x: 0px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                    }
+                                    Rectangle {
+                                        x: 15px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                        opacity: root.lyric-countdown-dots >= 2 ? 1 : 0.16;
+                                    }
+                                    Rectangle {
+                                        x: 30px;
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Tokens.lyric-current;
+                                        opacity: root.lyric-countdown-dots >= 3 ? 1 : 0.16;
+                                    }
+                                }
+                                Text {
+                                    x: 18px;
+                                    y: lyric-row.countdown ? 8px : 0px;
+                                    width: parent.width - 36px;
+                                    height: parent.height - (lyric-row.countdown ? 8px : 0px);
+                                    text: lyric.text;
+                                    color: lyric-row.current ? Tokens.lyric-current : lyric-row.played ? Tokens.lyric-played : Tokens.lyric-upcoming;
+                                    font-size: lyric-row.current ? 28px : 16px;
+                                    font-weight: lyric-row.current ? 700 : 400;
+                                    letter-spacing: lyric-row.current ? 0.4px : 0px;
+                                    animate color, font-size, letter-spacing { duration: 180ms; easing: ease-out; }
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.follow-lyrics = true;
+                                        root.seek-lyric(lyric.at-seconds);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.separation-panel-open: Flickable {
+                        vertical-stretch: 1;
+                        viewport-height: max(self.height, root.separation-card-height);
+
+                        Rectangle {
+                            width: min(parent.width, 620px);
+                            height: root.separation-card-height;
+                            x: (parent.width - self.width) / 2;
+                            y: max(0px, (parent.height - self.height) / 2);
+                            border-radius: 8px;
+                            background: Tokens.panel;
+
+                            VerticalLayout {
+                                padding: 28px;
+                                spacing: 15px;
+
+                                Text {
+                                    text: Strings.separation-title;
+                                    color: Tokens.ink;
+                                    font-size: 24px;
+                                    font-weight: 650;
+                                }
+                                if root.separation-running: SeparationProgressCard {
+                                    song: root.separation-current-song;
+                                    stage: root.localize-message(root.separation-stage, root.language-index);
+                                    progress: root.separation-progress;
+                                    elapsed: root.format-time(root.separation-elapsed-seconds);
+                                    queued: root.separation-queued-count;
+                                }
+                                Text {
+                                    text: Strings.separation-copy;
+                                    color: Tokens.muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                SectionLabel { text: Strings.source-audio; }
+                                HorizontalLayout {
+                                    height: 40px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.separation-selected-count > 0 ? root.localize-message(root.separation-source, root.language-index) : Strings.no-audio-selected;
+                                        color: root.separation-selected-count > 0 ? Tokens.ink : Tokens.faint;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    ActionButton {
+                                        width: 116px;
+                                        height: 38px;
+                                        label: Strings.choose-audio;
+                                        enabled: !root.recording-active;
+                                        clicked => { root.choose-separation-source(); }
+                                    }
+                                }
+                                if root.separation-selection-message != "": CopyableMessage {
+                                    message: root.localize-message(root.separation-selection-message, root.language-index);
+                                    message-font-size: 11px;
+                                    copy-requested(message) => { root.copy-message(message); }
+                                }
+                                SectionLabel { text: Strings.separation-profile; }
+                                HorizontalLayout {
+                                    height: 36px;
+                                    spacing: 8px;
+                                    ActionButton {
+                                        width: 92px; label: Strings.profile-fast;
+                                        primary: root.separation-profile == 0;
+                                        enabled: true;
+                                        clicked => { root.separation-profile = 0; root.select-separation-profile(0); }
+                                    }
+                                    ActionButton {
+                                        width: 92px; label: Strings.profile-balanced;
+                                        primary: root.separation-profile == 1;
+                                        enabled: true;
+                                        clicked => { root.separation-profile = 1; root.select-separation-profile(1); }
+                                    }
+                                    ActionButton {
+                                        width: 92px; label: Strings.profile-quality;
+                                        primary: root.separation-profile == 2;
+                                        enabled: true;
+                                        clicked => { root.separation-profile = 2; root.select-separation-profile(2); }
+                                    }
+                                    ActionButton {
+                                        width: 92px; label: Strings.profile-compatible;
+                                        primary: root.separation-profile == 3;
+                                        enabled: true;
+                                        clicked => { root.separation-profile = 3; root.select-separation-profile(3); }
+                                    }
+                                }
+                                if root.separation-profile == 2: SectionLabel { text: Strings.quality-model; }
+                                if root.separation-profile == 2: quality-model := ComboBox {
+                                    height: 36px;
+                                    model: [Strings.quality-model-default, Strings.quality-model-kim, Strings.quality-model-bs];
+                                    current-index <=> root.quality-model-index;
+                                    accessible-label: Strings.quality-model;
+                                    selected => { root.select-quality-model(quality-model.current-index); }
+                                }
+                                if root.separation-profile == 2: Text {
+                                    text: Strings.quality-model-hint;
+                                    color: Tokens.faint;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: root.separation-existing ? Strings.replacement-warning : Strings.separator-runtime-hint;
+                                    color: root.separation-existing ? Tokens.danger : Tokens.faint;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
+                                Rectangle { height: 4px; }
+                                if root.separation-message != "" && !root.separation-running: CopyableMessage {
+                                    message: root.localize-message(root.separation-message, root.language-index);
+                                    message-color: root.separation-state == SeparationState.error ? Tokens.danger : root.separation-state == SeparationState.success ? Tokens.lyric-current : Tokens.muted;
+                                    message-font-size: 12px;
+                                    copy-requested(message) => { root.copy-message(message); }
+                                }
+                                if !root.separation-running && root.separation-queued-count > 0: Text {
+                                    text: Strings.netease-separation-queue-status + " " + root.separation-queued-count;
+                                    color: Tokens.muted;
+                                    font-size: 11px;
+                                }
+                                HorizontalLayout {
+                                    height: 42px;
+                                    Rectangle { horizontal-stretch: 1; }
+                                    ActionButton {
+                                        width: 174px;
+                                        height: 42px;
+                                        primary: true;
+                                        label: root.separation-selected-count > 1 ? (root.separation-existing ? Strings.queue-and-replace : Strings.queue-audio) + " (" + root.separation-selected-count + ")" : root.separation-existing ? Strings.replace-stems : Strings.start-separation;
+                                        enabled: root.separation-selected-count > 0 && !root.recording-active;
+                                        clicked => {
+                                            root.queue-selected-sources(root.separation-profile);
+                                        }
+                                    }
+                                }
+                                Rectangle { height: 1px; background: Tokens.raised; }
+                                SectionLabel { text: Strings.netease-title; }
+                                Text {
+                                    text: Strings.netease-copy;
+                                    color: Tokens.muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                if !root.netease-accepted: ActionButton {
+                                    height: 38px;
+                                    label: Strings.netease-enable;
+                                    clicked => { root.accept-netease-risk(); }
+                                }
+                                if root.netease-accepted: VerticalLayout {
+                                    spacing: 10px;
+                                    HorizontalLayout {
+                                        height: 38px;
+                                        spacing: 8px;
+                                        if !root.netease-logged-in: ActionButton {
+                                            width: 140px;
+                                            label: Strings.netease-login-chrome;
+                                            enabled: !root.netease-busy;
+                                            clicked => { root.netease-login-chrome(); }
+                                        }
+                                        if !root.netease-logged-in: ActionButton {
+                                            width: 112px;
+                                            label: Strings.netease-login-qr;
+                                            enabled: !root.netease-busy;
+                                            clicked => { root.netease-login-qr(); }
+                                        }
+                                        if root.netease-logged-in: Text {
+                                            text: root.netease-account;
+                                            color: Tokens.ink;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                        if root.netease-logged-in: ActionButton {
+                                            width: 90px;
+                                            label: Strings.netease-logout;
+                                            enabled: !root.netease-busy && !root.netease-download-running;
+                                            clicked => { root.netease-logout(); }
+                                        }
+                                    }
+                                    if root.netease-qr-visible: Image {
+                                        source: root.netease-qr;
+                                        width: 210px;
+                                        height: 210px;
+                                        image-fit: contain;
+                                        horizontal-alignment: center;
+                                    }
+                                    if root.netease-logged-in: HorizontalLayout {
+                                        height: 40px;
+                                        spacing: 8px;
+                                        LineEdit {
+                                            text <=> root.netease-query;
+                                            placeholder-text: Strings.netease-search-placeholder;
+                                            enabled: !root.netease-busy;
+                                            horizontal-stretch: 1;
+                                            accepted => { root.netease-search(root.netease-query); }
+                                        }
+                                        ActionButton {
+                                            width: 76px;
+                                            label: Strings.search;
+                                            enabled: !root.netease-busy;
+                                            clicked => { root.netease-search(root.netease-query); }
+                                        }
+                                        ActionButton {
+                                            width: 100px;
+                                            label: Strings.netease-liked;
+                                            enabled: !root.netease-busy;
+                                            clicked => { root.netease-liked(); }
+                                        }
+                                    }
+                                    if root.netease-logged-in: Rectangle {
+                                        height: 185px;
+                                        background: Tokens.canvas;
+                                        ListView {
+                                            for song[index] in root.netease-songs: Rectangle {
+                                                height: 40px;
+                                                property <color> check-color: song.queued ? Tokens.lyric-current : song.downloaded ? Tokens.downloaded : Tokens.cue;
+                                                background: song.selected || song.queued || song.downloaded ? Tokens.raised : transparent;
+                                                Rectangle {
+                                                    x: 8px; y: 11px;
+                                                    width: 17px; height: 17px;
+                                                    border-width: 1px;
+                                                    border-color: song.selected || song.queued || song.downloaded ? check-color : Tokens.muted;
+                                                    background: song.selected || song.queued || song.downloaded ? check-color : transparent;
+                                                }
+                                                if song.selected || song.queued || song.downloaded: Image {
+                                                    x: 11px; y: 14px;
+                                                    width: 11px; height: 11px;
+                                                    source: @image-url("../assets/check.svg");
+                                                    image-fit: contain;
+                                                    colorize: Tokens.stage;
+                                                }
+                                                Text {
+                                                    x: 33px; y: 4px;
+                                                    width: parent.width - 105px;
+                                                    text: song.title;
+                                                    color: song.available ? Tokens.ink : Tokens.faint;
+                                                    font-size: 12px;
+                                                    overflow: elide;
+                                                }
+                                                Text {
+                                                    x: 33px; y: 22px;
+                                                    width: parent.width - 105px;
+                                                    text: song.detail;
+                                                    color: Tokens.muted;
+                                                    font-size: 10px;
+                                                    overflow: elide;
+                                                }
+                                                if song.queued || song.downloaded: Text {
+                                                    x: parent.width - 68px; y: 11px;
+                                                    width: 60px;
+                                                    text: song.queued ? Strings.netease-queued : Strings.netease-downloaded;
+                                                    color: check-color;
+                                                    font-size: 10px;
+                                                    horizontal-alignment: right;
+                                                }
+                                                TouchArea {
+                                                    clicked => { root.netease-toggle-selection(index); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if root.netease-logged-in: ActionButton {
+                                        height: 40px;
+                                        label: Strings.netease-queue-selected + " (" + root.netease-selected-count + ")";
+                                        primary: true;
+                                        enabled: root.netease-can-queue;
+                                        clicked => { root.netease-queue-selected(); }
+                                    }
+                                    if root.netease-download-running || root.netease-queued-count > 0 || root.separation-queued-count > 0: VerticalLayout {
+                                        height: 34px;
+                                        spacing: 2px;
+                                        Text {
+                                            text: Strings.netease-queue-status + " " + root.netease-queued-count;
+                                            color: Tokens.muted;
+                                            font-size: 11px;
+                                        }
+                                        Text {
+                                            text: Strings.netease-separation-queue-status + " " + root.separation-queued-count;
+                                            color: Tokens.muted;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                                netease-status := CopyableMessage {
+                                    message: root.localize-message(root.netease-message, root.language-index);
+                                    visible: root.netease-message != "";
+                                    height: root.netease-message != "" ? 44px : 0px;
+                                    copy-requested(message) => { root.copy-message(message); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 212px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 14px;
+                padding-bottom: 14px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        width: 46px;
+                        text: root.format-time(root.position-seconds);
+                        color: Tokens.muted;
+                        font-family: "monospace";
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    timeline := Slider {
+                        enabled: root.playback-ready;
+                        minimum: 0;
+                        maximum: max(1, root.duration-seconds);
+                        value <=> root.position-seconds;
+                        released(value) => { root.seek-to(value); }
+                    }
+                    Text {
+                        width: 46px;
+                        text: root.format-time(root.duration-seconds);
+                        color: Tokens.muted;
+                        font-family: "monospace";
+                        font-size: 11px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 54px;
+
+                    VerticalLayout {
+                        width: 340px;
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            height: 34px;
+                            spacing: 6px;
+                            TrackPill {
+                                width: 70px;
+                                label: Strings.original;
+                                unavailable-reason: Strings.original-unavailable;
+                                active: root.active-track == TrackSelection.original;
+                                enabled: root.original-available;
+                                selected => { root.switch-track(TrackSelection.original); }
+                            }
+                            TrackPill {
+                                width: 92px;
+                                label: Strings.backing;
+                                unavailable-reason: Strings.backing-unavailable;
+                                active: root.active-track == TrackSelection.accompaniment;
+                                enabled: root.accompaniment-available;
+                                selected => { root.switch-track(TrackSelection.accompaniment); }
+                            }
+                            TrackPill {
+                                width: 70px;
+                                label: Strings.vocals;
+                                unavailable-reason: Strings.vocals-unavailable;
+                                active: root.active-track == TrackSelection.vocals;
+                                enabled: root.vocals-available;
+                                selected => { root.switch-track(TrackSelection.vocals); }
+                            }
+                            TrackPill {
+                                width: 70px;
+                                label: Strings.take;
+                                unavailable-reason: Strings.take-unavailable;
+                                active: root.active-track == TrackSelection.take;
+                                enabled: root.take-available && !root.take-busy;
+                                selected => { root.switch-track(TrackSelection.take); }
+                            }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    HorizontalLayout {
+                        width: 350px;
+                        height: 54px;
+                        spacing: 8px;
+                        alignment: center;
+                        ActionButton {
+                            width: 52px;
+                            height: 54px;
+                            label: Strings.seek-back;
+                            enabled: root.can-seek-back;
+                            clicked => { root.playback-command(PlaybackAction.back); }
+                        }
+                        TransportIconButton {
+                            icon: root.recording-state == RecordingState.recording ? @image-url("../assets/stop.svg") : @image-url("../assets/record.svg");
+                            accessible-name: root.recording-state == RecordingState.recording ? Strings.stop-recording : Strings.record;
+                            active: root.recording-state == RecordingState.recording;
+                            accent: true;
+                            enabled: !root.take-busy && (root.recording-state == RecordingState.recording || (root.recording-state == RecordingState.idle && root.accompaniment-available && !root.current-project-separating && !root.loading));
+                            clicked => { root.toggle-recording(); }
+                        }
+                        PlayButton {
+                            playing: root.playing;
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command(PlaybackAction.toggle); }
+                        }
+                        TransportIconButton {
+                            icon: @image-url("../assets/monitor.svg");
+                            accessible-name: root.monitoring ? Strings.monitor-on : Strings.monitor-off;
+                            active: root.monitoring;
+                            enabled: root.recording-state == RecordingState.idle || root.recording-state == RecordingState.recording;
+                            clicked => { root.toggle-monitoring(); }
+                        }
+                        ActionButton {
+                            width: 52px;
+                            height: 54px;
+                            label: Strings.seek-forward;
+                            enabled: root.can-seek-forward;
+                            clicked => { root.playback-command(PlaybackAction.forward); }
+                        }
+                        ActionButton {
+                            width: 42px;
+                            height: 54px;
+                            accessible-name: Strings.restart-playback;
+                            icon: @image-url("../assets/restart.svg");
+                            enabled: root.playback-ready;
+                            clicked => { root.playback-command(PlaybackAction.restart); }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    VerticalLayout {
+                        width: 298px;
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            height: 36px;
+                            spacing: 6px;
+                            ActionButton {
+                                width: 36px;
+                                label: Strings.decrease-key;
+                                enabled: root.playback-ready && root.key-shift > -6;
+                                clicked => { root.set-key(root.key-shift - 1); }
+                            }
+                            Rectangle {
+                                width: 40px;
+                                height: 36px;
+                                border-radius: 5px;
+                                background: Tokens.canvas;
+                                Text {
+                                    text: root.key-shift > 0 ? "+" + root.key-shift : root.key-shift;
+                                    color: Tokens.ink;
+                                    font-family: "monospace";
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            ActionButton {
+                                width: 36px;
+                                label: Strings.increase-key;
+                                enabled: root.playback-ready && root.key-shift < 6;
+                                clicked => { root.set-key(root.key-shift + 1); }
+                            }
+                            ActionButton {
+                                width: 50px;
+                                label: Strings.reset-key;
+                                enabled: root.playback-ready && root.key-shift != 0;
+                                clicked => { root.set-key(0); }
+                            }
+                            Rectangle {
+                                width: 16px;
+                                height: 36px;
+                                Image {
+                                    width: 16px;
+                                    height: 16px;
+                                    y: (parent.height - self.height) / 2;
+                                    source: @image-url("../assets/volume.svg");
+                                    image-fit: contain;
+                                    colorize: Tokens.muted;
+                                }
+                            }
+                            Slider {
+                                width: 90px;
+                                height: 36px;
+                                minimum: 0;
+                                maximum: 1;
+                                step: 0.01;
+                                value: root.volume;
+                                accessible-label: Strings.volume;
+                                changed(value) => { root.set-volume(value); }
+                                released(value) => { root.save-volume(value); }
+                            }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 34px;
+                    spacing: 10px;
+                    Text {
+                        width: 56px;
+                        text: Strings.take-effect;
+                        color: Tokens.muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    effect-select := ComboBox {
+                        width: 180px;
+                        height: 32px;
+                        model: [Strings.effect-clean, Strings.effect-studio, Strings.effect-ktv, Strings.effect-theater, Strings.effect-church];
+                        current-index <=> root.effect-index;
+                        enabled: root.recording-state == RecordingState.idle && !root.take-busy && !root.loading && !root.current-project-separating;
+                        accessible-label: Strings.take-effect;
+                        selected => { root.select-effect(effect-select.current-index); }
+                    }
+                    if root.take-options.length > 0: Text {
+                        width: 40px;
+                        text: Strings.existing-take;
+                        color: Tokens.muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    if root.take-options.length > 0: take-select := ComboBox {
+                        width: 200px;
+                        height: 32px;
+                        model: root.take-options;
+                        current-index <=> root.selected-take-index;
+                        enabled: root.recording-state == RecordingState.idle && !root.take-busy && !root.loading && !root.current-project-separating;
+                        accessible-label: Strings.existing-take;
+                        selected => { root.select-existing-take(take-select.current-index); }
+                    }
+                    // 用稳定的按钮容器定位，避免条件按钮的透明度包装重复叠加坐标。
+                    take-menu-anchor := Rectangle {
+                        width: root.take-options.length > 0 ? 32px : 0px;
+                        height: 32px;
+                        horizontal-stretch: 0;
+                        if root.take-options.length > 0: ActionButton {
+                            width: parent.width;
+                            height: parent.height;
+                            icon: @image-url("../assets/more.svg");
+                            accessible-name: Strings.take-actions;
+                            enabled: !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating;
+                            clicked => {
+                                root.show-take-menu(take-menu-anchor.absolute-position.x, take-menu-anchor.absolute-position.y);
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.localize-message(root.take-effect-message, root.language-index);
+                        color: Tokens.faint;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+    }
+
+    take-actions-popup := PopupWindow {
+        x: root.take-menu-x;
+        y: root.take-menu-y - self.height - 6px;
+        width: 200px;
+        height: 100px;
+        Rectangle {
+            background: Tokens.raised;
+            border-radius: 6px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+                ActionButton {
+                    label: Strings.play-selected-take;
+                    clicked => { root.play-from-take-menu(); }
+                }
+                ActionButton {
+                    label: Strings.delete-selected-take;
+                    clicked => { root.delete-from-take-menu(); }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.confirm-take-delete: Rectangle {
+        background: #15162bee;
+        TouchArea { clicked => { root.dismiss-take-deletion(); } }
+        Rectangle {
+            width: min(460px, parent.width - 80px);
+            height: 260px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Tokens.panel;
+            border-radius: 10px;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                Text { text: Strings.delete-take-title; color: Tokens.ink; font-size: 22px; font-weight: 650; }
+                Text { text: root.delete-take-name; color: Tokens.cue; font-size: 13px; overflow: elide; }
+                Text { text: Strings.delete-take-copy; color: Tokens.muted; font-size: 13px; wrap: word-wrap; vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    ActionButton {
+                        init => { self.focus-button(); }
+                        label: Strings.keep-take;
+                        primary: true;
+                        clicked => { root.dismiss-take-deletion(); }
+                    }
+                    ActionButton { label: Strings.delete-take; clicked => { root.confirm-delete-take(); shortcuts.focus(); } }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.settings: Rectangle {
+        background: #15162bee;
+        Rectangle {
+            width: min(560px, parent.width - 80px);
+            height: 490px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 10px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 15px;
+                HorizontalLayout {
+                    height: 34px;
+                    Text {
+                        text: Strings.settings;
+                        color: Tokens.ink;
+                        font-size: 22px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 34px;
+                        accessible-name: Strings.close;
+                        icon: @image-url("../assets/close.svg");
+                        clicked => { root.overlay = Overlay.none; }
+                    }
+                }
+                Text {
+                    text: Strings.settings-copy;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                SectionLabel { text: Strings.settings-projects-folder; }
+                HorizontalLayout {
+                    height: 40px;
+                    spacing: 10px;
+                    Text {
+                        text: root.projects-root == "" ? Strings.no-projects-folder : root.projects-root;
+                        color: Tokens.ink;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    ActionButton {
+                        width: 110px;
+                        label: Strings.change-folder;
+                        enabled: !root.recording-active && !root.netease-busy;
+                        clicked => {
+                            if (root.playing) { root.overlay = Overlay.confirm-root-change; }
+                            else { root.overlay = Overlay.none; root.view-mode = ViewMode.setup; }
+                        }
+                    }
+                }
+                SectionLabel { text: Strings.volume; }
+                Slider {
+                    height: 32px;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.01;
+                    value: root.volume;
+                    accessible-label: Strings.volume;
+                    changed(value) => { root.set-volume(value); }
+                    released(value) => { root.save-volume(value); }
+                }
+                SectionLabel { text: Strings.settings-default-profile; }
+                settings-profile := ComboBox {
+                    height: 36px;
+                    model: [Strings.profile-fast, Strings.profile-balanced, Strings.profile-quality, Strings.profile-compatible];
+                    current-index <=> root.separation-profile;
+                    accessible-label: Strings.settings-default-profile;
+                    selected => { root.select-separation-profile(settings-profile.current-index); }
+                }
+                SectionLabel { text: Strings.settings-language; }
+                settings-language := ComboBox {
+                    height: 36px;
+                    model: ["简体中文", "English", "繁體中文"];
+                    current-index <=> root.language-index;
+                    accessible-label: Strings.settings-language;
+                    selected => { root.select-language(settings-language.current-index); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                Text {
+                    text: Strings.settings-file + " " + root.settings-path;
+                    color: Tokens.faint;
+                    font-size: 10px;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.about: Rectangle {
+        background: #15162bee;
+        TouchArea { clicked => { root.overlay = Overlay.none; } }
+        Rectangle {
+            width: 430px;
+            height: 310px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            background: Tokens.raised;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                Text {
+                    text: Strings.about-title;
+                    color: Tokens.ink;
+                    font-size: 22px;
+                    font-weight: 650;
+                    horizontal-alignment: center;
+                }
+                AboutSlint { vertical-stretch: 1; }
+                Text {
+                    text: Strings.diagnostics-prefix + root.log-path;
+                    color: Tokens.muted;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+                ActionButton {
+                    label: Strings.close;
+                    clicked => { root.overlay = Overlay.none; }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.lyrics-search: Rectangle {
+        background: #15162bee;
+        Rectangle {
+            width: min(760px, parent.width - 80px);
+            height: min(590px, parent.height - 64px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 10px;
+            background: Tokens.panel;
+            border-width: 1px;
+            border-color: Tokens.line;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    height: 34px;
+                    Text {
+                        text: Strings.online-lyrics-title;
+                        color: Tokens.ink;
+                        font-size: 22px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 34px;
+                        height: 34px;
+                        accessible-name: Strings.close;
+                        icon: @image-url("../assets/close.svg");
+                        enabled: root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.dismiss-lyrics-search(); }
+                    }
+                }
+
+                Text {
+                    text: Strings.online-lyrics-copy;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    height: 42px;
+                    spacing: 10px;
+                    LineEdit {
+                        text <=> root.lyrics-query;
+                        placeholder-text: Strings.lyrics-query-placeholder;
+                        enabled: root.lyrics-panel-state != LyricsPanelState.preparing && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        accepted => {
+                            if (root.lyrics-query != "") { root.search-online-lyrics(root.lyrics-query); }
+                        }
+                    }
+                    ActionButton {
+                        width: 96px;
+                        height: 42px;
+                        label: root.lyrics-panel-state == LyricsPanelState.preparing ? Strings.preparing : root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching : Strings.search;
+                        primary: true;
+                        enabled: root.lyrics-query != "" && root.lyrics-panel-state != LyricsPanelState.preparing && root.lyrics-panel-state != LyricsPanelState.searching && root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.search-online-lyrics(root.lyrics-query); }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 32px;
+                    spacing: 8px;
+                    Text {
+                        text: root.localize-message(root.lyrics-panel-message, root.language-index);
+                        color: Tokens.muted;
+                        font-size: 11px;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    if root.lyrics-panel-message != "": ActionButton {
+                        width: 64px;
+                        height: 30px;
+                        label: Strings.copy;
+                        accessible-name: Strings.copy-message;
+                        clicked => { root.copy-message(root.localize-message(root.lyrics-panel-message, root.language-index)); }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Tokens.stage;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Tokens.line;
+
+                    if root.lyrics-candidates.length == 0: Text {
+                        text: root.lyrics-panel-state == LyricsPanelState.preparing ? Strings.preparing-lyrics : root.lyrics-panel-state == LyricsPanelState.searching ? Strings.searching-lyrics : Strings.no-lyrics-results;
+                        color: Tokens.faint;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.lyrics-candidates.length > 0: ListView {
+                        for candidate[index] in root.lyrics-candidates: candidate-row := Rectangle {
+                            height: 104px;
+                            background: index == root.selected-lyrics-candidate ? Tokens.raised : candidate-touch.has-hover ? #252742 : transparent;
+                            border-width: index == root.selected-lyrics-candidate ? 1px : 0px;
+                            border-color: Tokens.cue;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 5px;
+                                Text {
+                                    text: candidate.label;
+                                    color: Tokens.ink;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: candidate.origin;
+                                    color: Tokens.cue;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: candidate.preview;
+                                    color: Tokens.muted;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                }
+                            }
+                            candidate-touch := TouchArea {
+                                enabled: root.lyrics-panel-state == LyricsPanelState.results;
+                                clicked => { root.selected-lyrics-candidate = index; }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 38px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        width: 90px;
+                        label: Strings.cancel;
+                        enabled: root.lyrics-panel-state != LyricsPanelState.saving;
+                        clicked => { root.dismiss-lyrics-search(); }
+                    }
+                    ActionButton {
+                        width: 132px;
+                        label: root.lyrics-panel-state == LyricsPanelState.saving ? Strings.saving : Strings.use-selected-lyrics;
+                        primary: true;
+                        enabled: root.selected-lyrics-candidate >= 0 && root.lyrics-panel-state == LyricsPanelState.results;
+                        clicked => { root.save-lyrics-candidate(root.selected-lyrics-candidate); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.overlay == Overlay.confirm-root-change: Rectangle {
+        background: #15162bee;
+        Rectangle {
+            width: 440px;
+            height: 210px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            background: Tokens.raised;
+            border-width: 1px;
+            border-color: Tokens.line;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                Text {
+                    text: Strings.confirm-folder-title;
+                    color: Tokens.ink;
+                    font-size: 20px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: Strings.confirm-folder-copy;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    ActionButton {
+                        label: Strings.cancel;
+                        clicked => { root.overlay = Overlay.none; }
+                    }
+                    ActionButton {
+                        label: Strings.change-folder;
+                        primary: true;
+                        clicked => {
+                            root.overlay = Overlay.none;
+                            root.view-mode = ViewMode.setup;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+}

@@ -171,13 +171,10 @@ mod tests {
 
         let frame_delta = shifted.len().abs_diff(samples.len()) / 2;
         assert!(frame_delta <= 2, "duration differs by {frame_delta} frames");
-        assert!(
-            shifted
-                .chunks_exact(2)
-                .all(|frame| frame[1].abs() < 0.000_1)
-        );
-        let left = shifted
-            .chunks_exact(2)
+        let (shifted_frames, _) = shifted.as_chunks::<2>();
+        assert!(shifted_frames.iter().all(|frame| frame[1].abs() < 0.000_1));
+        let left = shifted_frames
+            .iter()
             .map(|frame| frame[0])
             .collect::<Vec<_>>();
         let frequency = estimate_frequency(&left[4_000..12_000], 8_000.0);

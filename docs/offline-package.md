@@ -3,6 +3,7 @@
 Windows x86_64、Linux x86_64 与 macOS Apple Silicon 的完整发行包包含：
 
 - K3 CLI/TUI 程序和原生 `k3-separator` 启动器；
+- Linux 与 Windows 包还包含 GUI；Linux 同时包含桌面入口与图标；
 - 独立 CPython 3.13.15，无需系统 Python、Rust 或 uv；
 - PyTorch 2.11 CPU runtime、ONNX Runtime、audio-separator 和全部运行依赖；
 - FFmpeg、默认 Fast / Balanced / Quality 模型及模型配置和元数据；
@@ -23,7 +24,7 @@ Intel macOS 的版本，无法使用本项目的 PyTorch 2.11 runtime。
 保留 `k3`、`k3-separator`、`runtime/` 与 `models/` 的相对位置；移动或改名整个目录
 不会破坏环境。不要只复制单个程序。
 
-Linux 完整包在 Ubuntu 22.04 runner 构建，要求 glibc 2.35 或更高及 ALSA 运行库
+Linux 完整包在 Ubuntu 24.04 runner 构建，要求 glibc 2.39 或更高及 ALSA、Fontconfig 运行库
 （Ubuntu/Debian 的 `libasound2`，新版本为 `libasound2t64`）；播放和录音还需要
 系统音频服务及可用设备。Windows 完整包面向 Windows 10/11 x86_64。
 macOS 完整包面向 macOS 14 或更高的 Apple Silicon 机器。
@@ -65,17 +66,17 @@ Linux 随包保留 `separate.sh`，批量分离时自动使用同包程序、wor
 
 ## 构建与验证
 
-构建机器需要 Rust、Python 3.11 或更高、uv 和网络；Linux 还需要 ALSA 开发库。
+构建机器需要 Rust、Python 3.11 或更高、uv 和网络；Linux 还需要 ALSA 与 Fontconfig 开发库。
 完整 runtime 必须在目标 OS 和架构上构建，Python wheel 不能跨平台复用。
 
 ```bash
-cargo build --release --locked --bins
+cargo build --release --locked --bins --package k3 --package k3-gui
 python3 scripts/build-runtime.py --output dist/runtime
 python3 scripts/package-dist.py linux k3-linux-x86_64 target/release/k3 dist/runtime
 python3 scripts/check-dist.py dist/k3-linux-x86_64.tar.gz
 ```
 
-macOS Apple Silicon 将打包参数换为 `macos k3-macos-aarch64`。
+macOS Apple Silicon 只构建 `--package k3`，将打包参数换为 `macos k3-macos-aarch64`。
 Windows 将参数换为 `windows k3-windows-x86_64 target/release/k3.exe`，使用
 `python` 运行这些脚本，产物为 ZIP。更方便的入口是 `make dist` 或 GitHub Actions。
 

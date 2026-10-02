@@ -12,16 +12,13 @@ use std::{
 };
 
 use rodio::cpal::{
-    FromSample, I24, Sample, SampleFormat, SizedSample, U24,
+    self, FromSample, I24, Sample, SampleFormat, SizedSample, U24,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use rodio::{ChannelCount, SampleRate, Source, cpal, mixer::Mixer};
+
+use crate::{AudioPlayer, MonitorControl, MonitorTap, audio_config};
 
 const WRITER_QUEUE_DEPTH: usize = 64;
-const MONITOR_BUFFER_MS: usize = 250;
-const MONITOR_GAIN: f32 = 4.0;
-
-use crate::audio_config;
 
 enum WriterMessage {
     Samples(Vec<f32>),
@@ -32,6 +29,7 @@ struct CaptureState {
     sender: SyncSender<WriterMessage>,
     overrun: Arc<AtomicBool>,
     captured_samples: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
     stream_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -49,7 +47,11 @@ pub struct RecordingTimelineAnchor {
 
 /// 按录音期间的播放位置锚点，把连续采集的人声放回歌曲时间轴。
 ///
-/// 后录制的片段会覆盖相同歌曲位置上的旧片段，用于录音中按歌词回退重唱。
+/// 后录制的片段会覆盖相同歌曲位置上的旧片段，用于录音中回退重唱。
+///
+/// # Errors
+///
+/// WAV 读取、时间轴换算、目标写入或源文件删除失败时返回错误。
 pub fn place_recording_on_timeline(
     source: &Path,
     destination: &Path,
@@ -116,9 +118,9 @@ fn duration_to_frames(duration: Duration, sample_rate: u32) -> Result<usize, Box
     Ok(usize::try_from(frames)?)
 }
 
-/// Captures the default input device while a dedicated thread writes float WAV.
+/// 从默认输入设备采集音频，并在专用线程中写入 float WAV。
 ///
-/// The device callback never performs filesystem I/O.
+/// 音频设备回调不会执行文件系统 I/O。
 pub struct AudioRecorder {
     stream: cpal::Stream,
     sender: SyncSender<WriterMessage>,
@@ -129,15 +131,20 @@ pub struct AudioRecorder {
     sample_rate: u32,
     channels: u16,
     destination: PathBuf,
-    monitor_enabled: Option<Arc<AtomicBool>>,
-    monitor_closed: Option<Arc<AtomicBool>>,
+    monitor_control: Option<MonitorControl>,
     captured_samples: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
+    /// 启动默认麦克风采集，可选地把实时监听接入已有播放器。
+    ///
+    /// # Errors
+    ///
+    /// 输入设备、流或 WAV 写入器无法建立时返回错误。
     pub fn start(
         destination: &Path,
-        monitor_mixer: Option<Mixer>,
+        monitor_player: Option<&AudioPlayer>,
         monitor_enabled: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let host = cpal::default_host();
@@ -188,20 +195,17 @@ impl AudioRecorder {
 
         let overrun = Arc::new(AtomicBool::new(false));
         let captured_samples = Arc::new(AtomicU64::new(0));
+        let paused = Arc::new(AtomicBool::new(false));
         let stream_error = Arc::new(Mutex::new(None));
-        let (monitor_tap, monitor_enabled, monitor_closed) =
-            monitor_mixer.map_or((None, None, None), |mixer| {
-                let (tap, source) = live_monitor(
-                    channels,
-                    sample_rate,
-                    monitor_enabled,
-                    audio_config::monitor_prefill_ms(),
-                );
-                let enabled = Arc::clone(&tap.enabled);
-                let closed = Arc::clone(&tap.closed);
-                mixer.add(source);
-                (Some(tap), Some(enabled), Some(closed))
-            });
+        let (monitor_tap, monitor_control) = monitor_player.map_or((None, None), |player| {
+            let (tap, control) = player.live_monitor(
+                channels,
+                sample_rate,
+                monitor_enabled,
+                audio_config::monitor_prefill_ms(),
+            );
+            (Some(tap), Some(control))
+        });
         let stream = match build_stream(
             &device,
             &config,
@@ -210,6 +214,7 @@ impl AudioRecorder {
                 sender: sender.clone(),
                 overrun: Arc::clone(&overrun),
                 captured_samples: Arc::clone(&captured_samples),
+                paused: Arc::clone(&paused),
                 stream_error: Arc::clone(&stream_error),
             },
             monitor_tap,
@@ -239,33 +244,42 @@ impl AudioRecorder {
             sample_rate,
             channels,
             destination: destination.to_path_buf(),
-            monitor_enabled,
-            monitor_closed,
+            monitor_control,
             captured_samples,
+            paused,
         })
     }
 
+    #[must_use]
     pub fn device(&self) -> &str {
         &self.device
     }
 
     pub fn set_monitoring(&self, enabled: bool) {
-        if let Some(state) = &self.monitor_enabled {
-            state.store(enabled, Ordering::Relaxed);
+        if let Some(control) = &self.monitor_control {
+            control.set_enabled(enabled);
         }
     }
 
+    /// 暂停或继续把麦克风样本写入当前 take；实时监听不受影响。
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Release);
+    }
+
+    #[must_use]
     pub fn captured_frames(&self) -> u64 {
         self.captured_samples.load(Ordering::Relaxed) / u64::from(self.channels)
     }
 
+    /// 停止采集并等待 WAV 写入器完成。
+    ///
+    /// # Errors
+    ///
+    /// 未采集到样本或写入器失败时返回错误。
     pub fn stop(self) -> Result<RecordingSummary, Box<dyn Error>> {
         drop(self.stream);
-        if let Some(enabled) = &self.monitor_enabled {
-            enabled.store(false, Ordering::Relaxed);
-        }
-        if let Some(closed) = &self.monitor_closed {
-            closed.store(true, Ordering::Relaxed);
+        if let Some(control) = &self.monitor_control {
+            control.close();
         }
         self.sender.send(WriterMessage::Finish)?;
         drop(self.sender);
@@ -350,6 +364,7 @@ where
         sender,
         overrun,
         captured_samples,
+        paused,
         stream_error: error_state,
     } = state;
     Ok(device.build_input_stream(
@@ -358,6 +373,9 @@ where
             let samples: Vec<f32> = data.iter().copied().map(f32::from_sample).collect();
             if let Some(monitor) = &mut monitor {
                 monitor.send(&samples);
+            }
+            if paused.load(Ordering::Acquire) {
+                return;
             }
             let sample_count = u64::try_from(samples.len()).unwrap_or(u64::MAX);
             match sender.try_send(WriterMessage::Samples(samples)) {
@@ -375,107 +393,6 @@ where
         },
         None,
     )?)
-}
-
-struct MonitorTap {
-    producer: rtrb::Producer<f32>,
-    enabled: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
-}
-
-impl MonitorTap {
-    fn send(&mut self, samples: &[f32]) {
-        if self.enabled.load(Ordering::Relaxed) {
-            let _ = self.producer.push_partial_slice(samples);
-        }
-    }
-}
-
-struct LiveMonitorSource {
-    consumer: rtrb::Consumer<f32>,
-    enabled: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
-    channels: ChannelCount,
-    sample_rate: SampleRate,
-    prefill_samples: usize,
-    started: bool,
-}
-
-impl Iterator for LiveMonitorSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.enabled.load(Ordering::Relaxed) {
-            while self.consumer.pop().is_ok() {}
-            self.started = false;
-            return (!self.closed.load(Ordering::Relaxed)).then_some(0.0);
-        }
-
-        if self.closed.load(Ordering::Relaxed) && self.consumer.is_empty() {
-            return None;
-        }
-        if !self.started {
-            if self.consumer.slots() < self.prefill_samples {
-                return Some(0.0);
-            }
-            self.started = true;
-        }
-
-        match self.consumer.pop() {
-            Ok(sample) => Some((sample * MONITOR_GAIN).clamp(-1.0, 1.0)),
-            Err(rtrb::PopError::Empty) => {
-                self.started = false;
-                Some(0.0)
-            }
-        }
-    }
-}
-
-impl Source for LiveMonitorSource {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> ChannelCount {
-        self.channels
-    }
-
-    fn sample_rate(&self) -> SampleRate {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
-fn live_monitor(
-    channels: u16,
-    sample_rate: u32,
-    enabled: bool,
-    prefill_ms: usize,
-) -> (MonitorTap, LiveMonitorSource) {
-    let samples_per_millisecond = sample_rate as usize * channels as usize / 1_000;
-    let capacity = (samples_per_millisecond * MONITOR_BUFFER_MS).max(1);
-    let prefill_samples = (samples_per_millisecond * prefill_ms).max(1);
-    let (producer, consumer) = rtrb::RingBuffer::new(capacity);
-    let enabled = Arc::new(AtomicBool::new(enabled));
-    let closed = Arc::new(AtomicBool::new(false));
-    let tap = MonitorTap {
-        producer,
-        enabled: Arc::clone(&enabled),
-        closed: Arc::clone(&closed),
-    };
-    let source = LiveMonitorSource {
-        consumer,
-        enabled,
-        closed,
-        channels: ChannelCount::new(channels).expect("CPAL channel count is non-zero"),
-        sample_rate: SampleRate::new(sample_rate).expect("CPAL sample rate is non-zero"),
-        prefill_samples,
-        started: false,
-    };
-    (tap, source)
 }
 
 fn select_input_config(
@@ -509,17 +426,11 @@ fn select_input_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RecordingTimelineAnchor, live_monitor, place_recording_on_timeline, select_input_config,
-    };
-    use rodio::cpal::{
-        SampleFormat, SupportedBufferSize, SupportedStreamConfig, SupportedStreamConfigRange,
-    };
-    use std::sync::atomic::Ordering;
+    use super::{RecordingTimelineAnchor, place_recording_on_timeline};
     use std::time::Duration;
 
     #[test]
-    fn later_recording_segment_overwrites_the_revisited_song_position() {
+    fn later_segment_overwrites_revisited_song_position() {
         let sandbox = tempfile::tempdir().unwrap();
         let raw = sandbox.path().join("raw.wav");
         let aligned = sandbox.path().join("aligned.wav");
@@ -560,68 +471,5 @@ mod tests {
             vec![1.0, 2.0, 5.0, 6.0]
         );
         assert!(!raw.exists());
-    }
-
-    #[test]
-    fn live_monitor_can_be_toggled_and_applies_monitor_gain() {
-        let (mut tap, mut source) = live_monitor(1, 1_000, false, 100);
-        tap.send(&[0.25]);
-        assert_eq!(source.next(), Some(0.0));
-
-        tap.enabled.store(true, Ordering::Relaxed);
-        let mut samples = vec![0.0; 100];
-        samples[0] = 0.125;
-        samples[1] = -0.25;
-        tap.send(&samples);
-        assert_eq!(source.next(), Some(0.5));
-        assert_eq!(source.next(), Some(-1.0));
-
-        tap.enabled.store(false, Ordering::Relaxed);
-        assert_eq!(source.next(), Some(0.0));
-    }
-
-    #[test]
-    fn live_monitor_ends_when_recording_closes() {
-        let (tap, mut source) = live_monitor(1, 44_100, true, 100);
-        tap.closed.store(true, Ordering::Relaxed);
-        assert_eq!(source.next(), None);
-    }
-
-    #[test]
-    fn live_monitor_prefills_before_playing_input() {
-        let (mut tap, mut source) = live_monitor(1, 1_000, true, 100);
-        tap.send(&[0.125]);
-        assert_eq!(source.next(), Some(0.0));
-
-        tap.send(&vec![0.125; 99]);
-        assert_eq!(source.next(), Some(0.5));
-    }
-
-    #[test]
-    fn prefers_native_voice_capture_over_low_quality_default() {
-        let default =
-            SupportedStreamConfig::new(2, 8_000, SupportedBufferSize::Unknown, SampleFormat::F32);
-        let supported = [
-            SupportedStreamConfigRange::new(
-                2,
-                44_100,
-                44_100,
-                SupportedBufferSize::Unknown,
-                SampleFormat::F32,
-            ),
-            SupportedStreamConfigRange::new(
-                1,
-                44_100,
-                44_100,
-                SupportedBufferSize::Unknown,
-                SampleFormat::I16,
-            ),
-        ];
-
-        let selected = select_input_config(default, &supported);
-
-        assert_eq!(selected.channels(), 1);
-        assert_eq!(selected.sample_rate(), 44_100);
-        assert_eq!(selected.sample_format(), SampleFormat::I16);
     }
 }

@@ -31,6 +31,11 @@ impl RecordingSession {
         &self.project
     }
 
+    /// Returns the project for a short persistence operation.
+    pub fn project_mut(&mut self) -> &mut Project {
+        &mut self.project
+    }
+
     #[must_use]
     pub fn state(&self) -> RecordingState {
         self.state

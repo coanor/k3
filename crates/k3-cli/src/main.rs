@@ -1,24 +1,26 @@
-mod audio;
-mod audio_config;
-mod effects;
 mod library;
-mod lyrics_download;
-mod mix;
-mod pitch;
 mod python_separator;
-mod recorder;
 mod tui;
 
-use std::{error::Error, path::PathBuf};
+use k3::netease;
+
+use std::{
+    error::Error,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
     CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationFailure,
-    SeparationProfile, SongPreparation,
+    SeparationProfile, SongPreparation, VocalEffectPreset,
 };
 
-use crate::mix::render_take_preview;
-use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
+use crate::python_separator::{
+    PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
+    separation_output_paths,
+};
+use k3_app::render_and_save_take;
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -82,6 +84,17 @@ enum Command {
         take: String,
         #[arg(long, value_enum)]
         preset: EffectArgument,
+    },
+    /// 删除指定录音及其干声、混音文件；确认提示默认保留。
+    DeleteTake {
+        #[arg(long)]
+        project: PathBuf,
+        /// 录音 ID；latest 表示最新一条录音。
+        #[arg(long, default_value = "latest")]
+        take: String,
+        /// 明确确认删除，跳过交互提示。
+        #[arg(long)]
+        yes: bool,
     },
     /// Open the terminal interface. Press q to exit.
     Tui {
@@ -186,6 +199,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             no_preserve_backing_vocals,
         } => {
             let mut project = repository.open(&project)?;
+            let previous_outputs = separation_output_paths(&project);
             let separator = PythonStemSeparator::new(PythonSeparatorConfig {
                 worker,
                 model_dir,
@@ -199,8 +213,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             });
             let mut preparation = SongPreparation::new(separator);
             let result = prepare_project(&mut preparation, &mut project, profile.into(), overwrite);
-            repository.save(&project)?;
-            result?;
+            persist_preparation(repository, &mut project, &previous_outputs, result)?;
             print_summary(&project);
         }
         Command::Effect {
@@ -208,22 +221,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             take,
             preset,
         } => {
-            let mut project = repository.open(&project)?;
-            let take_id = if take == "latest" {
-                project
-                    .takes()
-                    .last()
-                    .ok_or("project has no recorded takes")?
-                    .id()
-                    .to_owned()
-            } else {
-                take
-            };
-            let preset = preset.into();
-            let rendered = render_take_preview(&project, &take_id, preset)?;
-            project.set_take_render(&take_id, preset, rendered.relative_path)?;
-            repository.save(&project)?;
-            println!("{}", rendered.path.display());
+            apply_take_effect(&project, &take, preset.into())?;
         }
         Command::Tui {
             project,
@@ -249,8 +247,83 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 )?;
             }
         }
+        Command::DeleteTake { project, take, yes } => {
+            delete_take(&project, &take, yes)?;
+        }
     }
     Ok(())
+}
+
+fn apply_take_effect(
+    root: &Path,
+    take: &str,
+    preset: VocalEffectPreset,
+) -> Result<(), Box<dyn Error>> {
+    let mut project = FileProjectRepository.open(root)?;
+    let take_id = if take == "latest" {
+        project
+            .takes()
+            .last()
+            .ok_or("project has no recorded takes")?
+            .id()
+            .to_owned()
+    } else {
+        take.to_owned()
+    };
+    let rendered = render_and_save_take(&mut project, &take_id, preset)?;
+    if let Some(warning) = rendered.cleanup_warning {
+        eprintln!("k3: warning: {warning}");
+    }
+    println!("{}", rendered.path.display());
+    Ok(())
+}
+
+fn delete_take(root: &Path, take: &str, yes: bool) -> Result<(), Box<dyn Error>> {
+    let loaded = FileProjectRepository.open(root)?;
+    let take_id = if take == "latest" {
+        loaded
+            .takes()
+            .last()
+            .ok_or("project has no recorded takes")?
+            .id()
+            .to_owned()
+    } else {
+        loaded
+            .take(take)
+            .ok_or_else(|| format!("take is not part of this project: {take}"))?;
+        take.to_owned()
+    };
+    if !yes {
+        print!("Delete take {take_id} and its dry/mix audio? [y/N] ");
+        io::stdout().flush()?;
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+            println!("Take kept");
+            return Ok(());
+        }
+    }
+    let deleted = FileProjectRepository.delete_take(root, &take_id, loaded.document_revision())?;
+    println!("Deleted take {take_id}");
+    if let Some(warning) = deleted.cleanup_warning {
+        eprintln!("k3: warning: {warning}");
+    }
+    Ok(())
+}
+
+fn persist_preparation(
+    repository: FileProjectRepository,
+    project: &mut Project,
+    previous_outputs: &[PathBuf],
+    result: Result<(), SeparationFailure>,
+) -> Result<(), Box<dyn Error>> {
+    let produced_outputs = separation_output_paths(project);
+    if let Err(error) = repository.save(project) {
+        cleanup_obsolete_outputs(project.root(), &produced_outputs, previous_outputs);
+        return Err(error.into());
+    }
+    cleanup_obsolete_outputs(project.root(), previous_outputs, &produced_outputs);
+    result.map_err(Into::into)
 }
 
 fn prepare_project(
@@ -295,11 +368,11 @@ fn open_tui(
             return Err("--latency-ms must be between -1000 and 1000".into());
         }
         project.set_latency_compensation_ms(latency_ms);
-        repository.save(&project)?;
+        repository.save(&mut project)?;
     }
     if let Some(key) = key {
         project.set_key_shift_semitones(key)?;
-        repository.save(&project)?;
+        repository.save(&mut project)?;
     }
     tui::open(project, None, !no_lyrics_download, netease_lyrics)
 }

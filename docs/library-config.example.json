@@ -11,7 +11,6 @@
     "log_dir": "/home/tan/.local/state/k3/logs",
     "profile": "fast",
     "model": "uvr-mdx-karaoke-2",
-    "segment_size": 128,
     "autocast": false,
     "preserve_backing_vocals": true
   },
@@ -21,5 +20,8 @@
   "lyrics": {
     "auto_download": true,
     "netease_fallback": false
+  },
+  "netease": {
+    "enabled": false
   }
 }

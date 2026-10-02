@@ -1,0 +1,23 @@
+[package]
+name = "k3-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hound = "3.5.1"
+k3-audio = { path = "../k3-audio" }
+k3-core = { path = "../k3-core" }
+lofty = "0.24.0"
+rodio = "0.22.2"
+rtrb = "0.3.4"
+serde.workspace = true
+thiserror.workspace = true
+ureq = { version = "3.4.0", features = ["json"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
