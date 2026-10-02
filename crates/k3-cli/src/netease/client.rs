@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fmt, fs,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -184,6 +185,33 @@ impl NeteaseClient {
             path: paths.destination,
             quality: source.quality,
         })
+    }
+
+    pub fn downloaded_song_path(
+        &self,
+        music_root: &Path,
+        song_id: u64,
+    ) -> Result<Option<std::path::PathBuf>, NeteaseError> {
+        let index_path = music_root
+            .join("NetEase")
+            .join(".k3-netease-downloads.json");
+        Ok(DownloadIndex::load(&index_path)?.cached_path(song_id))
+    }
+
+    pub fn downloaded_song_ids(
+        &self,
+        music_root: &Path,
+        song_ids: &[u64],
+    ) -> Result<HashSet<u64>, NeteaseError> {
+        let index_path = music_root
+            .join("NetEase")
+            .join(".k3-netease-downloads.json");
+        let index = DownloadIndex::load(&index_path)?;
+        Ok(song_ids
+            .iter()
+            .copied()
+            .filter(|id| index.cached_path(*id).is_some())
+            .collect())
     }
 
     fn select_audio_source(

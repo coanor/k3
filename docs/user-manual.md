@@ -1,7 +1,7 @@
 # K3 用户手册
 
-K3 是一个本地优先的终端 K 歌工作区。目前可创建歌曲工程、导入 LRC
-歌词、使用本地 GPU 模型分离人声和伴奏，并在 TUI 中播放和切换音轨。
+K3 是一个本地优先的 K 歌工作区。目前可创建歌曲工程、导入 LRC 歌词、使用本地 GPU
+模型分离人声和伴奏，并在 Linux GUI 或 TUI 中播放、切换音轨和查看同步歌词。
 
 本文以 Ubuntu 24.04、Windows WSL2 和 Windows 11 原生环境为当前支持环境。
 Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离。GitHub Actions 会生成 macOS
@@ -11,11 +11,14 @@ Intel 与 Apple Silicon 二进制包，但 macOS 的音频设备和模型安装�
 
 基础程序需要：
 
-- Rust stable；
+- Rust 1.99.0（仅从源码构建需要，版本由仓库的 `rust-toolchain.toml` 固定）；
 - ALSA 开发库（Ubuntu/WSL 使用 `sudo apt install libasound2-dev`）；
 - Python 3.10 或更高版本；
 - `uv`；
 - 足够存放模型和 WAV stem 的磁盘空间。
+
+Linux GUI 还需要可用的 Wayland 或 X11 会话，以及支持 OpenGL ES 2.0 或更高版本的
+图形驱动。GUI 不提供软件渲染 fallback；桌面后端不可用时可继续使用 TUI。
 
 Windows 原生分离需要 64 位 Python 3.11、PowerShell 5.1 或更高版本以及网络。
 GPU 模式还需要 NVIDIA 显卡与支持 CUDA 12.8 的驱动；安装脚本会在发行目录创建
@@ -43,6 +46,7 @@ cargo build --release
 
 ```text
 target/release/k3
+target/release/k3-gui
 ```
 
 开发时也可以把后文的 `k3` 替换为：
@@ -56,6 +60,96 @@ cargo run -p k3 --
 ```bash
 target/release/k3 --help
 ```
+
+启动桌面界面：
+
+```bash
+target/release/k3-gui
+```
+
+首次启动只需选择已有 K3 工程所在目录。GUI 与 CLI/TUI 共享工程目录中的
+`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、默认分离档位与 Quality 模型、界面语言、
+窗口尺寸和上次工程保存在独立的 `gui.json` 中，不复用 TUI 配置。
+点击左上角 K3 标志右侧、信息图标左侧的齿轮（设置），可查看配置文件路径、更换工程目录并调整音量、默认分离档位和语言；
+录音效果仍使用播放区底部唯一的 `Effect` 下拉框。设置自动保存，无需手改 JSON。
+语言可在简体中文、English 和繁體中文之间即时切换，旧版 `gui.json` 默认使用英文。
+GUI 再次启动时会加载上次工程，但始终从头保持暂停。
+顶层信息按钮会打开 About 界面，其中显示 GUI 滚动诊断日志的位置。音频设备、媒体读取和
+工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
+回退命令。Windows 双击 `k3-gui.exe` 不会附带命令行窗口；启动失败时会显示含诊断日志路径的
+错误弹窗。GUI 后台分离也不会弹出命令行窗口。维护者的平台与性能验收步骤见
+[GUI 验收记录](gui-acceptance.md)。
+
+要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
+Quality 或 Compatible 档位，再点击 `Queue selected`。首次默认使用 Quality，之后记住
+上次选择的档位；所选歌曲按顺序进入
+分离队列，也可以在分离期间继续选歌追加。只选一首时按钮显示 `Create and separate`。
+选择 Quality 时可进一步选择 `Runtime default`、`Kim Vocal 2` 或 `BS RoFormer 1297`。
+`Runtime default` 沿用分离运行包 `config.json` 指定的模型；未指定时使用 worker 的
+Quality 默认模型。新选项会随 GUI 设置自动保存，入队时固定到每首任务；
+更改后要对已有工程点击 `Replace stems` 才会生成新分轨。不同模型可能对特定乐器有不同
+误分，但不能保证某一款对所有歌曲更好；首次使用新模型可能需要下载权重。
+分离时，备歌页和左侧工程列表下方都会显示当前歌曲、处理阶段、已用时和等待歌曲数。
+主唱分离与和声分离显示各自的真实阶段百分比，切换阶段时百分比重新开始；加载模型、
+写入音轨和保存工程时显示活动条。这里显示的是当前阶段进度，并非整首歌的预计完成百分比。
+按 `Esc` 可从备歌页返回歌词；后台下载与分离任务继续执行，左侧进度卡仍保持可见。
+点击左侧进度卡可重新打开备歌页。
+每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
+（Windows），需要先按第 3 节安装分离 worker；首次使用所选模型时可能下载权重。
+若批量选择中有多个文件映射到同名工程，GUI 会跳过重复项。批量选择也可包含已有工程，
+界面会显示替换警告和 `Queue & replace` 按钮；只选一首已有工程时按钮为 `Replace stems`。
+替换使用该工程已保存的源音频，
+不会重新导入所选文件，也不会删除歌词和 take。若当前已载入该工程，替换前会停止并释放音频；
+该首分离结束后自动重新载入，保持暂停；若期间已切到其他工程，则保留当前选择。
+分离期间可切换、播放和录制其他已有工程；正在重分离的工程显示“分离中”，完成前暂不能打开或录制。
+队列会继续处理其他工程；若下一首要替换正在录音或渲染 take 的工程，会等待保存结束再继续。
+运行期间暂不能切换工程目录。失败时可在 About 中找到
+GUI 诊断日志；若只复制 `k3-gui` 二进制而未保留同包的分离脚本，界面无法启动分轨。
+
+右侧 `Separate song` 下方也提供网易云音乐实验性来源。首次使用须阅读提示并点击
+`Enable experimental NetEase source`；该来源使用未公开网页接口，可能随时失效，
+仅应下载账号有权访问的歌曲。可从 Chrome 导入已有登录，或点击 `QR login` 后用网易云音乐
+手机 App 扫码确认。GUI 与 TUI 使用同一份本地会话；登录凭据不会写入工程。登录后可搜索歌曲
+或打开 `Liked songs`，点击多首歌曲前的方框，再点 `Queue selected songs`。下载期间仍可
+继续搜索、选择其他歌曲并追加到队列；同一首歌不会重复入队。下载任务依次执行，每首下载
+完成后进入逐首执行的分离队列，下一首下载可与当前分离同时进行；
+下载的音频保存在工程根目录的 `.netease-audio/NetEase`。搜索结果中，待排队的勾为珊瑚色、
+已入队的勾为黄色、已下载的勾为绿色；
+`DOWNLOADED` 只表示本地音频存在，不表示分离成功。同名工程已存在且分离成功时不会覆盖工程或
+自动改用新下载的音频；若工程尚未分离成功、保存的音源与缓存下载完全一致，
+再次加入队列会重试分离。`Replace stems` 仍使用该工程保存的旧音源；若要用
+下载的新音频创建工程，须先移走同名旧工程。不可用歌曲或会话失效会在右栏显示原因；
+会话失效时下载队列暂停，重新登录后继续。关闭窗口会取消仍在进行的下载。
+网易云状态、分轨状态及其他主要错误提示旁的 `Copy` 按钮可将完整文字复制到剪贴板，
+便于反馈被界面截断的错误。
+
+GUI 打开具有伴奏音轨的工程后，可点击底部 Play 左侧的 Record 圆形图标，或按 `r`，从头播放伴奏并使用
+系统默认麦克风录音。开始录音时会默认开启实时麦克风监听；点击 Play 右侧的 Monitor 耳机图标或按 `m`
+可随时关闭或重新开启，建议佩戴耳机以避免扬声器回授。再次点击变为 Stop 的录音图标或按 `r` 会停止并保存录音。录音写入
+`takes/take-<时间>-dry.wav`，同时更新 `project.json`；保存后 GUI 会重新加载工程，点击
+`Take` 或按 `4` 可立即试听当前所选 take 的 mix；若 mix 不存在则回退到 dry。
+如果提前结束录音，mix 中的伴奏仍会播放到歌曲结束。
+底部唯一的 `Effect` 下拉框可选择 `Clean`、`Studio`、`KTV`、`Theater` 或 `Church`。
+选中后立即写入 GUI 的 `gui.json` 中的 `recording.default_effect`，之后开始的 GUI 录音会使用该效果；
+如果当前有 take，K3 同时在后台用原始 dry 重建它的 mix，更新 `project.json` 中该 take 的效果并播放。
+停止新录音时也会用选定效果渲染 mix，原始 dry 不会被覆盖。
+`Take` 下拉框可选择任何已有录音。切换 take 时，K3 会在需要时为新选中的 take
+应用同一效果并播放。渲染期间不能切换 take 或开始录音。
+
+停止录音后默认自动保存，无需再确认。要删除录音，先在 `Take` 下拉框选中它，再点击旁边的
+`⋯` 录音操作菜单，选择“删除所选录音”；也可以按 `Delete`。确认框会显示录音 ID，默认按钮是
+“保留录音”，按 `Enter` 或 `Esc` 均保留。明确点击“删除录音”后，K3 会释放播放占用，
+删除这条 take 的 dry、mix 文件及工程记录，并选中相邻的剩余录音；删除最后一条后可继续录新 take。
+其他录音、歌曲、分轨、歌词与导出文件保持不变；其他 take 共用的音频文件也会保留。
+
+录音期间仍可调整进度、暂停或继续、切换音轨、升降调、调整音量和切换监听；工程切换会暂时禁用。若关闭窗口，
+正在进行的录音会先停止并自动保存，保存和混音完成后程序退出。伴奏、默认输入设备或输出设备不可用时，GUI 会在
+错误条和诊断日志中显示原因。
+
+打开工程后，点击歌词区右上角的 `Find lyrics` 或按 `l` 可打开在线歌词搜索。输入歌名或
+“歌名 - 歌手”后，GUI 会依次查询 LRCLIB 与网易云音乐，并只展示包含同步时间戳且时长
+匹配的候选。点击候选可预览前三行；确认后点击 `Use this version`，歌词会原子写入工程并
+立即重新加载。搜索、取消、无匹配或保存失败都不会覆盖当前歌词，录音期间不能启动搜索。
 
 ### 2.1 Makefile
 
@@ -111,9 +205,45 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Windows 包使用静态 MSVC C runtime。Linux 包包含 `separate.sh`；Windows 包包含
-`separate.ps1` 和 `install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
+Windows 包使用静态 MSVC C runtime。Linux 包包含 `k3-gui`、桌面入口、图标和
+`separate.sh`；Windows 包包含 `k3-gui.exe`、`separate.ps1` 和
+`install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
 因此只包含 `k3`、README 和文档，不包含尚未验证的 Python 分离环境。
+
+Linux 包不执行需要 root 权限的安装器。需要在桌面启动器中显示 K3 时，可从解压后的
+包目录手动安装用户级入口：
+
+```bash
+install -Dm755 k3-gui ~/.local/bin/k3-gui
+install -Dm644 share/applications/k3.desktop ~/.local/share/applications/k3.desktop
+install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/k3.svg
+```
+
+桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
+登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
+
+### 2.3 私有源码仓库发布公开二进制
+
+私有仓库中的 GitHub Release 只有获准访问仓库的人能下载。若要让所有人下载发行包、
+同时保持 `coanor/k3` 私有，可另建一个只有说明文件的公开仓库（例如
+`coanor/k3-binaries`），将四个平台的发行包上传到该仓库的 Release。公开仓库自动生成的
+源码压缩包只包含公开仓库自身的内容，不包含私有 `k3` 源码。
+
+1. 创建公开仓库，例如 `gh repo create coanor/k3-binaries --public --add-readme`。
+2. 创建仅授权该公开仓库、具有 **Contents: Read and write** 权限的 GitHub fine-grained
+   personal access token。按 [GitHub 官方说明](https://docs.github.com/en/rest/releases/releases)
+   配置令牌的到期时间和仓库范围；私有仓库 workflow 自带的 `GITHUB_TOKEN` 不能写入另一仓库。
+3. 在私有 `coanor/k3` 仓库设置 Actions 变量 `PUBLIC_RELEASE_REPO=coanor/k3-binaries`，
+   并将令牌保存为 Actions secret `PUBLIC_RELEASE_TOKEN`。可使用 `gh variable set` 和
+   `gh secret set`，也可在仓库 Settings → Secrets and variables → Actions 中配置。
+4. 将待发布的版本合并到主分支、推送新的 `v*` tag。`Build distributions` 会先测试、
+   构建并校验发行包，然后保留原有私有 Release，同时向公开仓库发布同名 Release。
+   公开 Release 若已存在，任务会报错，不会悄悄覆盖已发布的文件。
+
+未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。发行包包含 README、文档、
+分离脚本和运行所需的 Python worker 文件；公开发布前应检查这些内容。仓库目前尚未
+配置公开发行目标及令牌，因此只完成了发布流程，尚未公开任何发行包。
 
 ## 3. 安装本地分离 worker
 
@@ -189,13 +319,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 脚本通过 Windows Python Launcher（`py.exe`）寻找 Python 3.11，创建
 `.venv-separator`，安装模型运行环境，并将 worker 和模型目录写入同目录的
-`config.json`。默认模型目录为 `%LOCALAPPDATA%\k3\models`；模型在第一次分离时
-下载。检查 worker：
+`config.json`。默认模型目录为发行包内的 `models`，分离日志位于 `logs`，安装缓存位于
+`.cache`；可在运行安装脚本前用 `K3_MODEL_DIR`、`K3_LOG_DIR` 和 `PIP_CACHE_DIR`
+指定其他盘符。模型在第一次分离时下载。检查 worker：
 
 ```powershell
+$config = Get-Content .\config.json -Raw | ConvertFrom-Json
 '{"id":"health","method":"health"}' |
   .\.venv-separator\Scripts\k3-separator.exe `
-    --model-dir "$env:LOCALAPPDATA\k3\models"
+    --model-dir $config.separation.model_dir
 ```
 
 用 `separate.ps1` 创建同名 project 并分离。省略 `-d` 时读取同目录
@@ -211,10 +343,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 参数位置不固定。环境变量 `K3_OUTPUT_DIR`、`K3_BIN`、`K3_WORKER`、
 `K3_PROFILE`、`K3_MODEL`、`K3_MODEL_DIR`、`K3_SEGMENT_SIZE`、
-`K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。默认保留和声，
-因此输出包含 `vocals.wav`、`backing-vocals.wav` 和含和声的
-`accompaniment.wav`。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖
-stem，但保留歌词、take、效果和其他 project 文件。
+`K3_AUTOCAST` 和 `K3_PRESERVE_BACKING_VOCALS` 可临时覆盖配置。
+当 `K3_PROFILE` 与配置中的 `separation.profile` 不同时，脚本使用新档位的默认模型和
+分块大小，不沿用原档位专用的 `separation.model` 与 `separation.segment_size`；
+仍可用 `K3_MODEL`、`K3_SEGMENT_SIZE` 显式指定。默认保留和声，因此输出包含版本化的
+`vocals-<id>.wav`、`backing-vocals-<id>.wav` 和含和声的
+`accompaniment-<id>.wav`。脚本会从 `project.json` 的 separation manifest 输出本次
+实际文件路径。目标 project 已存在时，再次执行同一条命令会按当前配置覆盖 stem，
+但保留歌词、take、效果和其他 project 文件。
 
 ### 3.2 三栏媒体库配置
 
@@ -499,17 +635,20 @@ project。成功后 provenance 更新为新模型和参数；失败时仍保留�
 成功后生成：
 
 ```text
-stems/vocals.wav
-stems/accompaniment.wav
+stems/vocals-<id>.wav
+stems/accompaniment-<id>.wav
 ```
 
 启用保留和声模式时还会生成：
 
 ```text
-stems/vocals.wav          # 主唱
-stems/backing-vocals.wav  # 单独和声
-stems/accompaniment.wav   # 纯伴奏加回和声
+stems/vocals-<id>.wav          # 主唱
+stems/backing-vocals-<id>.wav  # 单独和声
+stems/accompaniment-<id>.wav   # 纯伴奏加回和声
 ```
+
+`<id>` 是每次成功分离生成的唯一版本标识。请以 `project.json` 的 separation manifest
+和包装脚本成功后打印的路径为准；重新分离成功后，旧版本会被新 manifest 原子替换。
 
 `project.json` 会把状态保存为 `ready`，并记录：
 
@@ -647,6 +786,24 @@ target/release/k3 tui --project ./songs/example --key -2
 - `Esc`：取消尚未开始的录音预备状态；
 - `q`：退出。
 
+### 删除已保存录音
+
+GUI 与 TUI 停止录音后均自动保存，之后可以删除当前选中的 take。CLI 也提供独立命令：
+
+```bash
+# 默认针对最新录音；提示时直接回车会保留
+k3 delete-take --project ./songs/example
+
+# 删除指定旧录音；仍需在提示中输入 y
+k3 delete-take --project ./songs/example --take take-1786272214377
+
+# 明确确认删除最新录音，供脚本使用
+k3 delete-take --project ./songs/example --take latest --yes
+```
+
+删除会同时更新 `project.json` 并清理该 take 的原始干声与混音。保存工程失败时会恢复暂存的音频文件；
+若确认期间工程被其他程序修改，操作会拒绝删除，重新打开工程后再选择即可。删除后不提供撤销。
+
 ### 人声效果与录后修改
 
 每个 take 独立保存一个人声效果预设：
@@ -665,7 +822,8 @@ target/release/k3 tui --project ./songs/example --key -2
 - `[` / `]`：循环选择已有 take；
 - `e` 后按 `1`～`5`：直接选择 `clean`、`studio`、`ktv`、`theater` 或
   `church`，重新生成 mix 并立即播放；按 `Esc` 取消选择；
-- `4`：播放当前选择的 take mix。
+- `4`：播放当前选择的 take mix；
+- `Delete`：请求删除当前选择的 take，确认框中按 `y` 才删除，`Enter`、`Esc`、`n` 或 `q` 均保留。
 
 如果修改 Key 后播放旧 take，K3 会使用原始 dry 人声、当前效果和新 Key 的伴奏
 自动重建 mix，再开始播放。dry 人声始终保持不变，已经做进 mix 的人声也不会被
@@ -767,14 +925,13 @@ nvidia-smi
 
 ### `output_exists`
 
-worker 默认不会覆盖 `vocals.wav`、`backing-vocals.wav` 或
-`accompaniment.wav`。确认文件可替换且
+worker 默认不会在已有 stem 时开始新的分离。确认现有结果可替换且
 工程仍为 `not requested` 后使用 `--overwrite`。
 
 ### 工程显示 `failed`
 
-失败信息会保存进 `project.json`。当前版本没有失败重试状态转换；保留原始
-歌曲，修复环境后新建工程再运行。
+失败信息会保存进 `project.json`。修复环境后，可重新运行分离脚本对已有工程
+重新分离；GUI 网易云来源在缓存音频与工程保存的音源完全一致时，也可重新加入队列重试。
 
 ## 10. 当前限制
 

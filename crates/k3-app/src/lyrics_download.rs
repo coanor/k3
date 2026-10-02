@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use k3_core::{LyricsTimeline, Project, ProjectPath};
+use k3_core::{LyricsTimeline, Project, ProjectPath, ProjectRepository};
 use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
@@ -27,25 +27,27 @@ pub enum LyricsDownload {
     NotFound,
 }
 
-pub(crate) struct LyricsSaved {
-    pub(crate) track: String,
-    pub(crate) artist: String,
-    pub(crate) origin: String,
+pub struct LyricsSaved {
+    pub track: String,
+    pub artist: String,
+    pub origin: String,
 }
 
-pub(crate) enum LyricsSearch {
+pub enum LyricsSearch {
     AlreadyPresent,
     Candidates(Vec<LyricsChoice>),
     NotFound,
 }
 
-pub(crate) struct LyricsChoice {
+#[derive(Clone)]
+pub struct LyricsChoice {
     origin: LyricsOrigin,
     lyrics: SelectedLyrics,
 }
 
 impl LyricsChoice {
-    pub(crate) fn label(&self) -> String {
+    #[must_use]
+    pub fn label(&self) -> String {
         format!(
             "{} - {} · {:.0}s · {}",
             self.lyrics.artist_name,
@@ -55,11 +57,13 @@ impl LyricsChoice {
         )
     }
 
-    pub(crate) fn origin_label(&self) -> String {
+    #[must_use]
+    pub fn origin_label(&self) -> String {
         self.origin.label()
     }
 
-    pub(crate) fn preview_lines(&self, maximum: usize) -> Vec<String> {
+    #[must_use]
+    pub fn preview_lines(&self, maximum: usize) -> Vec<String> {
         LyricsTimeline::parse(&self.lyrics.synced_lyrics)
             .lines()
             .iter()
@@ -71,8 +75,9 @@ impl LyricsChoice {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test(
+    #[doc(hidden)]
+    #[must_use]
+    pub fn for_test(
         source: &'static str,
         track: &str,
         artist: &str,
@@ -184,7 +189,12 @@ impl fmt::Display for LyricsProgress {
     }
 }
 
-pub(crate) fn find_missing_lyrics(
+/// 搜索工程当前缺少的同步歌词。
+///
+/// # Errors
+///
+/// 本地歌词检查或所有在线来源失败时返回错误。
+pub fn find_missing_lyrics(
     project: &mut Project,
     netease_fallback: bool,
     progress: &mut dyn FnMut(&LyricsProgress),
@@ -198,7 +208,12 @@ pub(crate) fn find_missing_lyrics(
     }
 }
 
-pub(crate) fn find_lyrics_again(
+/// 使用手动查询词重新搜索同步歌词，不覆盖当前歌词。
+///
+/// # Errors
+///
+/// 音频元数据读取或所有在线来源失败时返回错误。
+pub fn find_lyrics_again(
     project: &Project,
     query: &str,
     netease_fallback: bool,
@@ -220,8 +235,51 @@ pub(crate) fn find_lyrics_again(
     }
 }
 
-pub(crate) fn default_lyrics_query(project: &Project) -> String {
+#[must_use]
+pub fn default_lyrics_query(project: &Project) -> String {
     lookup_from_audio(project).title
+}
+
+/// 返回指定工程用于在线歌词搜索的默认查询词。
+///
+/// # Errors
+///
+/// 工程无法读取时返回错误。
+pub fn default_project_lyrics_query(project_root: &Path) -> Result<String, Box<dyn Error>> {
+    let project = k3_core::FileProjectRepository.open(project_root)?;
+    Ok(default_lyrics_query(&project))
+}
+
+/// 为指定工程重新搜索同步歌词，不覆盖当前歌词。
+///
+/// # Errors
+///
+/// 工程无法读取或所有在线来源均失败时返回错误。
+pub fn find_project_lyrics(
+    project_root: &Path,
+    query: &str,
+    netease_fallback: bool,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsSearch, Box<dyn Error>> {
+    let project = k3_core::FileProjectRepository.open(project_root)?;
+    find_lyrics_again(&project, query, netease_fallback, progress)
+}
+
+/// 保存一个在线歌词候选并将其设为工程当前歌词。
+///
+/// # Errors
+///
+/// 工程读取、歌词写入或工程保存失败时返回错误。
+pub fn save_project_lyrics(
+    project_root: &Path,
+    choice: LyricsChoice,
+    progress: &mut dyn FnMut(&LyricsProgress),
+) -> Result<LyricsSaved, Box<dyn Error>> {
+    let mut project = k3_core::FileProjectRepository.open(project_root)?;
+    let (saved, relative_path) = save_lyrics_choice(&project, choice, progress)?;
+    project.set_lyrics(relative_path)?;
+    k3_core::FileProjectRepository.save(&mut project)?;
+    Ok(saved)
 }
 
 #[cfg(test)]
@@ -335,7 +393,12 @@ fn find_with_catalogs_query(
     Ok(LyricsSearch::NotFound)
 }
 
-pub(crate) fn save_lyrics_choice(
+/// 将歌词候选原子写入工程目录，但不修改工程的歌词引用。
+///
+/// # Errors
+///
+/// 目标路径分配或文件写入失败时返回错误。
+pub fn save_lyrics_choice(
     project: &Project,
     choice: LyricsChoice,
     progress: &mut dyn FnMut(&LyricsProgress),
@@ -702,6 +765,7 @@ fn select_candidates(
         .collect()
 }
 
+#[derive(Clone)]
 struct SelectedLyrics {
     track_name: String,
     artist_name: String,
@@ -772,7 +836,7 @@ mod tests {
         LyricsCandidate, LyricsCatalog, LyricsDownload, LyricsLookup, LyricsSearch, NeteaseArtist,
         NeteaseSong, download_with_catalog, download_with_catalogs, find_with_catalogs,
         find_with_catalogs_query, netease_song_matches, normalize_match_text, save_lyrics_choice,
-        search_candidates,
+        save_project_lyrics, search_candidates,
     };
     use k3_core::{CreateProject, FileProjectRepository, ProjectPath, ProjectRepository};
     use std::{
@@ -1079,6 +1143,41 @@ mod tests {
             progress
                 .iter()
                 .any(|message| message.contains("Found synced lyrics on test catalog: 歌手 - 歌曲"))
+        );
+    }
+
+    #[test]
+    fn gui_workflow_saves_choice_and_updates_project() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let song = sandbox.path().join("gui-song.mp3");
+        fs::write(&song, b"audio").unwrap();
+        let root = sandbox.path().join("project");
+        FileProjectRepository
+            .create(CreateProject {
+                root: root.clone(),
+                song,
+                lyrics: None,
+                title: Some("GUI Song".into()),
+            })
+            .unwrap();
+        let choice = super::LyricsChoice::for_test(
+            "GUI test",
+            "GUI Song",
+            "Singer",
+            180.0,
+            "[00:01.00]first line\n[00:03.00]second line",
+        );
+
+        let saved = save_project_lyrics(&root, choice, &mut |_| {}).unwrap();
+        let project = FileProjectRepository.open(&root).unwrap();
+        let relative = project.lyrics().expect("lyrics should be attached");
+
+        assert_eq!(saved.track, "GUI Song");
+        assert_eq!(saved.origin, "GUI test · auto");
+        assert!(
+            fs::read_to_string(root.join(relative.as_str()))
+                .unwrap()
+                .contains("second line")
         );
     }
 

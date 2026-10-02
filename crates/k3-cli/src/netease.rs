@@ -26,13 +26,13 @@ mod download;
 mod provider;
 mod weapi;
 
-pub use auth::{LoginStatus, NeteaseSession, RiskStore, SessionStore, local_stores};
+pub use auth::{LoginStatus, LoginTicket, NeteaseSession, RiskStore, SessionStore, local_stores};
 pub use client::NeteaseClient;
 pub use download::{DownloadOutcome, Quality, Song, SongPage};
 
 use auth::{
-    AccountProfile, AuthorizedLogin, ChromeCookieSource, LoginPoll, LoginTicket,
-    RookieChromeCookieSource, chrome_cookie_header, write_private_json,
+    AccountProfile, AuthorizedLogin, ChromeCookieSource, LoginPoll, RookieChromeCookieSource,
+    chrome_cookie_header, write_private_json,
 };
 use download::{
     AudioSource, DownloadDecision, DownloadIndex, DownloadPaths, commit_download, retry_transient,

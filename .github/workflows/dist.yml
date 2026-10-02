@@ -2,7 +2,10 @@ name: Build distributions
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -16,28 +19,112 @@ env:
 jobs:
   verify:
     name: Verify workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
       - name: Install Linux audio headers
-        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          libasound2-dev libfontconfig1-dev libxkbcommon-x11-0
+          pkg-config libgl1-mesa-dri weston xvfb
 
-      - name: Select stable Rust
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup component add clippy
+      - name: Select repository Rust toolchain
+        run: rustup show active-toolchain
 
       - name: Run tests
         run: cargo test --workspace --locked
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Build GUI smoke binary
+        run: cargo build --package k3-gui --locked
+
+      - name: Smoke-test GUI on X11
+        run: |
+          set +e
+          timeout 5s xvfb-run -a env \
+            K3_GUI_SETTINGS_PATH="$RUNNER_TEMP/k3-x11-settings.json" \
+            K3_GUI_LOG_PATH="$RUNNER_TEMP/k3-x11.log" \
+            ./target/debug/k3-gui
+          status=$?
+          set -e
+          test "$status" -eq 124
+
+      - name: Smoke-test GUI on Wayland
+        run: |
+          runtime_dir="$RUNNER_TEMP/k3-wayland-runtime"
+          mkdir -p "$runtime_dir"
+          chmod 700 "$runtime_dir"
+          XDG_RUNTIME_DIR="$runtime_dir" weston \
+            --backend=headless-backend.so \
+            --socket=k3-ci-wayland \
+            --idle-time=0 \
+            --log="$RUNNER_TEMP/weston.log" &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            [[ -S "$runtime_dir/k3-ci-wayland" ]] && break
+            sleep 0.1
+          done
+          [[ -S "$runtime_dir/k3-ci-wayland" ]]
+          set +e
+          XDG_RUNTIME_DIR="$runtime_dir" \
+            WAYLAND_DISPLAY=k3-ci-wayland \
+            XDG_SESSION_TYPE=wayland \
+            K3_GUI_SETTINGS_PATH="$RUNNER_TEMP/k3-wayland-settings.json" \
+            K3_GUI_LOG_PATH="$RUNNER_TEMP/k3-wayland.log" \
+            timeout 5s ./target/debug/k3-gui
+          status=$?
+          set -e
+          test "$status" -eq 124
+
+  windows-check:
+    name: Check Windows workspace
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Select repository Rust toolchain
+        shell: pwsh
+        run: rustup show active-toolchain
+
+      - name: Check Windows targets
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Parse Windows separation scripts
+        shell: pwsh
+        run: |
+          foreach ($script in @('separate.ps1', 'install-separator.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$null, [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
+
+      - name: Verify UTF-8 manifests in Windows PowerShell
+        shell: pwsh
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   build:
     name: Build ${{ matrix.package }}
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     needs: verify
     strategy:
       fail-fast: false
@@ -80,17 +167,23 @@ jobs:
 
       - name: Install Linux audio headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          libasound2-dev libfontconfig1-dev pkg-config
 
-      - name: Select stable Rust target
+      - name: Select repository Rust target
         shell: bash
         run: |
-          rustup update stable --no-self-update
-          rustup default stable
+          rustup show active-toolchain
           rustup target add "$BUILD_TARGET"
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          cargo build --release --locked --target "$BUILD_TARGET" --package k3
+          if [[ "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ]]; then
+            cargo build --release --locked --target "$BUILD_TARGET" --package k3-gui
+          fi
 
       - name: Package Linux or macOS distribution
         if: runner.os != 'Windows'
@@ -101,19 +194,32 @@ jobs:
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             platform=linux
           fi
-          scripts/package-dist.sh \
-            "$platform" \
-            "$PACKAGE_NAME" \
-            "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+          if [[ "$platform" == "linux" ]]; then
+            scripts/package-dist.sh \
+              "$platform" \
+              "$PACKAGE_NAME" \
+              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME" \
+              "target/$BUILD_TARGET/release/k3-gui"
+          else
+            scripts/package-dist.sh \
+              "$platform" \
+              "$PACKAGE_NAME" \
+              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+          fi
 
       - name: Package Windows distribution
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $packageDir = Join-Path "dist" $env:PACKAGE_NAME
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           $binary = "target/$env:BUILD_TARGET/release/$env:EXECUTABLE_NAME"
           Copy-Item -LiteralPath $binary -Destination (Join-Path $packageDir "k3.exe")
+          $guiBinary = "target/$env:BUILD_TARGET/release/k3-gui.exe"
+          Copy-Item -LiteralPath $guiBinary -Destination (Join-Path $packageDir "k3-gui.exe")
           Copy-Item "README.md" $packageDir
           Copy-Item "docs" $packageDir -Recurse
           $separatorDir = Join-Path $packageDir "python/separator"
@@ -133,6 +239,11 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
           $checksum = Join-Path "dist" "$($env:ARCHIVE_NAME).sha256"
           "$hash  $($env:ARCHIVE_NAME)" | Set-Content -LiteralPath $checksum -Encoding ascii
+
+      - name: Verify Linux GUI package contents
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/verify-linux-gui-package.sh "dist/$ARCHIVE_NAME"
 
       - name: Upload distribution artifact
         uses: actions/upload-artifact@v7
@@ -177,3 +288,54 @@ jobs:
               --generate-notes \
               --title "$RELEASE_TAG"
           fi
+
+  public-release:
+    name: Publish binaries to public repository
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.PUBLIC_RELEASE_REPO != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download all distributions
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify distribution checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 | sort -k2 > dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Publish public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          PUBLIC_RELEASE_REPO: ${{ vars.PUBLIC_RELEASE_REPO }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || { echo '缺少 PUBLIC_RELEASE_TOKEN secret' >&2; exit 1; }
+          [[ "$PUBLIC_RELEASE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo 'PUBLIC_RELEASE_REPO 必须是 owner/repo' >&2
+            exit 1
+          }
+          visibility="$(gh repo view "$PUBLIC_RELEASE_REPO" --json visibility --jq '.visibility')"
+          [[ "$visibility" == PUBLIC ]] || { echo '目标仓库必须公开' >&2; exit 1; }
+          if gh release view "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
+            echo '公开发行版已存在，请使用新版本号' >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF
+          K3 $RELEASE_TAG 的预编译发行包。请下载对应平台的压缩包，并使用 SHA256SUMS 核对文件。
+
+          此仓库仅用于公开发行；K3 源代码仓库仍为私有。
+          EOF
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$PUBLIC_RELEASE_REPO" \
+            --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/k3-public-release-notes.md"

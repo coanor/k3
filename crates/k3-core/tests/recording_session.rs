@@ -99,5 +99,5 @@ fn recording_session_can_abort_without_adding_a_take() {
     session.abort().unwrap();
 
     assert_eq!(session.state(), RecordingState::Idle);
-    assert!(session.project().takes().is_empty());
+    assert_eq!(session.project().takes(), []);
 }

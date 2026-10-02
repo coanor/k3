@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-    echo "用法：package-dist.sh <linux|windows|macos> <包名> <二进制路径>" >&2
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+    echo "用法：package-dist.sh <linux|windows|macos> <包名> <CLI 二进制路径> [GUI 二进制路径]" >&2
     exit 2
 fi
 
 platform="$1"
 package_name="$2"
 binary_path="$3"
+gui_binary_path="${4:-}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 dist_dir="${DIST_DIR:-$repo_root/dist}"
 
 if [[ ! -f "$binary_path" ]]; then
     echo "找不到待打包二进制：$binary_path" >&2
+    exit 1
+fi
+if [[ "$platform" != "macos" && ( -z "$gui_binary_path" || ! -f "$gui_binary_path" ) ]]; then
+    echo "找不到待打包 GUI 二进制：${gui_binary_path:-<未提供>}" >&2
     exit 1
 fi
 if [[ ! "$package_name" =~ ^k3-[a-z0-9_-]+$ ]]; then
@@ -46,6 +51,16 @@ mkdir -p "$dist_dir"
 case "$platform" in
     linux)
         install -m 0755 "$binary_path" "$package_dir/k3"
+        install -m 0755 "$gui_binary_path" "$package_dir/k3-gui"
+        install -Dm 0644 "$repo_root/crates/k3-gui/assets/k3.desktop" \
+            "$package_dir/share/applications/k3.desktop"
+        install -Dm 0644 "$repo_root/crates/k3-gui/assets/k3.svg" \
+            "$package_dir/share/icons/hicolor/scalable/apps/k3.svg"
+        install -Dm 0644 "$repo_root/crates/k3-gui/assets/fonts/OFL.txt" \
+            "$package_dir/licenses/SourceHanSansCN-OFL.txt"
+        install -Dm 0644 \
+            "$repo_root/crates/k3-gui/assets/licenses/LicenseRef-Slint-Royalty-free-2.0.md" \
+            "$package_dir/licenses/LicenseRef-Slint-Royalty-free-2.0.md"
         install -m 0755 "$repo_root/separate.sh" "$package_dir/separate.sh"
         copy_separator_worker
         archive="$dist_dir/$package_name.tar.gz"
@@ -58,6 +73,7 @@ case "$platform" in
         ;;
     windows)
         cp "$binary_path" "$package_dir/k3.exe"
+        cp "$gui_binary_path" "$package_dir/k3-gui.exe"
         cp "$repo_root/separate.ps1" "$repo_root/install-separator.ps1" "$package_dir/"
         copy_separator_worker
         archive="$dist_dir/$package_name.zip"

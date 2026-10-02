@@ -265,6 +265,16 @@ impl DownloadIndex {
         }
     }
 
+    pub fn cached_path(&self, song_id: u64) -> Option<PathBuf> {
+        let record = self.data.songs.get(&song_id)?;
+        let filename = record.path.file_name()?;
+        if record.path != Path::new(filename) {
+            return None;
+        }
+        let path = self.path.parent()?.join(filename);
+        path.is_file().then_some(path)
+    }
+
     pub fn record(&mut self, record: DownloadRecord) {
         self.data.songs.insert(record.song_id, record);
     }

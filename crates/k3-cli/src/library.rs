@@ -13,7 +13,10 @@ use k3_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::python_separator::{PythonSeparatorConfig, PythonStemSeparator, separation_log_path};
+use crate::python_separator::{
+    PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
+    separation_output_paths,
+};
 
 const DEFAULT_EXTENSIONS: [&str; 6] = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
 
@@ -401,7 +404,7 @@ fn replace_source_and_reseparate_inner(
         SongPreparation::new(separator)
             .reprepare(&mut project, config.separation.profile)
             .map_err(|error| format!("{error}; existing project was preserved"))?;
-        repository.save(&project)?;
+        repository.save(&mut project)?;
         Ok(())
     })();
     if let Err(error) = prepare_result {
@@ -549,6 +552,7 @@ fn separate_into_project(
             title: Some(title),
         })?
     };
+    let previous_outputs = separation_output_paths(&project);
     let separator_config = PythonSeparatorConfig {
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
@@ -579,7 +583,12 @@ fn separate_into_project(
         preparation.prepare(&mut project, config.separation.profile)
     };
     if result.is_ok() {
-        repository.save(&project)?;
+        let produced_outputs = separation_output_paths(&project);
+        if let Err(error) = repository.save(&mut project) {
+            cleanup_obsolete_outputs(project.root(), &produced_outputs, &previous_outputs);
+            return Err(error.into());
+        }
+        cleanup_obsolete_outputs(project.root(), &previous_outputs, &produced_outputs);
         return Ok(project_root.to_path_buf());
     }
     let error = result.unwrap_err();
@@ -590,7 +599,7 @@ fn separate_into_project(
         )
         .into());
     }
-    repository.save(&project)?;
+    repository.save(&mut project)?;
     match archive_failed_project(&config.projects_root, project_root) {
         Ok(archived) => Err(format!(
             "{error}; failed project archived at {}; fix the configuration and retry",
@@ -797,7 +806,10 @@ import json, pathlib, sys
 r = json.loads(sys.stdin.readline())
 out = pathlib.Path(r["params"]["output_dir"])
 out.mkdir(parents=True, exist_ok=True)
-v, b, a = out / "vocals.wav", out / "backing-vocals.wav", out / "accompaniment.wav"
+model = r["params"].get("model_id") or "default-model"
+v = out / ("vocals-" + model + ".wav")
+b = out / ("backing-vocals-" + model + ".wav")
+a = out / ("accompaniment-" + model + ".wav")
 v.write_bytes(b"voice")
 b.write_bytes(b"backing voice")
 a.write_bytes(b"music")
@@ -835,14 +847,21 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
         let project = FileProjectRepository.open(&project_path).unwrap();
 
         assert!(matches!(project.separation(), SeparationState::Ready(_)));
-        assert!(project_path.join("stems/vocals.wav").is_file());
-        assert!(project_path.join("stems/backing-vocals.wav").is_file());
         let SeparationState::Ready(manifest) = project.separation() else {
             unreachable!()
         };
+        assert!(manifest.vocals.resolve(&project_path).is_file());
+        assert!(
+            manifest
+                .backing_vocals
+                .as_ref()
+                .unwrap()
+                .resolve(&project_path)
+                .is_file()
+        );
         assert_eq!(
             manifest.backing_vocals.as_ref().unwrap().as_str(),
-            "stems/backing-vocals.wav"
+            "stems/backing-vocals-fake-model.wav"
         );
         assert_eq!(
             scan(&config).unwrap().sources[0].project_state,
@@ -872,11 +891,13 @@ print(json.dumps({"id": r["id"], "ok": True, "result": {
                 format!(
                     r#"out = pathlib.Path(r["params"]["output_dir"])
 out.mkdir(parents=True, exist_ok=True)
-v, b, a = out / "vocals.wav", out / "backing-vocals.wav", out / "accompaniment.wav"
+model = r["params"].get("model_id") or "default-model"
+v = out / ("vocals-" + model + ".wav")
+b = out / ("backing-vocals-" + model + ".wav")
+a = out / ("accompaniment-" + model + ".wav")
 v.write_bytes({vocals:?}.encode())
 b.write_bytes(b"backing")
 a.write_bytes(b"music")
-model = r["params"].get("model_id") or "default-model"
 print(json.dumps({{"id": r["id"], "ok": True, "result": {{
   "vocals": str(v), "backing_vocals": str(b), "accompaniment": str(a), "provenance": {{
     "provider": "fake", "architecture": "mdx-net",
@@ -909,6 +930,10 @@ print(json.dumps({{"id": r["id"], "ok": True, "result": {{
         .unwrap();
         let project_path = import_and_separate(&config, &song).unwrap();
         let original = FileProjectRepository.open(&project_path).unwrap();
+        let SeparationState::Ready(original_manifest) = original.separation() else {
+            panic!("expected ready separation")
+        };
+        let original_vocals = original_manifest.vocals.resolve(&project_path);
         fs::write(project_path.join("takes/keep.wav"), b"keep").unwrap();
 
         write_worker("voice-v2", false);
@@ -918,10 +943,6 @@ print(json.dumps({{"id": r["id"], "ok": True, "result": {{
 
         assert_eq!(original.id(), replaced.id());
         assert_eq!(
-            fs::read(project_path.join("stems/vocals.wav")).unwrap(),
-            b"voice-v2"
-        );
-        assert_eq!(
             fs::read(project_path.join("takes/keep.wav")).unwrap(),
             b"keep"
         );
@@ -929,6 +950,9 @@ print(json.dumps({{"id": r["id"], "ok": True, "result": {{
             panic!("expected ready separation")
         };
         assert_eq!(manifest.provenance.checkpoint_id, "model-v2");
+        let replaced_vocals = manifest.vocals.resolve(&project_path);
+        assert_eq!(fs::read(&replaced_vocals).unwrap(), b"voice-v2");
+        assert!(!original_vocals.exists());
 
         write_worker("unused", true);
         let error = reseparate(&config, &song, &project_path)
@@ -937,10 +961,7 @@ print(json.dumps({{"id": r["id"], "ok": True, "result": {{
         let preserved = FileProjectRepository.open(&project_path).unwrap();
         assert!(error.contains("existing project and stems were preserved"));
         assert!(matches!(preserved.separation(), SeparationState::Ready(_)));
-        assert_eq!(
-            fs::read(project_path.join("stems/vocals.wav")).unwrap(),
-            b"voice-v2"
-        );
+        assert_eq!(fs::read(replaced_vocals).unwrap(), b"voice-v2");
         assert!(project_path.join("takes/keep.wav").is_file());
     }
 
@@ -1133,7 +1154,7 @@ print(json.dumps({"id": r["id"], "ok": False, "error": {
         assert!(error.len() < 5_000);
         assert!(error.contains(".failed"));
         assert!(!projects.join("失败歌曲").exists());
-        assert!(snapshot.projects.is_empty());
+        assert_eq!(snapshot.projects, Vec::new());
         assert_eq!(snapshot.sources.len(), 1);
         assert_eq!(snapshot.sources[0].project_state, SourceProjectState::New);
         assert_eq!(archived.len(), 1);
@@ -1142,7 +1163,7 @@ print(json.dumps({"id": r["id"], "ok": False, "error": {
         // 模拟旧版本遗留在项目根目录中的失败 project。
         fs::rename(archived[0].path(), projects.join("失败歌曲")).unwrap();
         let legacy_snapshot = scan(&config).unwrap();
-        assert!(legacy_snapshot.projects.is_empty());
+        assert_eq!(legacy_snapshot.projects, Vec::new());
         assert_eq!(
             legacy_snapshot.sources[0].project_state,
             SourceProjectState::New

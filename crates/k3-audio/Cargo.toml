@@ -1,0 +1,12 @@
+[package]
+name = "k3-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rodio = "0.22.2"
+rodio-wsola = "0.2.0"
+
+[lints]
+workspace = true

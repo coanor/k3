@@ -12,8 +12,8 @@ use std::{
 };
 
 use k3_core::{
-    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, ProjectPath, SeparationFailure,
-    SeparationManifest, SeparationProfile, StemSeparator,
+    BackingVocalModelProvenance, CheckpointSha256, ModelProvenance, Project, ProjectPath,
+    SeparationFailure, SeparationManifest, SeparationProfile, SeparationState, StemSeparator,
 };
 use serde::{Deserialize, Serialize};
 
@@ -170,14 +170,14 @@ impl PythonStemSeparator {
         if result.provenance.profile != requested_profile {
             return Err("worker returned a different separation profile".into());
         }
-        validate_output_path(
+        let vocals = validated_project_path(
             &result.vocals,
-            &self.config.project_root.join("stems/vocals.wav"),
+            &self.config.project_root.join("stems"),
             "vocals",
         )?;
-        validate_output_path(
+        let accompaniment = validated_project_path(
             &result.accompaniment,
-            &self.config.project_root.join("stems/accompaniment.wav"),
+            &self.config.project_root.join("stems"),
             "accompaniment",
         )?;
         let backing_vocals = match (
@@ -186,14 +186,13 @@ impl PythonStemSeparator {
             result.provenance.backing_vocals_model,
         ) {
             (true, Some(path), Some(model)) => {
-                validate_output_path(
+                let project_path = validated_project_path(
                     &path,
-                    &self.config.project_root.join("stems/backing-vocals.wav"),
+                    &self.config.project_root.join("stems"),
                     "backing vocals",
                 )?;
                 Some((
-                    ProjectPath::new("stems/backing-vocals.wav")
-                        .map_err(|error| error.to_string())?,
+                    project_path,
                     Box::new(BackingVocalModelProvenance {
                         provider: model.provider,
                         architecture: model.architecture,
@@ -217,9 +216,8 @@ impl PythonStemSeparator {
         let (backing_vocals, backing_vocals_model) =
             backing_vocals.map_or((None, None), |(path, model)| (Some(path), Some(model)));
         Ok(SeparationManifest {
-            vocals: ProjectPath::new("stems/vocals.wav").map_err(|error| error.to_string())?,
-            accompaniment: ProjectPath::new("stems/accompaniment.wav")
-                .map_err(|error| error.to_string())?,
+            vocals,
+            accompaniment,
             backing_vocals,
             provenance: ModelProvenance {
                 provider: result.provenance.provider,
@@ -231,6 +229,54 @@ impl PythonStemSeparator {
                 backing_vocals_model,
             },
         })
+    }
+}
+
+pub fn separation_output_paths(project: &Project) -> Vec<PathBuf> {
+    let SeparationState::Ready(manifest) = project.separation() else {
+        return Vec::new();
+    };
+    [&manifest.vocals, &manifest.accompaniment]
+        .into_iter()
+        .chain(manifest.backing_vocals.iter())
+        .map(|path| path.resolve(project.root()))
+        .collect()
+}
+
+pub fn cleanup_obsolete_outputs(project_root: &Path, obsolete: &[PathBuf], retained: &[PathBuf]) {
+    let Ok(root) = project_root.canonicalize() else {
+        return;
+    };
+    let stems = root.join("stems");
+    for path in obsolete {
+        if retained.contains(path) {
+            continue;
+        }
+        let safe = path.strip_prefix(&stems).is_ok_and(|relative| {
+            relative.components().count() > 0
+                && relative
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+        }) && path.parent().is_some_and(|parent| {
+            parent
+                .canonicalize()
+                .is_ok_and(|parent| parent.starts_with(&stems))
+        });
+        if !safe {
+            eprintln!(
+                "Warning: skipped obsolete stem outside the project stems directory: {}",
+                path.display()
+            );
+            continue;
+        }
+        if let Err(error) = fs::remove_file(path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "Warning: could not remove obsolete stem {}: {error}",
+                path.display()
+            );
+        }
     }
 }
 
@@ -354,12 +400,16 @@ impl StemSeparator for PythonStemSeparator {
     }
 }
 
-fn validate_output_path(actual: &Path, expected: &Path, label: &str) -> Result<(), String> {
+fn validated_project_path(
+    actual: &Path,
+    expected_directory: &Path,
+    label: &str,
+) -> Result<ProjectPath, String> {
     let actual = fs::canonicalize(actual)
         .map_err(|error| format!("cannot resolve worker {label} output: {error}"))?;
-    let expected = fs::canonicalize(expected)
-        .map_err(|error| format!("cannot resolve expected {label} output: {error}"))?;
-    if actual != expected {
+    let expected_directory = fs::canonicalize(expected_directory)
+        .map_err(|error| format!("cannot resolve expected stems directory: {error}"))?;
+    if actual.parent() != Some(expected_directory.as_path()) {
         return Err(format!(
             "worker {label} output is outside the project stems directory: {}",
             actual.display()
@@ -372,12 +422,16 @@ fn validate_output_path(actual: &Path, expected: &Path, label: &str) -> Result<(
     {
         return Err(format!("worker {label} output is empty"));
     }
-    Ok(())
+    let file_name = actual
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("worker {label} output name is not valid UTF-8"))?;
+    ProjectPath::new(format!("stems/{file_name}")).map_err(|error| error.to_string())
 }
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{PythonSeparatorConfig, PythonStemSeparator};
+    use super::{PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs};
     use k3_core::{SeparationProfile, StemSeparator};
     use std::{
         fs,
@@ -390,6 +444,73 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_outside_project_through_directory_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems/external")).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[project.join("stems/external/sentinel.wav")],
+            &[],
+        );
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_when_stems_directory_is_redirected() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems")).unwrap();
+
+        cleanup_obsolete_outputs(&project, &[project.join("stems/sentinel.wav")], &[]);
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_removes_only_unretained_stems_and_unlinks_file_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        let obsolete = project.join("stems/obsolete.wav");
+        let retained = project.join("stems/retained.wav");
+        let external = sandbox.path().join("external.wav");
+        let link = project.join("stems/link.wav");
+        for path in [&obsolete, &retained, &external] {
+            fs::write(path, b"audio").unwrap();
+        }
+        std::os::unix::fs::symlink(&external, &link).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[
+                obsolete.clone(),
+                retained.clone(),
+                link.clone(),
+                external.clone(),
+            ],
+            std::slice::from_ref(&retained),
+        );
+
+        assert!(!obsolete.exists());
+        assert!(retained.exists());
+        assert!(fs::symlink_metadata(link).is_err());
+        assert_eq!(fs::read(external).unwrap(), b"audio");
+    }
 
     #[test]
     fn cancellation_terminates_and_reaps_worker_process() {

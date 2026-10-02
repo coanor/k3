@@ -350,6 +350,10 @@ fn download_uses_highest_available_quality_tags_and_deduplicates() {
     assert_eq!(tag.artist().as_deref(), Some("Beyond"));
     assert_eq!(tag.album().as_deref(), Some("精选"));
     assert_eq!(tag.pictures().len(), 1);
+    assert_eq!(
+        client.downloaded_song_ids(&music_root, &[7, 8]).unwrap(),
+        [7].into_iter().collect()
+    );
 
     assert!(matches!(
         client
@@ -363,6 +367,12 @@ fn download_uses_highest_available_quality_tags_and_deduplicates() {
     ));
 
     fs::remove_file(&path).unwrap();
+    assert!(
+        client
+            .downloaded_song_ids(&music_root, &[7])
+            .unwrap()
+            .is_empty()
+    );
     assert!(matches!(
         client
             .download_song(
@@ -795,7 +805,7 @@ fn live_endpoint_can_issue_a_qr_login_ticket() {
     let provider = super::WebNeteaseProvider::new();
     let ticket = provider.begin_login().unwrap();
 
-    assert!(!ticket.qr_lines().unwrap().is_empty());
+    assert_ne!(ticket.qr_lines().unwrap(), Vec::<String>::new());
 }
 
 #[test]
@@ -817,6 +827,10 @@ fn download_index_skips_equal_quality_and_replaces_lower_quality() {
     index.save().unwrap();
 
     let loaded = DownloadIndex::load(&path).unwrap();
+    assert_eq!(
+        loaded.cached_path(7),
+        Some(sandbox.path().join("Artist-Song.flac"))
+    );
     assert_eq!(loaded.decision(7, Quality::ExHigh), DownloadDecision::Skip);
     assert_eq!(
         loaded.decision(7, Quality::Lossless),
@@ -837,6 +851,7 @@ fn download_index_skips_equal_quality_and_replaces_lower_quality() {
         tampered.decision(8, Quality::HiRes),
         DownloadDecision::Download
     );
+    assert_eq!(tampered.cached_path(8), None);
 }
 
 #[test]

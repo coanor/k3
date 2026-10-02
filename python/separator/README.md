@@ -118,6 +118,26 @@ python -m k3_separator --model-dir ~/.cache/k3/models
 校验，再允许 `audio-separator` 反序列化。生产注册表应始终固定这两个字段，并
 保留许可证快照。
 
+## 进度观测
+
+GUI 为每首分离任务在工程根目录下建立独立的 `.k3-progress-<UUID>` 临时目录，
+通过 `K3_SEPARATION_PROGRESS_PATH` 将其中的 `progress.json` 路径传给 worker。
+正常完成或失败后 GUI 都会清理该目录；模型缓存与原有诊断日志目录不变。
+独立运行 worker 时不设置此变量即可关闭进度文件输出。
+
+进度文件采用 UTF-8 JSON，以临时文件替换方式更新，格式如下：
+
+```json
+{"schema_version": 1, "phase": "separating_vocals", "fraction": 0.37}
+```
+
+`phase` 可以是 `preparing`、`loading_vocals`、`separating_vocals`、
+`loading_backing_vocals`、`separating_backing_vocals`、`writing_audio`、`saving_project`。
+`fraction` 是当前推理阶段的真实完成比例；无法得知比例时为 `null`。
+百分比从模型运行时的 tqdm 输出提取，原始 stderr 日志完整保留；此信息不会混入
+标准输出的请求响应协议。GUI 只有在脚本退出并成功保存工程后才认定任务完成。
+旧 worker 没有进度文件时，GUI 仍显示活动条与已用时。进度文件无法写入也不会中断分离。
+
 ## 测试
 
 测试使用进程内 fake runtime，不会下载模型：

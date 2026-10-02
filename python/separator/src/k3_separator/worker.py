@@ -13,12 +13,14 @@ from .errors import WorkerError
 from .models import ModelRegistry
 from .runtime import AudioSeparatorRuntime
 from .service import SeparationService
+from .progress import ProgressReporter
 
 
 def serve(service: SeparationService, input_stream: TextIO, output_stream: TextIO) -> None:
     """Process one JSON request per input line and emit exactly one response line."""
     _force_utf8(input_stream)
     _force_utf8(output_stream)
+    _force_utf8(sys.stderr)
     for line in input_stream:
         if not line.strip():
             continue
@@ -70,8 +72,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     registry = ModelRegistry.load(args.models)
-    runtime = AudioSeparatorRuntime(args.model_dir)
-    serve(SeparationService(registry, runtime), sys.stdin, sys.stdout)
+    progress = ProgressReporter.from_environment()
+    runtime = AudioSeparatorRuntime(args.model_dir, progress)
+    serve(SeparationService(registry, runtime, progress), sys.stdin, sys.stdout)
 
 
 if __name__ == "__main__":
