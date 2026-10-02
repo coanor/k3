@@ -338,13 +338,19 @@ jobs:
       - name: Test installer validation
         run: python -m unittest discover -s scripts/tests -v
 
+      - name: Install uv for refreshed worker
+        if: inputs.installer_source_run != '' && !matrix.cli_only
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.13"
+
       - name: Locate Inno Setup
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $compiler)) {
-            choco install innosetup --version=6.4.3 --yes --no-progress
+            choco install innosetup --version=6.7.1 --yes --no-progress
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           if (-not (Test-Path $compiler)) { throw '找不到 Inno Setup 编译器' }
@@ -354,10 +360,12 @@ jobs:
         shell: bash
         env:
           ARCHIVE_NAME: ${{ matrix.archive }}
+          SOURCE_RUN: ${{ inputs.installer_source_run }}
         run: |
           set -euo pipefail
           args=("dist/source/$ARCHIVE_NAME")
           if [[ "$RUNNER_OS" == Windows ]]; then args+=(--iscc "$K3_ISCC"); fi
+          if [[ -n "$SOURCE_RUN" ]]; then args+=(--refresh-worker); fi
           python scripts/build-installer.py "${args[@]}"
 
       - name: Install Linux package
@@ -394,13 +402,21 @@ jobs:
         run: |
           set -euo pipefail
           case "$RUNNER_OS" in
-            Linux) root=/opt/k3 ;;
-            macOS) root=/usr/local/lib/k3 ;;
-            Windows) root="$K3_INSTALLED_ROOT" ;;
+            Linux) root=/opt/k3; commands=/usr/bin ;;
+            macOS) root=/usr/local/lib/k3; commands=/usr/local/bin ;;
+            Windows) root="$K3_INSTALLED_ROOT"; commands="$root" ;;
           esac
-          args=(--installed-root "$root")
+          args=(--installed-root "$root" --command-dir "$commands")
           if [[ "$CLI_ONLY" == true ]]; then args+=(--cli-only); fi
           python scripts/check-dist.py "${args[@]}"
+          if [[ "$CLI_ONLY" != true ]]; then
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              worker_python="$root/runtime/python/python.exe"
+            else
+              worker_python="$root/runtime/python/bin/python3"
+            fi
+            "$worker_python" -I -m unittest discover -s python/separator/tests -p test_runtime.py -v
+          fi
 
       - name: Check Linux uninstall preserves user files
         if: runner.os == 'Linux'

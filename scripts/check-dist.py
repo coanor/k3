@@ -51,9 +51,10 @@ def check(archive: Path, cli_only: bool) -> None:
         check_root(root, work, cli_only)
 
 
-def check_root(root: Path, work: Path, cli_only: bool) -> None:
+def check_root(root: Path, work: Path, cli_only: bool, command_dir: Path | None = None) -> None:
     extension = ".exe" if os.name == "nt" else ""
-    binary = root / f"k3{extension}"
+    commands = command_dir or root
+    binary = commands / f"k3{extension}"
     run(binary, "--help", stdout=subprocess.DEVNULL, cwd=work)
     if cli_only:
         print("CLI 包启动检查通过")
@@ -62,7 +63,7 @@ def check_root(root: Path, work: Path, cli_only: bool) -> None:
     # 将用户 Python 环境污染也纳入测试；原生 launcher 必须忽略它。
     environment = dict(os.environ, PYTHONHOME=str(work / "missing-python"),
                        PYTHONPATH=str(work / "missing-packages"), K3_LOG_DIR=str(work / "logs"))
-    response = run(root / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
+    response = run(commands / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
                    text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
     health = json.loads(response.stdout)
     if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
@@ -110,14 +111,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, nargs="?")
     parser.add_argument("--installed-root", type=Path, help="检查已经安装的目录，不移动或改写程序文件")
+    parser.add_argument("--command-dir", type=Path, help="检查系统命令链接所在目录")
     parser.add_argument("--cli-only", action="store_true")
     args = parser.parse_args()
     if args.installed_root:
         if args.archive:
             parser.error("archive 与 --installed-root 不能同时使用")
         with tempfile.TemporaryDirectory(prefix="k3-installed-check-") as directory:
-            check_root(args.installed_root.resolve(), Path(directory), args.cli_only)
+            check_root(args.installed_root.resolve(), Path(directory), args.cli_only, args.command_dir)
     elif args.archive:
+        if args.command_dir:
+            parser.error("--command-dir 需要 --installed-root")
         check(args.archive, args.cli_only)
     else:
         parser.error("请提供 archive 或 --installed-root")

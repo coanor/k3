@@ -73,7 +73,7 @@ python3 scripts/build-installer.py dist/k3-linux-x86_64.tar.gz
 ```
 
 脚本校验输入摘要、平台、布局和程序版本。Linux 使用 `dpkg-deb`，macOS 使用系统自带
-`pkgbuild`/`productbuild`；Windows 需安装 Inno Setup 6 并将 `ISCC.exe` 加入 PATH，
+`pkgbuild`/`productbuild`；Windows 需安装 Inno Setup 6.5 或更高并将 `ISCC.exe` 加入 PATH，
 或使用 `--iscc` 指定路径。产物及校验文件默认写到 `dist/installers/`。
 也可用 `make installer` 从头构建当前平台的便携包与安装包。
 
@@ -89,3 +89,10 @@ gh workflow run dist.yml --ref build-package -f installer_source_run=36998727861
 
 输入必须指向本仓库成功的 `Build distributions` 运行。通常的手动构建和 tag 构建会同时
 生成便携包与安装包，安装检查通过后才上传安装包。本文中的版本和运行 ID 仅为示例。
+
+复用运行时，CI 使用 uv 从当前源码重新安装 Python worker，不重新构建原生程序、
+其他 Python 依赖或模型。本机复用旧便携包时同样应加 `--refresh-worker`。
+这样可包含安装目录只读时的修复：模型仍在系统目录，转换临时文件写入本次工程的临时目录。
+
+Windows 中文安装器翻译取自 [Inno Setup 官方资源](https://github.com/jrsoftware/issrc/blob/6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2/Files/Languages/ChineseSimplified.isl)，
+按译者项目的 MIT 许可证保留原始头部、完整文本及 `ChineseSimplified-LICENSE.txt`，随构建脚本提供，不依赖编译器预装中文语言包。

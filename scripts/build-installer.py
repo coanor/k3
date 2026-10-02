@@ -107,7 +107,7 @@ def deb(root: Path, staging: Path, output: Path, version: str) -> Path:
         f"Package: k3\nVersion: {version}\nArchitecture: amd64\n"
         "Maintainer: K3 contributors <noreply@github.com>\nSection: sound\nPriority: optional\n"
         f"Installed-Size: {(size + 1023) // 1024}\n"
-        "Depends: libc6 (>= 2.39), libasound2t64, libfontconfig1, libxkbcommon-x11-0, libegl1\n"
+        "Depends: libc6 (>= 2.39), libgcc-s1, libstdc++6, libasound2t64, libfontconfig1, libxkbcommon-x11-0, libegl1, libgl1\n"
         "Recommends: libgl1-mesa-dri\nHomepage: https://github.com/coanor/k3\n"
         "Description: K3 卡拉 OK 播放器与离线音源分离工具\n"
         " 包含 GUI、CLI、独立 Python 环境、FFmpeg 和三个默认分离模型。\n",
@@ -151,7 +151,7 @@ def macos(root: Path, staging: Path, output: Path, version: str, cli_only: bool)
     return artifact
 
 
-def build(archive: Path, output: Path, version: str, compiler: str) -> Path:
+def build(archive: Path, output: Path, version: str, compiler: str, refresh_worker: bool = False) -> Path:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("安装包版本必须是 major.minor.patch 三段数字")
     output = output.resolve()
@@ -167,6 +167,10 @@ def build(archive: Path, output: Path, version: str, compiler: str) -> Path:
         actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
         if actual != f"k3 {version}":
             raise ValueError(f"二进制版本 {actual!r} 与安装包版本 {version!r} 不一致")
+        if refresh_worker and not cli_only:
+            python = root / ("runtime/python/python.exe" if platform == "win32" else "runtime/python/bin/python3")
+            run("uv", "pip", "install", "--python", python, "--no-config", "--break-system-packages", "--no-deps", "--reinstall", "--link-mode=copy",
+                REPO / "python/separator")
         # 安装说明跟随安装器源码，程序/runtime/模型保持便携包中的版本。
         shutil.copy2(REPO / "docs/install-packages.md", root / "INSTALL-PACKAGE.md")
         if platform == "linux":
@@ -192,5 +196,6 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=Path, default=REPO / "dist/installers")
     parser.add_argument("--version", default=tomllib.loads((REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"])
     parser.add_argument("--iscc", default="ISCC.exe", help="Windows Inno Setup 编译器路径")
+    parser.add_argument("--refresh-worker", action="store_true", help="用当前源码重新安装 worker；保留原生程序、其他依赖和模型，需要 uv")
     args = parser.parse_args()
-    build(args.archive, args.output_dir, args.version, args.iscc)
+    build(args.archive, args.output_dir, args.version, args.iscc, args.refresh_worker)
