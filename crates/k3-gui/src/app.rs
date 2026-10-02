@@ -62,6 +62,24 @@ struct AppData {
     separation_errors: Vec<String>,
 }
 
+impl AppData {
+    fn project_is_separating(&self, id: Uuid) -> bool {
+        self.active_separation_project.as_ref().is_some_and(|path| {
+            self.projects
+                .iter()
+                .any(|project| project.id == id && project.path == *path)
+        })
+    }
+
+    fn project_is_open(&self, path: &Path) -> bool {
+        self.projects.iter().any(|project| {
+            project.path == path
+                && (Some(project.id) == self.selected_id
+                    || Some(project.id) == self.pending_open_id)
+        })
+    }
+}
+
 struct QueuedSeparation {
     source: PathBuf,
     project: PathBuf,
@@ -900,9 +918,16 @@ fn install_start_separation(
         if state.separation_running {
             return;
         }
-        if state.take_effect_running {
+        if state.take_effect_running && state.project_is_open(&project) {
             ui.set_separation_state(SeparationState::Error);
             ui.set_separation_message("Wait for take rendering to finish".into());
+            return;
+        }
+        if ui.get_recording_state() != RecordingState::Idle && state.project_is_open(&project) {
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message(
+                "Stop the recording before replacing this project's stems".into(),
+            );
             return;
         }
         let reload_id = exists
@@ -958,6 +983,7 @@ fn install_start_separation(
         ui.set_separation_message(
             format!("Separating {name}. This may take several minutes…").into(),
         );
+        publish_projects(&ui, &data, ui.get_search_query().as_str());
         run_separation_task(
             weak.clone(),
             Arc::clone(&data),
@@ -979,9 +1005,11 @@ fn run_separation_task(
         let root = request.projects_root.clone();
         let result = separation::run(&request, &script);
         let _ = slint::invoke_from_event_loop(move || {
+            let mut reopen_id = None;
             if let Ok(mut state) = data.lock() {
                 state.separation_running = false;
                 state.active_separation_project = None;
+                reopen_id = state.reopen_after_separation.take();
                 match &result {
                     Ok(_) => state.separation_completed += 1,
                     Err(error) => state
@@ -992,6 +1020,7 @@ fn run_separation_task(
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            publish_projects(&ui, &data, ui.get_search_query().as_str());
             match result {
                 Ok(_) => {
                     ui.set_separation_state(SeparationState::Success);
@@ -1011,6 +1040,9 @@ fn run_separation_task(
                 root,
                 ScanIntent::Refresh,
             );
+            if let Some(id) = reopen_id {
+                ui.invoke_open_project(id.to_string().into());
+            }
             start_next_queued_separation(&ui, &data);
         });
     });
@@ -1057,10 +1089,6 @@ fn queue_netease_separation(
 }
 
 fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
-    if ui.get_recording_state() != RecordingState::Idle {
-        update_separation_queue_count(ui, data);
-        return;
-    }
     loop {
         let next = {
             let Ok(mut state) = data.lock() else { return };
@@ -1070,12 +1098,24 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
                 ui.set_separation_queued_count(i32::try_from(waiting).unwrap_or(i32::MAX));
                 return;
             }
+            // Keep FIFO order, but wait only when the next job would replace
+            // the project currently being recorded or rendered.
+            if (ui.get_recording_state() != RecordingState::Idle || state.take_effect_running)
+                && state
+                    .queued_separations
+                    .front()
+                    .is_some_and(|job| state.project_is_open(&job.project))
+            {
+                let waiting = state.queued_separations.len();
+                drop(state);
+                ui.set_separation_queued_count(i32::try_from(waiting).unwrap_or(i32::MAX));
+                return;
+            }
             state.queued_separations.pop_front()
         };
         let Some(next) = next else {
             ui.set_separation_queued_count(0);
-            let mut reopen_id = None;
-            if let Ok(mut state) = data.lock() {
+            if let Ok(state) = data.lock() {
                 if state.separation_completed > 0 || !state.separation_errors.is_empty() {
                     let summary = format!(
                         "Separated {} song(s); {} failed{}",
@@ -1093,10 +1133,6 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
                     });
                     ui.set_separation_message(summary.into());
                 }
-                reopen_id = state.reopen_after_separation.take();
-            }
-            if let Some(id) = reopen_id {
-                ui.invoke_open_project(id.to_string().into());
             }
             return;
         };
@@ -1293,7 +1329,7 @@ fn request_project_open(
 ) {
     if data
         .lock()
-        .is_ok_and(|data| data.separation_running || data.take_effect_running)
+        .is_ok_and(|data| data.project_is_separating(id) || data.take_effect_running)
     {
         return;
     }
@@ -1319,6 +1355,9 @@ fn request_project_open(
         });
         data.open_generation = data.open_generation.wrapping_add(1);
         data.pending_open_id = Some(id);
+        // An explicit project choice supersedes the automatic reopen of the
+        // project that was unloaded for separation.
+        data.reopen_after_separation = None;
         invalidate_lyrics_context(&mut data);
         Some((project, data.open_generation, preferred_take))
     });
@@ -1365,6 +1404,7 @@ fn install_recording_callbacks(
             if window.get_recording_state() != RecordingState::Idle
                 || window.get_take_effect_busy()
                 || window.get_loading()
+                || window.get_current_project_separating()
             {
                 return;
             }
@@ -1451,7 +1491,9 @@ fn install_select_take_callback(
         let recording = Arc::clone(recording);
         ui.unwrap().on_select_existing_take(move |index| {
             if ui.upgrade().is_none_or(|window| {
-                window.get_recording_state() != RecordingState::Idle || window.get_loading()
+                window.get_recording_state() != RecordingState::Idle
+                    || window.get_loading()
+                    || window.get_current_project_separating()
             }) {
                 return;
             }
@@ -1505,7 +1547,9 @@ fn install_apply_take_effect_callback(
         let recording = Arc::clone(recording);
         ui.unwrap().on_apply_take_effect(move |index| {
             if ui.upgrade().is_none_or(|window| {
-                window.get_recording_state() != RecordingState::Idle || window.get_loading()
+                window.get_recording_state() != RecordingState::Idle
+                    || window.get_loading()
+                    || window.get_current_project_separating()
             }) {
                 return;
             }
@@ -1577,6 +1621,7 @@ fn install_apply_take_effect_callback(
                             show_error(&window, format!("Cannot render take: {error}"));
                         }
                     }
+                    start_next_queued_separation(&window, &data);
                 });
             });
         });
@@ -1638,11 +1683,19 @@ fn start_gui_recording(
     playback: &PlaybackService,
     recording: Arc<Mutex<GuiRecordingController>>,
 ) {
+    if ui.upgrade().is_none_or(|window| {
+        window.get_recording_state() != RecordingState::Idle || window.get_loading()
+    }) {
+        return;
+    }
     let selection = data.lock().ok().and_then(|data| {
         if data.take_effect_running {
             return None;
         }
         let selected = data.selected_id?;
+        if data.project_is_separating(selected) {
+            return None;
+        }
         data.projects
             .iter()
             .find(|project| project.id == selected)
@@ -2298,13 +2351,19 @@ fn publish_projects(ui: &K3Window, data: &Mutex<AppData>, query: &str) {
     let Ok(data) = data.lock() else {
         return;
     };
+    ui.set_current_project_separating(
+        data.selected_id
+            .is_some_and(|id| data.project_is_separating(id)),
+    );
     let items = ProjectLibrary::filter(&data.projects, query)
         .into_iter()
         .map(|project| ProjectItem {
             id: project.id.to_string().into(),
             title: project.title.as_str().into(),
             path: path_text(&project.path),
-            status: if project.source_available {
+            status: if data.active_separation_project.as_ref() == Some(&project.path) {
+                ProjectState::Separating
+            } else if project.source_available {
                 ProjectState::Ready
             } else {
                 ProjectState::RepairNeeded

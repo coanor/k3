@@ -705,3 +705,6 @@ msgstr "劇院"
 
 msgid "church"
 msgstr "教堂"
+
+msgid "Stop the recording before replacing this project's stems"
+msgstr "請先停止錄音，再替換此專案的分軌"
