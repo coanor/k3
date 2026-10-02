@@ -12,6 +12,7 @@ from typing import Any
 from .errors import WorkerError
 from .models import BACKING_VOCALS_MODEL_ID, ModelRegistry
 from .runtime import SeparationRuntime
+from .progress import ProgressReporter
 
 ALLOWED_OPTIONS = {
     "segment_size",
@@ -28,9 +29,15 @@ ALLOWED_OPTIONS = {
 class SeparationService:
     """Deep module exposing model discovery, health, and atomic two-stem separation."""
 
-    def __init__(self, registry: ModelRegistry, runtime: SeparationRuntime) -> None:
+    def __init__(
+        self,
+        registry: ModelRegistry,
+        runtime: SeparationRuntime,
+        progress: ProgressReporter | None = None,
+    ) -> None:
         self._registry = registry
         self._runtime = runtime
+        self._progress = progress or ProgressReporter()
 
     def handle(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
@@ -48,6 +55,7 @@ class SeparationService:
         raise WorkerError("method_not_found", f"unknown method: {method}")
 
     def _separate(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._progress.stage("preparing")
         input_path = _required_path(params, "input_path")
         if not input_path.is_file():
             raise WorkerError("input_not_found", f"input is not a file: {input_path}")
@@ -116,6 +124,7 @@ class SeparationService:
                         "separation_failed", "runtime did not produce backing vocals"
                     )
                 sources["backing_vocals"] = result.backing_vocals
+            self._progress.stage("saving_project")
             for name, destination in destinations.items():
                 source = sources[name]
                 if not source.is_file() or source.stat().st_size == 0:

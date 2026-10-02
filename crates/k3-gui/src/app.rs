@@ -999,10 +999,14 @@ fn install_start_separation(
             }
         }
         ui.set_separation_state(SeparationState::Running);
+        ui.set_separation_progress(-1.0);
+        ui.set_separation_stage(separation::ProgressPhase::Preparing.label().into());
+        ui.set_separation_elapsed_seconds(0);
         let name = request.source.file_name().map_or_else(
             || request.source.display().to_string(),
             |name| name.to_string_lossy().into(),
         );
+        ui.set_separation_current_song(name.clone().into());
         ui.set_separation_message(
             format!("Separating {name}. This may take several minutes…").into(),
         );
@@ -1026,7 +1030,19 @@ fn run_separation_task(
 ) {
     thread::spawn(move || {
         let root = request.projects_root.clone();
-        let result = separation::run(&request, &script);
+        let progress_ui = weak.clone();
+        let result = separation::run(&request, &script, move |progress| {
+            let weak = progress_ui.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_separation_stage(progress.phase.label().into());
+                    ui.set_separation_progress(progress.fraction.unwrap_or(-1.0));
+                    ui.set_separation_elapsed_seconds(
+                        i32::try_from(progress.elapsed.as_secs()).unwrap_or(i32::MAX),
+                    );
+                }
+            });
+        });
         let _ = slint::invoke_from_event_loop(move || {
             let mut reopen_id = None;
             if let Ok(mut state) = data.lock() {

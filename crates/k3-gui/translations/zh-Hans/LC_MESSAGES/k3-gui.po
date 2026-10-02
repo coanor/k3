@@ -738,3 +738,36 @@ msgstr "已删除录音 {take_id}"
 
 msgid "Cannot delete take: {error}"
 msgstr "无法删除录音：{error}"
+
+msgid "Stage progress"
+msgstr "阶段进度"
+
+msgid "Elapsed"
+msgstr "已用时"
+
+msgid "Queued"
+msgstr "等待"
+
+msgid "View separation progress"
+msgstr "查看分离进度"
+
+msgid "Preparing separation…"
+msgstr "正在准备分离…"
+
+msgid "Loading vocal model…"
+msgstr "正在加载主唱模型…"
+
+msgid "Separating vocals"
+msgstr "正在分离主唱"
+
+msgid "Loading backing vocal model…"
+msgstr "正在加载和声模型…"
+
+msgid "Separating backing vocals"
+msgstr "正在分离和声"
+
+msgid "Writing audio tracks…"
+msgstr "正在写入音轨…"
+
+msgid "Saving project…"
+msgstr "正在保存工程…"

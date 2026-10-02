@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from .errors import WorkerError
 from .models import SeparationModel
+from .progress import ProgressReporter
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,8 @@ class SeparationRuntime(Protocol):
 class AudioSeparatorRuntime:
     """Runs any allow-listed audio-separator checkpoint and emits two WAV stems."""
 
-    def __init__(self, model_dir: Path) -> None:
+    def __init__(self, model_dir: Path, progress: ProgressReporter | None = None) -> None:
+        self._progress = progress or ProgressReporter()
         self._model_dir = model_dir.expanduser().resolve()
         self._model_dir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("TORCH_HOME", str(self._model_dir / "torch"))
@@ -136,8 +138,9 @@ class AudioSeparatorRuntime:
         backing_dir.mkdir()
         primary = self._separate_once(input_path, primary_dir, model, options)
         separated_vocals = self._separate_once(
-            primary.vocals, backing_dir, backing_vocals_model, options
+            primary.vocals, backing_dir, backing_vocals_model, options, "backing_vocals"
         )
+        self._progress.stage("writing_audio")
         lead_vocals = scratch_dir / "vocals.wav"
         backing_vocals = scratch_dir / "backing-vocals.wav"
         accompaniment = scratch_dir / "accompaniment.wav"
@@ -161,7 +164,9 @@ class AudioSeparatorRuntime:
         scratch_dir: Path,
         model: SeparationModel,
         options: dict[str, Any],
+        pass_kind: str = "vocals",
     ) -> RuntimeResult:
+        self._progress.stage(f"loading_{pass_kind}")
         try:
             from audio_separator.separator import Separator
         except ImportError as error:
@@ -216,7 +221,10 @@ class AudioSeparatorRuntime:
             separator = Separator(**common)
             separator.load_model(model_filename=model.filename)
             output_names = {stem: self._output_name(stem) for stem in model.output_stems}
-            separator.separate(str(input_path), output_names)
+            self._progress.stage(f"separating_{pass_kind}")
+            with self._progress.watch_inference():
+                separator.separate(str(input_path), output_names)
+            self._progress.stage("writing_audio")
             vocals = scratch_dir / "vocals.wav"
             accompaniment = scratch_dir / "accompaniment.wav"
             if not accompaniment.is_file():

@@ -29,6 +29,75 @@ export component SectionLabel inherits Text {
     letter-spacing: 1.3px;
 }
 
+export component SeparationProgressCard inherits Rectangle {
+    in property <string> song;
+    in property <string> stage;
+    in property <float> progress: -1;
+    in property <string> elapsed;
+    in property <int> queued;
+    in property <bool> clickable: false;
+    callback activated;
+    property <int> pulse: 0;
+
+    height: 112px;
+    border-radius: 6px;
+    background: Tokens.raised;
+    Timer {
+        interval: 50ms;
+        running: root.progress < 0;
+        triggered => { root.pulse = root.pulse >= 40 ? 0 : root.pulse + 1; }
+    }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        Text { text: root.song; color: Tokens.ink; font-size: 13px; overflow: elide; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.stage; color: Tokens.muted; font-size: 11px; horizontal-stretch: 1; overflow: elide; }
+            if root.progress >= 0: Text {
+                text: round(root.progress * 100) + "%";
+                accessible-label: Strings.stage-progress + " " + self.text;
+                color: Tokens.cue;
+                font-size: 11px;
+            }
+        }
+        Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Tokens.line;
+            clip: true;
+            Rectangle {
+                width: root.progress >= 0 ? parent.width * min(1, max(0, root.progress)) : parent.width * 0.25;
+                x: root.progress >= 0 ? 0px : (parent.width - self.width) * (root.pulse <= 20 ? root.pulse / 20.0 : (40 - root.pulse) / 20.0);
+                height: parent.height;
+                border-radius: 2px;
+                background: Tokens.cue;
+                animate width { duration: 180ms; }
+            }
+        }
+        Text {
+            text: Strings.elapsed + " " + root.elapsed + " · " + Strings.queued + " " + root.queued;
+            color: Tokens.faint;
+            font-size: 10px;
+            overflow: elide;
+        }
+    }
+    progress-focus := FocusScope {
+        enabled: root.clickable;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    if root.clickable: TouchArea {
+        accessible-role: button;
+        accessible-label: Strings.view-separation-progress;
+        clicked => { progress-focus.focus(); root.activated(); }
+    }
+    accessible-role: groupbox;
+    accessible-label: Strings.stage-progress;
+}
+
 export component ActionButton inherits Rectangle {
     public function focus-button() { action-focus.focus(); }
     in property <string> label;

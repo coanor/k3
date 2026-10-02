@@ -1,13 +1,98 @@
 use std::{
     env,
-    fs::File,
+    fs::{self, File},
     io::{BufReader, Read},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::{Duration, Instant},
 };
 
 use crate::logging::DiagnosticLog;
 use k3_core::{FileProjectRepository, ProjectRepository, SeparationState};
+use serde::Deserialize;
+use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProgressPhase {
+    Preparing,
+    LoadingVocals,
+    SeparatingVocals,
+    LoadingBackingVocals,
+    SeparatingBackingVocals,
+    WritingAudio,
+    SavingProject,
+}
+
+impl ProgressPhase {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Preparing => "Preparing separation…",
+            Self::LoadingVocals => "Loading vocal model…",
+            Self::SeparatingVocals => "Separating vocals",
+            Self::LoadingBackingVocals => "Loading backing vocal model…",
+            Self::SeparatingBackingVocals => "Separating backing vocals",
+            Self::WritingAudio => "Writing audio tracks…",
+            Self::SavingProject => "Saving project…",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SeparationProgress {
+    pub(crate) phase: ProgressPhase,
+    pub(crate) fraction: Option<f32>,
+    pub(crate) elapsed: Duration,
+}
+
+#[derive(Deserialize)]
+struct ProgressDocument {
+    schema_version: u32,
+    phase: ProgressPhase,
+    fraction: Option<f32>,
+}
+
+struct ProgressFile {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+impl ProgressFile {
+    fn create(projects_root: &Path) -> std::io::Result<Self> {
+        let directory = projects_root.join(format!(".k3-progress-{}", Uuid::new_v4()));
+        fs::create_dir(&directory)?;
+        Ok(Self {
+            path: directory.join("progress.json"),
+            directory,
+        })
+    }
+
+    fn read(&self) -> Option<ProgressDocument> {
+        let mut bytes = Vec::new();
+        File::open(&self.path)
+            .ok()?
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() > 4096 {
+            return None;
+        }
+        let document: ProgressDocument = serde_json::from_slice(&bytes).ok()?;
+        (document.schema_version == 1
+            && document
+                .fraction
+                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value)))
+        .then_some(document)
+    }
+}
+
+impl Drop for ProgressFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Profile {
@@ -132,7 +217,11 @@ pub(crate) fn bundled_script() -> Result<PathBuf, String> {
     ))
 }
 
-pub(crate) fn run(request: &SeparationRequest, script: &Path) -> Result<PathBuf, String> {
+pub(crate) fn run(
+    request: &SeparationRequest,
+    script: &Path,
+    progress: impl FnMut(SeparationProgress),
+) -> Result<PathBuf, String> {
     let (project, exists) = destination(&request.source, &request.projects_root)?;
     if exists && !request.allow_replace {
         return Err(
@@ -159,9 +248,12 @@ pub(crate) fn run(request: &SeparationRequest, script: &Path) -> Result<PathBuf,
     if let Some(model_id) = request.model_id {
         command.env("K3_MODEL", model_id);
     }
-    let output = command
-        .output()
-        .map_err(|error| format!("Could not start the separation script: {error}"))?;
+    let progress_file = ProgressFile::create(&request.projects_root).ok();
+    command.env_remove("K3_SEPARATION_PROGRESS_PATH");
+    if let Some(file) = &progress_file {
+        command.env("K3_SEPARATION_PROGRESS_PATH", &file.path);
+    }
+    let output = monitor_process(command, progress_file.as_ref(), progress)?;
     if output.status.success() {
         return Ok(project);
     }
@@ -176,6 +268,52 @@ pub(crate) fn run(request: &SeparationRequest, script: &Path) -> Result<PathBuf,
     }
     Err("Separation failed. Open About to find the diagnostics log, and check the separator runtime."
         .into())
+}
+
+fn monitor_process(
+    mut command: Command,
+    progress_file: Option<&ProgressFile>,
+    mut progress: impl FnMut(SeparationProgress),
+) -> Result<Output, String> {
+    let started = Instant::now();
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Could not start the separation script: {error}"))?;
+    let (sender, receiver) = mpsc::channel();
+    // 持续排空 stdout/stderr，避免日志塞满管道阻塞分离。
+    let waiter = thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    let mut phase = ProgressPhase::Preparing;
+    let mut fraction = None;
+    let mut previous = None;
+    let result = loop {
+        if let Some(document) = progress_file.and_then(ProgressFile::read) {
+            phase = document.phase;
+            fraction = document.fraction;
+        }
+        let elapsed = started.elapsed();
+        let current = (phase, fraction, elapsed.as_secs());
+        if previous != Some(current) {
+            progress(SeparationProgress {
+                phase,
+                fraction,
+                elapsed,
+            });
+            previous = Some(current);
+        }
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(output) => break output.map_err(|error| error.to_string()),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                break Err("Could not collect the separation script result".into());
+            }
+        }
+    };
+    let _ = waiter.join();
+    result
 }
 
 fn platform_command(script: &Path) -> Command {
@@ -205,7 +343,10 @@ fn platform_command(script: &Path) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Profile, SeparationRequest, destination, retryable_unprepared_destination, run};
+    use super::{
+        Profile, ProgressFile, ProgressPhase, SeparationRequest, destination,
+        retryable_unprepared_destination, run,
+    };
     use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
     use std::{fs, path::Path};
 
@@ -291,7 +432,7 @@ mod tests {
             allow_replace: false,
         };
         assert!(
-            run(&request, Path::new("missing.sh"))
+            run(&request, Path::new("missing.sh"), |_| {})
                 .unwrap_err()
                 .contains("already exists")
         );
@@ -319,7 +460,7 @@ mod tests {
             allow_replace: false,
         };
         assert_eq!(
-            run(&request, &script).unwrap(),
+            run(&request, &script, |_| {}).unwrap(),
             projects.join("song with space")
         );
         let invocation = fs::read_to_string(projects.join("invocation.txt")).unwrap();
@@ -335,5 +476,108 @@ mod tests {
                 projects.to_str().unwrap(),
             ]
         );
+    }
+
+    #[test]
+    fn ignores_incomplete_unknown_and_invalid_progress_documents() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let file = ProgressFile::create(sandbox.path()).unwrap();
+        for document in [
+            r#"{"schema_version":1,"phase":"separating_vocals""#,
+            r#"{"schema_version":2,"phase":"separating_vocals","fraction":0.5}"#,
+            r#"{"schema_version":1,"phase":"unknown","fraction":0.5}"#,
+            r#"{"schema_version":1,"phase":"separating_vocals","fraction":1.5}"#,
+        ] {
+            fs::write(&file.path, document).unwrap();
+            assert!(file.read().is_none());
+        }
+        fs::write(
+            &file.path,
+            r#"{"schema_version":1,"phase":"separating_vocals","fraction":0.37}"#,
+        )
+        .unwrap();
+        let document = file.read().unwrap();
+        assert_eq!(document.phase, ProgressPhase::SeparatingVocals);
+        assert_eq!(document.fraction, Some(0.37));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_live_progress_drains_output_and_cleans_telemetry() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let projects = sandbox.path().join("projects");
+        fs::create_dir(&projects).unwrap();
+        let source = sandbox.path().join("song.wav");
+        fs::write(&source, b"audio").unwrap();
+        let script = sandbox.path().join("separate.sh");
+        fs::write(
+            &script,
+            r#"python3 - <<'PY'
+import json, os, pathlib, sys, time
+path = pathlib.Path(os.environ["K3_SEPARATION_PROGRESS_PATH"])
+path.write_text(json.dumps({"schema_version":1,"phase":"loading_vocals","fraction":None}))
+sys.stdout.write("x" * 500000)
+sys.stderr.write("y" * 500000)
+sys.stdout.flush()
+sys.stderr.flush()
+time.sleep(0.4)
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps({"schema_version":1,"phase":"separating_vocals","fraction":0.37}))
+os.replace(temporary, path)
+time.sleep(0.5)
+(path.parent.parent / "finished").write_text("done")
+PY
+"#,
+        )
+        .unwrap();
+        let request = SeparationRequest {
+            source,
+            projects_root: projects.clone(),
+            profile: Profile::Quality,
+            model_id: None,
+            allow_replace: false,
+        };
+        let mut saw_loading = false;
+        let mut saw_live_fraction = false;
+        run(&request, &script, |progress| {
+            saw_loading |= progress.phase == ProgressPhase::LoadingVocals;
+            if progress.fraction == Some(0.37) {
+                assert!(!projects.join("finished").exists());
+                saw_live_fraction = true;
+            }
+        })
+        .unwrap();
+        assert!(saw_loading && saw_live_fraction);
+        assert!(fs::read_dir(&projects).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".k3-progress-")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_worker_keeps_elapsed_indicator_without_inventing_percentage() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let source = sandbox.path().join("song.wav");
+        fs::write(&source, b"audio").unwrap();
+        let script = sandbox.path().join("legacy.sh");
+        fs::write(&script, "sleep 1.1\n").unwrap();
+        let request = SeparationRequest {
+            source,
+            projects_root: sandbox.path().into(),
+            profile: Profile::Quality,
+            model_id: None,
+            allow_replace: false,
+        };
+        let mut elapsed = 0;
+        run(&request, &script, |progress| {
+            assert_eq!(progress.fraction, None);
+            elapsed = progress.elapsed.as_secs();
+        })
+        .unwrap();
+        assert!(elapsed >= 1);
     }
 }
