@@ -28,6 +28,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "ChineseSimplified-LICENSE.txt"; DestDir: "{app}\licenses"; DestName: "InnoSetup-ChineseSimplified-MIT.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\K3"; Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"
