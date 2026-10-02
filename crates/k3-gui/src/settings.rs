@@ -92,6 +92,8 @@ pub struct GuiSettings {
     #[serde(default)]
     pub separation_profile: GuiSeparationProfile,
     #[serde(default)]
+    pub separation_quality_model: GuiQualityModel,
+    #[serde(default)]
     pub language: GuiLanguage,
     pub window: WindowSize,
     pub last_project_id: Option<String>,
@@ -105,6 +107,7 @@ impl Default for GuiSettings {
             volume: 1.0,
             recording: RecordingSettings::default(),
             separation_profile: GuiSeparationProfile::default(),
+            separation_quality_model: GuiQualityModel::default(),
             language: GuiLanguage::default(),
             window: WindowSize::default(),
             last_project_id: None,
@@ -142,6 +145,45 @@ impl GuiSeparationProfile {
             3 => Self::Compatible,
             _ => return None,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GuiQualityModel {
+    #[default]
+    RuntimeDefault,
+    KimVocal2,
+    BsRoformer1297,
+}
+
+impl GuiQualityModel {
+    #[must_use]
+    pub fn index(self) -> i32 {
+        match self {
+            Self::RuntimeDefault => 0,
+            Self::KimVocal2 => 1,
+            Self::BsRoformer1297 => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(index: i32) -> Option<Self> {
+        Some(match index {
+            0 => Self::RuntimeDefault,
+            1 => Self::KimVocal2,
+            2 => Self::BsRoformer1297,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn model_id(self) -> Option<&'static str> {
+        match self {
+            Self::RuntimeDefault => None,
+            Self::KimVocal2 => Some("mel-band-roformer-kim-vocal-2"),
+            Self::BsRoformer1297 => Some("bs-roformer-viperx-1297"),
+        }
     }
 }
 

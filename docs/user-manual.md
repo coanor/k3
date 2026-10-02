@@ -68,7 +68,7 @@ target/release/k3-gui
 ```
 
 首次启动只需选择已有 K3 工程所在目录。GUI 与 CLI/TUI 共享工程目录中的
-`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、默认分离档位、界面语言、
+`project.json`，但 GUI 的工程根目录、主音量、录音默认效果、默认分离档位与 Quality 模型、界面语言、
 窗口尺寸和上次工程保存在独立的 `gui.json` 中，不复用 TUI 配置。
 点击左上角的 `Settings` 可查看配置文件路径、更换工程目录并调整音量、默认分离档位和语言；
 录音效果仍使用播放区底部唯一的 `Effect` 下拉框。设置自动保存，无需手改 JSON。
@@ -84,6 +84,11 @@ GUI 再次启动时会加载上次工程，但始终从头保持暂停。
 Quality 或 Compatible 档位，再点击 `Queue selected`。首次默认使用 Quality，之后记住
 上次选择的档位；所选歌曲按顺序进入
 分离队列，也可以在分离期间继续选歌追加。只选一首时按钮显示 `Create and separate`。
+选择 Quality 时可进一步选择 `Runtime default`、`Kim Vocal 2` 或 `BS RoFormer 1297`。
+`Runtime default` 沿用分离运行包 `config.json` 指定的模型；未指定时使用 worker 的
+Quality 默认模型。新选项会随 GUI 设置自动保存，入队时固定到每首任务；
+更改后要对已有工程点击 `Replace stems` 才会生成新分轨。不同模型可能对特定乐器有不同
+误分，但不能保证某一款对所有歌曲更好；首次使用新模型可能需要下载权重。
 按 `Esc` 可从备歌页返回歌词；后台下载与分离任务继续执行。
 每首分离完成后左侧工程库会自动刷新。此功能调用发行包中的 `separate.sh`（Linux）或 `separate.ps1`
 （Windows），需要先按第 3 节安装分离 worker；首次使用所选模型时可能下载权重。

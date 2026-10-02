@@ -71,6 +71,7 @@ fn netease_selection_can_be_queued_during_a_download_and_separation() {
             PathBuf::from("one.wav"),
             &PathBuf::from("."),
             1,
+            0,
             false
         ),
         1
@@ -82,6 +83,7 @@ fn netease_selection_can_be_queued_during_a_download_and_separation() {
             PathBuf::from("two.wav"),
             &PathBuf::from("."),
             2,
+            0,
             false
         ),
         2
@@ -90,7 +92,7 @@ fn netease_selection_can_be_queued_during_a_download_and_separation() {
     let started = Rc::new(RefCell::new(Vec::new()));
     let observed = Rc::clone(&started);
     let callback_data = Arc::clone(&data);
-    ui.on_start_separation(move |source, profile, _| {
+    ui.on_start_separation(move |source, profile, _, _| {
         callback_data.lock().unwrap().separation_running = true;
         observed.borrow_mut().push((source.to_string(), profile));
     });

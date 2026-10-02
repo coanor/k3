@@ -42,6 +42,7 @@ pub(crate) struct SeparationRequest {
     pub(crate) source: PathBuf,
     pub(crate) projects_root: PathBuf,
     pub(crate) profile: Profile,
+    pub(crate) model_id: Option<&'static str>,
     pub(crate) allow_replace: bool,
 }
 
@@ -155,6 +156,9 @@ pub(crate) fn run(request: &SeparationRequest, script: &Path) -> Result<PathBuf,
             "K3_NO_OVERWRITE",
             if request.allow_replace { "0" } else { "1" },
         );
+    if let Some(model_id) = request.model_id {
+        command.env("K3_MODEL", model_id);
+    }
     let output = command
         .output()
         .map_err(|error| format!("Could not start the separation script: {error}"))?;
@@ -283,6 +287,7 @@ mod tests {
             source,
             projects_root: projects,
             profile: Profile::Balanced,
+            model_id: None,
             allow_replace: false,
         };
         assert!(
@@ -303,13 +308,14 @@ mod tests {
         let script = sandbox.path().join("separate.sh");
         fs::write(
             &script,
-            "printf '%s\\n' \"$K3_PROFILE\" \"$K3_NO_OVERWRITE\" \"$1\" \"$2\" \"$3\" \"$4\" > \"$4/invocation.txt\"\n",
+            "printf '%s\\n' \"$K3_PROFILE\" \"$K3_MODEL\" \"$K3_NO_OVERWRITE\" \"$1\" \"$2\" \"$3\" \"$4\" > \"$4/invocation.txt\"\n",
         )
         .unwrap();
         let request = SeparationRequest {
             source: source.clone(),
             projects_root: projects.clone(),
             profile: Profile::Quality,
+            model_id: Some("bs-roformer-viperx-1297"),
             allow_replace: false,
         };
         assert_eq!(
@@ -321,6 +327,7 @@ mod tests {
             invocation.lines().collect::<Vec<_>>(),
             [
                 "quality",
+                "bs-roformer-viperx-1297",
                 "1",
                 "-f",
                 source.to_str().unwrap(),

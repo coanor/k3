@@ -16,7 +16,8 @@ use crate::{
     logging::DiagnosticLog,
     separation::{self, Profile, SeparationRequest},
     settings::{
-        GuiLanguage, GuiSeparationProfile, GuiSettings, SettingsWriter, SettingsWriterHandle,
+        GuiLanguage, GuiQualityModel, GuiSeparationProfile, GuiSettings, SettingsWriter,
+        SettingsWriterHandle,
     },
     ui_text,
 };
@@ -65,6 +66,7 @@ struct QueuedSeparation {
     source: PathBuf,
     project: PathBuf,
     profile_index: i32,
+    quality_model_index: i32,
     allow_replace: bool,
 }
 
@@ -135,6 +137,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     slint::select_bundled_translation(settings.language.locale())?;
     ui.set_language_index(settings.language.index());
     ui.set_separation_profile(settings.separation_profile.index());
+    ui.set_quality_model_index(settings.separation_quality_model.index());
     if let Ok(path) = GuiSettings::path() {
         ui.set_settings_path(path_text(&path));
     }
@@ -317,6 +320,21 @@ fn install_preference_callbacks(
             };
             if let Ok(mut data) = data.lock() {
                 data.settings.separation_profile = profile;
+                if data.settings_writable {
+                    settings_writer.persist(data.settings.clone());
+                }
+            }
+        });
+    }
+    {
+        let data = Arc::clone(data);
+        let settings_writer = settings_writer.clone();
+        ui.on_select_quality_model(move |index| {
+            let Some(model) = GuiQualityModel::from_index(index) else {
+                return;
+            };
+            if let Ok(mut data) = data.lock() {
+                data.settings.separation_quality_model = model;
                 if data.settings_writable {
                     settings_writer.persist(data.settings.clone());
                 }
@@ -793,10 +811,12 @@ fn install_queue_selected_sources(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
                 skipped.push(format!("{name}: already queued or separating"));
                 continue;
             }
+            let quality_model_index = state.settings.separation_quality_model.index();
             state.queued_separations.push_back(QueuedSeparation {
                 source: selected.source,
                 project,
                 profile_index,
+                quality_model_index,
                 allow_replace: selected.allow_replace,
             });
             added += 1;
@@ -825,7 +845,7 @@ fn install_start_separation(
     let data = Arc::clone(data);
     let playback = Arc::clone(playback);
     let settings_writer = settings_writer.clone();
-    ui.on_start_separation(move |source, profile_index, allow_replace| {
+    ui.on_start_separation(move |source, profile_index, model_index, allow_replace| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
@@ -838,10 +858,15 @@ fn install_start_separation(
             ui.set_separation_message("Choose a projects folder first".into());
             return;
         };
+        let profile = Profile::from_index(profile_index);
+        let quality_model = GuiQualityModel::from_index(model_index).unwrap_or_default();
         let request = SeparationRequest {
             source: PathBuf::from(source.as_str()),
             projects_root: root.clone(),
-            profile: Profile::from_index(profile_index),
+            profile,
+            model_id: (profile == Profile::Quality)
+                .then(|| quality_model.model_id())
+                .flatten(),
             allow_replace,
         };
         let (project, exists) = match separation::destination(&request.source, &root) {
@@ -997,6 +1022,7 @@ fn queue_netease_separation(
     source: PathBuf,
     projects_root: &Path,
     profile_index: i32,
+    quality_model_index: i32,
     allow_replace: bool,
 ) -> usize {
     // The download handler already validated the file and destination.
@@ -1021,6 +1047,7 @@ fn queue_netease_separation(
             source,
             project,
             profile_index,
+            quality_model_index,
             allow_replace,
         });
     }
@@ -1077,6 +1104,7 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
         ui.invoke_start_separation(
             path_text(&next.source),
             next.profile_index,
+            next.quality_model_index,
             next.allow_replace,
         );
         if data.lock().is_ok_and(|state| state.separation_running) {

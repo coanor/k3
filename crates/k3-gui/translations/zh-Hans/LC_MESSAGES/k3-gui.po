@@ -208,6 +208,21 @@ msgstr "高质量"
 msgid "Compatible"
 msgstr "兼容"
 
+msgid "QUALITY MODEL"
+msgstr "高质量模型"
+
+msgid "Runtime default"
+msgstr "运行环境默认模型"
+
+msgid "Kim Vocal 2"
+msgstr "Kim Vocal 2"
+
+msgid "BS RoFormer 1297"
+msgstr "BS RoFormer 1297"
+
+msgid "Try another model if an instrument appears in vocals. New weights may download on first use."
+msgstr "乐器误入人声时可试另一款模型；首次使用可能下载权重。"
+
 msgid "Requires the separator runtime installed beside K3. The first run may download a model."
 msgstr "需要在 K3 旁安装分离运行环境。首次运行可能下载模型。"
 

@@ -33,6 +33,7 @@ struct DownloadJob {
     song: Song,
     projects_root: PathBuf,
     profile_index: i32,
+    quality_model_index: i32,
 }
 
 #[derive(Default)]
@@ -407,6 +408,7 @@ fn install_download_callback(ui: &K3Window, net: &Arc<NetEaseUi>, data: &Arc<Mut
                 song: song.clone(),
                 projects_root: root.clone(),
                 profile_index: ui.get_separation_profile(),
+                quality_model_index: ui.get_quality_model_index(),
             }) {
                 added += 1;
             }
@@ -527,6 +529,7 @@ fn finish_download(
                     path,
                     &job.projects_root,
                     job.profile_index,
+                    job.quality_model_index,
                     true,
                 );
                 ui.set_netease_message(
@@ -552,6 +555,7 @@ fn finish_download(
                     path,
                     &job.projects_root,
                     job.profile_index,
+                    job.quality_model_index,
                     false,
                 );
                 ui.set_netease_message(
@@ -805,6 +809,7 @@ mod tests {
             },
             projects_root: PathBuf::from("/projects"),
             profile_index: 1,
+            quality_model_index: 0,
         }
     }
 
