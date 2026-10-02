@@ -4,12 +4,14 @@ K3 是一个本地优先的终端 K 歌工作区。目前可创建歌曲工程�
 歌词、使用本地 GPU 模型分离人声和伴奏，并在 TUI 中播放和切换音轨。
 
 本文以 Ubuntu 24.04、Windows WSL2 和 Windows 11 原生环境为当前支持环境。
-Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离。GitHub Actions 会生成 macOS
-Intel 与 Apple Silicon 二进制包，但 macOS 的音频设备和模型安装尚未完成实机验证。
+Windows 原生版本支持播放、录音和 GPU/CPU 音轨分离。完整离线包覆盖 Windows、
+Linux 与 macOS Apple Silicon，包含独立 Python、CPU 依赖、FFmpeg 和默认模型。
+Intel macOS 提供明确标注的纯 CLI 包；macOS 音频设备尚未完成实机验证。
+解压运行步骤见[离线发行包说明](offline-package.md)。
 
 ## 1. 系统要求
 
-基础程序需要：
+从源码构建和安装分离环境需要：
 
 - Rust stable；
 - ALSA 开发库（Ubuntu/WSL 使用 `sudo apt install libasound2-dev`）；
@@ -73,13 +75,16 @@ make dist
 
 ```bash
 make dist-linux
-make dist-windows
+make dist-windows  # Windows 原生环境
+make dist-windows-cli  # Linux/WSL 交叉构建纯 CLI
 make dist-macos
 ```
 
-`dist-windows` 在 Linux/WSL 中使用 `cargo-xwin`；缺少工具时先运行
+完整包在本机通过 uv 准备独立 Python、CPU 依赖和默认模型，并在打包后执行真实
+分离检查。已有模型可用 `MODEL_CACHE=/path/to/models` 复用。
+`dist-windows-cli` 在 Linux/WSL 中使用 `cargo-xwin`；缺少工具时先运行
 `cargo install cargo-xwin`。如果 `llvm-lib` 不在 `PATH`，通过
-`make dist-windows LLVM_BIN=/path/to/llvm/bin` 指定。macOS 目标必须在 macOS
+`make dist-windows-cli LLVM_BIN=/path/to/llvm/bin` 指定。macOS 目标必须在 macOS
 主机或 GitHub macOS runner 上运行，因为构建需要 Apple SDK。
 
 要从本机触发 GitHub 上的完整四平台构建，先安装并登录 GitHub CLI，然后运行：
@@ -99,7 +104,7 @@ make dist-all REF=main
 
 - `k3-linux-x86_64.tar.gz`；
 - `k3-windows-x86_64.zip`；
-- `k3-macos-x86_64.tar.gz`；
+- `k3-macos-x86_64-cli.tar.gz`；
 - `k3-macos-aarch64.tar.gz`。
 
 手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天。推送版本 tag 时，
@@ -111,11 +116,16 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Windows 包使用静态 MSVC C runtime。Linux 包包含 `separate.sh`；Windows 包包含
-`separate.ps1` 和 `install-separator.ps1`。macOS 包目前只承诺 K3 原生二进制构建，
-因此只包含 `k3`、README 和文档，不包含尚未验证的 Python 分离环境。
+Windows 包使用静态 MSVC C runtime。完整包统一包含原生 worker 启动器、独立
+Python、CPU 分离依赖、FFmpeg、默认 Fast / Balanced / Quality 模型及所需配置。
+Windows 额外包含 `separate.ps1` 和 `install-separator.ps1`，便于安装可选 GPU 环境。
+Intel macOS 仅提供 `-cli` 包，因为新版官方 PyTorch 不支持该平台。所有包都先解压
+到新目录验证启动；完整包还会禁止网络加载全部随包模型，并实际分离短音频。
 
-## 3. 安装本地分离 worker
+## 3. 从源码安装本地分离 worker
+
+使用完整离线发行包时可跳过本节，默认 worker 与模型已随包提供。需要 GPU 加速
+或维护源码环境时，再按以下说明安装独立环境。
 
 针对 NVIDIA GPU，运行仓库提供的安装脚本：
 
@@ -171,8 +181,8 @@ Rust 工具链。当前 Arch 老机器的 i7-2620M（AVX、4 线程、约 10 GiB
 
 ### 3.1 Windows 原生安装
 
-Windows 发行包内包含 `k3.exe`、`install-separator.ps1`、`separate.ps1` 和
-worker 源码。在 PowerShell 中进入解压目录，临时允许本次会话执行本地脚本，再安装
+Windows 完整发行包默认自带 CPU worker；以下步骤用于额外安装 GPU 或独立
+Python 环境。在 PowerShell 中进入解压目录，临时允许本次会话执行本地脚本，再安装
 GPU worker：
 
 ```powershell

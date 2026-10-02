@@ -3,7 +3,13 @@
 worker 将模型 runtime 隔离在 Rust 进程之外。它从标准输入逐行读取 JSON 请求，
 并为每个请求向标准输出写入且仅写入一行 JSON 响应；依赖库日志重定向到标准错误。
 
-## Linux 安装
+## 完整离线包
+
+Windows、Linux 与 macOS Apple Silicon 完整发行包已包含独立 Python、CPU 依赖、
+FFmpeg、默认模型和原生 worker 启动器，无需执行下面的源码安装步骤。
+详见[离线发行包说明](../../docs/offline-package.md)。
+
+## Linux 源码安装
 
 RTX 5070 Ti 开发机可使用仓库内安装脚本。脚本使用 `uv`、PyTorch 2.11 和
 CUDA 12.8，并避开需要 Ubuntu Python 开发头文件的可选 `diffq` 扩展：

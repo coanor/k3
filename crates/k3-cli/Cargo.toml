@@ -3,6 +3,11 @@ name = "k3"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "k3"
+
+[[bin]]
+name = "k3-separator"
+path = "src/separator_launcher.rs"
 
 [dependencies]
 clap.workspace = true

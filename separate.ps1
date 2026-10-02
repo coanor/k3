@@ -76,12 +76,18 @@ if (-not (Test-Path -LiteralPath $script:K3Bin -PathType Leaf)) {
     throw "找不到 k3.exe：$script:K3Bin"
 }
 
+$bundledWorker = Join-Path $PSScriptRoot "k3-separator.exe"
+$defaultWorker = if (Test-Path -LiteralPath $bundledWorker -PathType Leaf) {
+    $bundledWorker
+} else {
+    Join-Path $PSScriptRoot ".venv-separator\Scripts\k3-separator.exe"
+}
 $worker = if (-not [string]::IsNullOrWhiteSpace($env:K3_WORKER)) {
     $env:K3_WORKER
 } elseif ($null -ne $config) {
-    Get-PropertyValue -Object $separationConfig -Name "worker" -Default (Join-Path $PSScriptRoot ".venv-separator\Scripts\k3-separator.exe")
+    Get-PropertyValue -Object $separationConfig -Name "worker" -Default $defaultWorker
 } else {
-    Join-Path $PSScriptRoot ".venv-separator\Scripts\k3-separator.exe"
+    $defaultWorker
 }
 if (-not [IO.Path]::IsPathRooted($worker)) {
     $worker = Join-Path $PSScriptRoot $worker

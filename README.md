@@ -51,3 +51,10 @@ the local model outside the Rust process. It supports profile defaults, explicit
 checkpoint selection, custom registries, SHA-256 provenance, and normalized
 `vocals.wav` / `accompaniment.wav` output. See its
 [README](python/separator/README.md) for installation and protocol examples.
+
+## 离线发行包
+
+Windows x86_64、Linux x86_64 与 macOS Apple Silicon 的完整包包含程序、独立
+Python、CPU 分离依赖、FFmpeg 和默认模型；解压后无需安装 Python 或在线下载模型。
+Intel macOS 提供纯 CLI 包。构建入口为 `make dist` 和 GitHub Actions，具体用法见
+[离线发行包说明](docs/offline-package.md)。

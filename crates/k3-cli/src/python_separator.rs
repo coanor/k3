@@ -55,7 +55,8 @@ impl PythonStemSeparator {
                 self.config.log_path.display()
             )
         })?;
-        let mut command = Command::new(&self.config.worker);
+        let worker = resolve_worker(&self.config.worker);
+        let mut command = Command::new(&worker);
         if let Some(model_dir) = &self.config.model_dir {
             command.arg("--model-dir").arg(model_dir);
         }
@@ -205,6 +206,29 @@ impl PythonStemSeparator {
             },
         })
     }
+}
+
+/// 默认 worker 优先使用当前发行包旁的原生入口；显式配置仍按原路径运行。
+fn resolve_worker(worker: &Path) -> PathBuf {
+    if worker == Path::new("k3-separator")
+        && let Ok(executable) = env::current_exe()
+        && let Some(root) = executable.parent()
+    {
+        let bundled = root.join(if cfg!(windows) {
+            "k3-separator.exe"
+        } else {
+            "k3-separator"
+        });
+        let python = root.join(if cfg!(windows) {
+            "runtime/python/python.exe"
+        } else {
+            "runtime/python/bin/python3"
+        });
+        if bundled.is_file() && python.is_file() {
+            return bundled;
+        }
+    }
+    worker.to_path_buf()
 }
 
 pub fn separation_log_path() -> io::Result<PathBuf> {
