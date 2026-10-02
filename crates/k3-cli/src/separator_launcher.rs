@@ -33,7 +33,7 @@ fn run() -> Result<i32, Box<dyn Error>> {
         .any(|arg| arg == "--model-dir" || arg.to_string_lossy().starts_with("--model-dir="));
     let mut command = Command::new(python);
     command
-        .args(["-I", "-m", "k3_separator"])
+        .args(["-I", "-X", "utf8", "-m", "k3_separator"])
         .env("PATH", env::join_paths(paths)?)
         .env("PYTHONNOUSERSITE", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")

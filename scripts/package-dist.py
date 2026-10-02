@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -90,6 +91,8 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=("linux", "windows", "macos"))
     parser.add_argument("name")

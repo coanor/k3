@@ -19,6 +19,7 @@ PYTHON_VERSION = "3.13.15"
 
 def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
     print("执行：", " ".join(str(arg) for arg in args), flush=True)
+    kwargs.setdefault("env", dict(os.environ, PYTHONUTF8="1"))
     return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
@@ -83,6 +84,8 @@ def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="新建 runtime 输出目录")
     parser.add_argument("--model-cache", type=Path, help="复用已有模型缓存，仍会校验固定摘要")

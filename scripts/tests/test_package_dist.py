@@ -3,6 +3,9 @@
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -16,6 +19,16 @@ spec.loader.exec_module(packager)
 
 
 class PackageTests(unittest.TestCase):
+    def test_build_tools_handle_a_non_utf8_windows_style_pipe(self):
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        for filename in ("build-runtime.py", "package-dist.py", "check-dist.py", "check-runtime.py"):
+            with self.subTest(script=filename):
+                output = subprocess.run(
+                    [sys.executable, str(SCRIPT.parent / filename), "--help"],
+                    env=environment, capture_output=True, check=True,
+                )
+                self.assertTrue(any(ord(character) > 127 for character in output.stdout.decode("utf-8")))
+
     def fixture(self, root: Path, platform: str):
         suffix = ".exe" if platform == "windows" else ""
         binary = root / f"k3{suffix}"

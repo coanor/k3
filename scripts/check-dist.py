@@ -11,6 +11,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tarfile
 import tempfile
 import wave
@@ -21,6 +22,7 @@ SCRIPTS = Path(__file__).resolve().parent
 
 
 def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
+    kwargs["env"] = dict(kwargs.get("env", os.environ), PYTHONUTF8="1")
     return subprocess.run([str(arg) for arg in args], check=True, timeout=600, **kwargs)
 
 
@@ -57,7 +59,7 @@ def check(archive: Path, cli_only: bool) -> None:
         environment = dict(os.environ, PYTHONHOME=str(work / "missing-python"),
                            PYTHONPATH=str(work / "missing-packages"), K3_LOG_DIR=str(work / "logs"))
         response = run(root / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
-                       text=True, capture_output=True, env=environment, cwd=work)
+                       text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
         health = json.loads(response.stdout)
         if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
             raise RuntimeError(f"移动后 worker 健康检查失败：{health}")
@@ -96,6 +98,8 @@ for name in ('vocals.wav', 'accompaniment.wav', 'backing-vocals.wav'):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--cli-only", action="store_true")
