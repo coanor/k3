@@ -63,6 +63,12 @@ export component K3Window inherits Window {
     in-out property <Overlay> overlay: Overlay.none;
     in-out property <bool> follow-lyrics: true;
     in-out property <length> lyric-scroll-y: 0px;
+    animate lyric-scroll-y {
+        duration: root.follow-lyrics ? 280ms : 0ms;
+        easing: ease-out;
+    }
+    changed active-lyric => { root.follow-current-lyric(); }
+    changed follow-lyrics => { root.follow-current-lyric(); }
     in-out property <int> focus-search-serial: 0;
 
     in property <string> song-title: Strings.choose-project;
@@ -183,6 +189,12 @@ export component K3Window inherits Window {
         let minutes = floor(total / 60);
         let remainder = total - minutes * 60;
         return minutes + (remainder < 10 ? ":0" : ":") + remainder;
+    }
+
+    function follow-current-lyric() {
+        if (root.follow-lyrics && root.active-lyric >= 0) {
+            root.lyric-scroll-y = min(180px - root.active-lyric * 64px, 0px);
+        }
     }
 
     function toggle-recording() {
@@ -741,13 +753,15 @@ export component K3Window inherits Window {
                                 height: 64px;
                                 background: transparent;
 
-                                if lyric-row.current: Rectangle {
+                                Rectangle {
                                     x: (parent.width - self.width) / 2;
                                     y: parent.height - 5px;
                                     width: 42px;
                                     height: 3px;
                                     border-radius: 2px;
                                     background: Tokens.lyric-current;
+                                    opacity: lyric-row.current ? 1 : 0;
+                                    animate opacity { duration: 180ms; easing: ease-out; }
                                 }
                                 if lyric-row.countdown: Rectangle {
                                     x: (parent.width - self.width) / 2;
@@ -790,6 +804,7 @@ export component K3Window inherits Window {
                                     font-size: lyric-row.current ? 28px : 16px;
                                     font-weight: lyric-row.current ? 700 : 400;
                                     letter-spacing: lyric-row.current ? 0.4px : 0px;
+                                    animate color, font-size, letter-spacing { duration: 180ms; easing: ease-out; }
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                     overflow: elide;

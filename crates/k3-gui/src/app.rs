@@ -2462,6 +2462,7 @@ fn apply_project_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    ui.set_follow_lyrics(false);
     ui.set_lyrics(ModelRc::new(VecModel::from(lyrics)));
     ui.set_active_lyric(-1);
     ui.set_lyric_countdown_index(-1);
@@ -2520,10 +2521,6 @@ fn apply_transport_snapshot(ui: &K3Window, snapshot: &PlaybackSnapshot) {
     );
     ui.set_lyric_countdown_dots(countdown.map_or(0, |countdown| i32::from(countdown.seconds)));
     ui.set_active_lyric(active);
-    if ui.get_follow_lyrics() && active >= 0 {
-        let active = f32::from(i16::try_from(active).unwrap_or(i16::MAX));
-        ui.set_lyric_scroll_y((180.0 - active * 64.0).min(0.0));
-    }
 }
 
 fn track_available(snapshot: &PlaybackSnapshot, kind: TrackKind) -> bool {
