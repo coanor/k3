@@ -80,7 +80,7 @@ class InstallerTests(unittest.TestCase):
                 staging = base / "payload"
                 payload = installer.unix_payload(root, staging, prefix, False)
                 command = staging / ("usr/bin/k3" if prefix == "opt" else "usr/local/bin/k3")
-                self.assertEqual(command.resolve(), payload / "k3")
+                self.assertEqual(command.resolve(), (payload / "k3").resolve())
                 self.assertFalse(os.readlink(command).startswith("/"))
                 self.assertEqual((payload / "runtime/python/bin/python3").read_bytes(), b"python")
                 self.assertEqual((payload / "k3").stat().st_mode & 0o777, 0o755)

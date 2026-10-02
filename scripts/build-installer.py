@@ -113,7 +113,7 @@ def deb(root: Path, staging: Path, output: Path, version: str) -> Path:
         " 包含 GUI、CLI、独立 Python 环境、FFmpeg 和三个默认分离模型。\n",
         encoding="utf-8")
     artifact = output / f"k3_{version}_amd64.deb"
-    run("dpkg-deb", "--build", "--root-owner-group", "-Zzstd", staging, artifact)
+    run("dpkg-deb", "--build", "--root-owner-group", "-Zzstd", "-z6", "--threads-max=2", staging, artifact)
     return artifact
 
 

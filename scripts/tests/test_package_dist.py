@@ -59,6 +59,7 @@ class PackageTests(unittest.TestCase):
         }))
         return binary, runtime
 
+    @unittest.skipIf(os.name == "nt", "Unix 包的可执行权限需要 Unix 文件系统")
     def test_tar_preserves_python_relative_links_and_models_after_move(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
