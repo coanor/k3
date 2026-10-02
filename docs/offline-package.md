@@ -55,6 +55,11 @@ Windows 在 PowerShell 中运行：
 完整包默认使用 CPU，无需 NVIDIA 驱动。需要 CUDA 加速时，使用源码安装脚本创建
 独立 GPU 环境，再通过 `--worker` 指向该环境；不要覆盖随包 Python 的依赖。
 Windows 随包保留 `install-separator.ps1` 和源码，可用于这种额外安装。
+Linux 随包保留 `separate.sh`，批量分离时自动使用同包程序、worker 和模型：
+
+```bash
+./separate.sh -f /path/to/first.flac /path/to/second.mp3 -d ./songs
+```
 
 ## 构建与验证
 

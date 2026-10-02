@@ -89,6 +89,9 @@ $worker = if (-not [string]::IsNullOrWhiteSpace($env:K3_WORKER)) {
 } else {
     $defaultWorker
 }
+if ($worker -eq "k3-separator" -and (Test-Path -LiteralPath $bundledWorker -PathType Leaf)) {
+    $worker = $bundledWorker
+}
 if (-not [IO.Path]::IsPathRooted($worker)) {
     $worker = Join-Path $PSScriptRoot $worker
 }

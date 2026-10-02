@@ -85,6 +85,13 @@ for name in ('vocals.wav', 'accompaniment.wav', 'backing-vocals.wav'):
         raise RuntimeError(f'Invalid separated audio: {name}')
 """
         run(python, "-I", "-c", audio_check, project / "stems", cwd=work)
+        if os.name != "nt" and (root / "separate.sh").is_file():
+            batch_environment = dict(environment, K3_PROFILE="fast", K3_AUTOCAST="false",
+                                     K3_SEGMENT_SIZE="128")
+            run(root / "separate.sh", "-f", song, "-d", work / "batch-projects",
+                env=batch_environment, cwd=work)
+            run(python, "-I", "-c", audio_check,
+                work / "batch-projects" / song.stem / "stems", cwd=work)
         print("发行包校验通过：可移动、模型离线载入、CLI 默认分离与和声输出")
 
 

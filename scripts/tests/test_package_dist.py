@@ -47,6 +47,7 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((package / "runtime/python/bin/python3").read_bytes(), b"standalone python")
             self.assertEqual((package / "models/checkpoint.onnx").read_bytes(), b"checkpoint")
             self.assertTrue((package / "k3-separator").stat().st_mode & 0o111)
+            self.assertTrue((package / "separate.sh").stat().st_mode & 0o111)
             expected = archive.with_name(archive.name + ".sha256").read_text().split()[0]
             self.assertEqual(expected, hashlib.sha256(archive.read_bytes()).hexdigest())
 

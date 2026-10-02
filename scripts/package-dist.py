@@ -58,6 +58,9 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
             for filename in ("bundle-manifest.json", "requirements-resolved.txt"):
                 shutil.copy2(runtime / filename, root)
             shutil.copy2(REPO / "docs/offline-package.md", root / "INSTALL.md")
+            if platform == "linux":
+                shutil.copy2(REPO / "separate.sh", root)
+                (root / "separate.sh").chmod(0o755)
             if platform == "windows":
                 for filename in ("separate.ps1", "install-separator.ps1"):
                     shutil.copy2(REPO / filename, root)
