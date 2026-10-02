@@ -16,9 +16,22 @@ SCRIPT = Path(__file__).resolve().parents[1] / "package-dist.py"
 spec = importlib.util.spec_from_file_location("package_dist", SCRIPT)
 packager = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packager)
+checker_spec = importlib.util.spec_from_file_location("check_runtime", SCRIPT.with_name("check-runtime.py"))
+checker = importlib.util.module_from_spec(checker_spec)
+checker_spec.loader.exec_module(checker)
 
 
 class PackageTests(unittest.TestCase):
+    def test_windows_manifest_checks_the_relocated_ffmpeg_and_models(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("runtime/bin/ffmpeg.exe", "models/checkpoint.onnx"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"bundled artifact")
+            digest = hashlib.sha256(b"bundled artifact").hexdigest()
+            checker.check_artifacts(root, {r"bin\ffmpeg.exe": digest, r"models\checkpoint.onnx": digest})
+
     def test_build_tools_handle_a_non_utf8_windows_style_pipe(self):
         environment = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
         for filename in ("build-runtime.py", "package-dist.py", "check-dist.py", "check-runtime.py"):

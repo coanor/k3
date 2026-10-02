@@ -17,15 +17,20 @@ def deny_network(event, _args) -> None:
         raise RuntimeError("离线检查禁止访问网络")
 
 
-def check(root: Path) -> None:
-    manifest = json.loads((root / "bundle-manifest.json").read_text(encoding="utf-8"))
-    for name, expected in manifest["artifacts"].items():
+def check_artifacts(root: Path, artifacts: dict[str, str]) -> None:
+    for name, expected in artifacts.items():
+        name = name.replace("\\", "/")
         # manifest 路径在 runtime 构建阶段记录，发行包将 bin 放到 runtime 下。
         path = root / ("runtime/" + name if name.startswith("bin/") else name)
         with path.open("rb") as stream:
             actual = hashlib.file_digest(stream, "sha256").hexdigest()
         if actual != expected:
             raise RuntimeError(f"文件摘要不匹配：{name}")
+
+
+def check(root: Path) -> None:
+    manifest = json.loads((root / "bundle-manifest.json").read_text(encoding="utf-8"))
+    check_artifacts(root, manifest["artifacts"])
     os.environ["PATH"] = str(root / "runtime/bin") + os.pathsep + os.environ.get("PATH", "")
     sys.addaudithook(deny_network)
     from audio_separator.separator import Separator

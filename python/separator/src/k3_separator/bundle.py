@@ -50,9 +50,9 @@ def prepare(output: Path, cache: Path | None, extra_models: list[str]) -> None:
         # 在打包前拒绝上游下载失败残留的空文件。
         if not (model_dir / model.filename).stat().st_size:
             raise ValueError(f"模型文件为空：{model.filename}")
-    artifacts = {str(path.relative_to(output)): _hash_file(path)
+    artifacts = {path.relative_to(output).as_posix(): _hash_file(path)
                  for path in sorted(model_dir.rglob("*")) if path.is_file()}
-    artifacts[str(ffmpeg.relative_to(output))] = _hash_file(ffmpeg)
+    artifacts[ffmpeg.relative_to(output).as_posix()] = _hash_file(ffmpeg)
     packages = []
     for distribution in importlib.metadata.distributions():
         metadata = distribution.metadata

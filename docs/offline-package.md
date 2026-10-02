@@ -34,7 +34,7 @@ Linux/macOS 在解压目录运行：
 ./k3 --help
 printf '%s\n' '{"id":"health","method":"health"}' | ./k3-separator
 ./k3 new --root ./songs/example --song /path/to/song.flac --title "示例歌曲"
-./k3 separate --project ./songs/example --profile quality
+./k3 separate --project ./songs/example --profile quality --no-autocast
 ./k3 tui --project ./songs/example
 ```
 
@@ -44,13 +44,15 @@ Windows 在 PowerShell 中运行：
 .\k3.exe --help
 '{"id":"health","method":"health"}' | .\k3-separator.exe
 .\k3.exe new --root .\songs\example --song 'D:\Music\song.flac' --title '示例歌曲'
-.\k3.exe separate --project .\songs\example --profile quality
+.\k3.exe separate --project .\songs\example --profile quality --no-autocast
 .\k3.exe tui --project .\songs\example
 ```
 
 `k3 separate` 默认找到同目录的 worker；worker 默认使用同包的 `models/`，不需要
 修改 PATH 或激活虚拟环境。自定义 `--worker` 与 `--model-dir` 仍然有效。
 媒体库配置中的 `separation.worker` 可写 `k3-separator`，`model_dir` 可写 `null`。
+CPU 包的示例关闭混合精度，避免 CPU autocast 带来的额外耗时；媒体库配置可将
+`separation.autocast` 设为 `false`。独立 GPU 环境可保留原有混合精度设置。
 
 完整包默认使用 CPU，无需 NVIDIA 驱动。需要 CUDA 加速时，使用源码安装脚本创建
 独立 GPU 环境，再通过 `--worker` 指向该环境；不要覆盖随包 Python 的依赖。
