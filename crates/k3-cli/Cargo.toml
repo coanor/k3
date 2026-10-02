@@ -35,5 +35,8 @@ thiserror.workspace = true
 ureq = { version = "3.4.0", features = ["json"] }
 unicode-width = "0.2.1"
 
+[target.'cfg(windows)'.dependencies]
+win32job = "2.0.3"
+
 [lints]
 workspace = true

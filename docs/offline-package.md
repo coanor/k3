@@ -90,6 +90,11 @@ macOS Apple Silicon 只构建 `--package k3`，将打包参数换为 `macos k3-m
 Windows 将参数换为 `windows k3-windows-x86_64 target/release/k3.exe`，使用
 `python` 运行这些脚本，产物为 ZIP。更方便的入口是 `make dist` 或 GitHub Actions。
 
+`make dist` 复用已有 runtime 时，会通过 uv 重新安装当前源码的 worker，保留其他
+依赖与模型。直接复用 runtime 目录打包前，也应执行
+`python3 scripts/refresh-worker.py dist/runtime/python`。Windows 本机完整包与 CI
+统一静态链接 MSVC C runtime。
+
 `--model-cache /path/to/models` 可以复用已有下载；固定摘要的 checkpoint 仍会校验。
 `--model mel-band-roformer-kim-vocal-2` 可加入额外模型，`--model all` 可加入全部
 内置模型。模型文件较大，打包器会拒绝超过 GitHub Release 单个 asset 的 2 GiB 上限。

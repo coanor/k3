@@ -176,9 +176,7 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
         if actual != f"k3 {version}":
             raise ValueError(f"二进制版本 {actual!r} 与安装包版本 {version!r} 不一致")
         if refresh_worker and not cli_only:
-            python = root / ("runtime/python/python.exe" if platform == "win32" else "runtime/python/bin/python3")
-            run("uv", "pip", "install", "--python", python, "--no-config", "--break-system-packages", "--no-deps", "--reinstall", "--link-mode=copy",
-                REPO / "python/separator")
+            run(sys.executable, REPO / "scripts/refresh-worker.py", root / "runtime/python")
         # 安装说明跟随安装器源码，程序/runtime/模型保持便携包中的版本。
         shutil.copy2(REPO / "docs/install-packages.md", root / "INSTALL-PACKAGE.md")
         if platform == "linux":

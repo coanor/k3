@@ -42,7 +42,13 @@ jobs:
       - name: Select repository Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Install uv for runtime reuse regression
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.13"
+
       - name: Test packaging validation
+        # runtime 复用回归会在临时环境实际安装新旧 worker。
         run: python3 -m unittest discover -s scripts/tests -v
 
       - name: Run tests
@@ -112,6 +118,11 @@ jobs:
         env:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo check --workspace --all-targets --locked
+
+      - name: Test Windows launcher cancellation
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo test --package k3 --test separator_launcher --locked
 
       - name: Parse Windows separation scripts
         shell: pwsh

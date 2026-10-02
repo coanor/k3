@@ -73,13 +73,15 @@ dist-runtime:
 		$(PYTHON) scripts/build-runtime.py "$${args[@]}"; \
 	else \
 		printf '复用离线 runtime：%s\n' "$(RUNTIME_DIR)"; \
+		$(PYTHON) scripts/refresh-worker.py "$(RUNTIME_DIR)/python"; \
 	fi
 
 dist-windows:
 	@case "$$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; \
 		*) echo '完整 Windows 包需要 Windows 原生环境；可用 make dist-all 或 dist-windows-cli' >&2; exit 1 ;; esac
 	$(MAKE) dist-runtime
-	$(CARGO) build --release --locked --bins --package k3 --package k3-gui --target x86_64-pc-windows-msvc
+	RUSTFLAGS="$(RUSTFLAGS) -C target-feature=+crt-static" \
+		$(CARGO) build --release --locked --bins --package k3 --package k3-gui --target x86_64-pc-windows-msvc
 	$(PYTHON) scripts/package-dist.py windows k3-windows-x86_64 \
 		target/x86_64-pc-windows-msvc/release/k3.exe "$(RUNTIME_DIR)" \
 		--gui-binary target/x86_64-pc-windows-msvc/release/k3-gui.exe --dist-dir "$(DIST_DIR)"

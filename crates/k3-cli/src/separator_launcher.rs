@@ -42,6 +42,29 @@ fn run() -> Result<i32, Box<dyn Error>> {
     if !has_model_dir {
         command.arg("--model-dir").arg(root.join("models"));
     }
-    let status = command.args(args).status()?;
-    Ok(status.code().unwrap_or(1))
+    command.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // 保留 PID 和管道所有权，让调用方的 kill/reap 直接作用于 Python。
+        Err(command.exec().into())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use win32job::{ExtendedLimitInfo, Job};
+
+        let mut limits = ExtendedLimitInfo::new();
+        limits.limit_kill_on_job_close();
+        let job = Job::create_with_limit_info(&mut limits)?;
+        // 在 spawn 前加入 job，Python 及其子进程自动继承，避免分配时的竞态。
+        job.assign_current_process()?;
+        // job 包含当前进程；提前 drop 会终止自己并覆盖 worker 的退出码。
+        // 句柄不可继承，交给进程退出时由 OS 关闭；每个 launcher 仅持有一个。
+        std::mem::forget(job);
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let status = command.status()?;
+        Ok(status.code().unwrap_or(1))
+    }
 }
