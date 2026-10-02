@@ -1389,14 +1389,20 @@ export component K3Window inherits Window {
                         accessible-label: Strings.existing-take;
                         selected => { root.select-existing-take(take-select.current-index); }
                     }
-                    if root.take-options.length > 0: ActionButton {
-                        width: 32px;
+                    // 用稳定的按钮容器定位，避免条件按钮的透明度包装重复叠加坐标。
+                    take-menu-anchor := Rectangle {
+                        width: root.take-options.length > 0 ? 32px : 0px;
                         height: 32px;
-                        icon: @image-url("../assets/more.svg");
-                        accessible-name: Strings.take-actions;
-                        enabled: !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating;
-                        clicked => {
-                            root.show-take-menu(self.absolute-position.x, self.absolute-position.y);
+                        horizontal-stretch: 0;
+                        if root.take-options.length > 0: ActionButton {
+                            width: parent.width;
+                            height: parent.height;
+                            icon: @image-url("../assets/more.svg");
+                            accessible-name: Strings.take-actions;
+                            enabled: !root.recording-active && !root.take-busy && !root.loading && !root.current-project-separating;
+                            clicked => {
+                                root.show-take-menu(take-menu-anchor.absolute-position.x, take-menu-anchor.absolute-position.y);
+                            }
                         }
                     }
                     Text {
@@ -1414,7 +1420,7 @@ export component K3Window inherits Window {
 
     take-actions-popup := PopupWindow {
         x: root.take-menu-x;
-        y: root.take-menu-y - self.height;
+        y: root.take-menu-y - self.height - 6px;
         width: 200px;
         height: 100px;
         Rectangle {
