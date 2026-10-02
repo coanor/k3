@@ -2,6 +2,12 @@ name: Build distributions
 
 on:
   workflow_dispatch:
+    inputs:
+      installer_source_run:
+        description: "复用成功运行的便携包构建安装包（留空则从头构建）"
+        required: false
+        default: ""
+        type: string
   pull_request:
   push:
     branches:
@@ -11,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +26,7 @@ env:
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_dispatch' || inputs.installer_source_run == ''
     name: Verify workspace
     runs-on: ubuntu-24.04
     steps:
@@ -127,7 +135,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: (github.event_name == 'workflow_dispatch' && inputs.installer_source_run == '') || startsWith(github.ref, 'refs/tags/')
     name: Build ${{ matrix.package }}
     needs: verify
     strategy:
@@ -266,10 +274,164 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  installers:
+    name: Install ${{ matrix.package }}
+    needs: build
+    if: >-
+      always() && !cancelled() &&
+      (needs.build.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.installer_source_run != ''))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: k3-linux-x86_64
+            archive: k3-linux-x86_64.tar.gz
+            os: ubuntu-24.04
+            cli_only: false
+          - package: k3-windows-x86_64
+            archive: k3-windows-x86_64.zip
+            os: windows-latest
+            cli_only: false
+          - package: k3-macos-aarch64
+            archive: k3-macos-aarch64.tar.gz
+            os: macos-15
+            cli_only: false
+          - package: k3-macos-x86_64-cli
+            archive: k3-macos-x86_64-cli.tar.gz
+            os: macos-15-intel
+            cli_only: true
+    runs-on: ${{ matrix.os }}
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - name: Check out installer source
+        uses: actions/checkout@v7
+
+      - name: Validate reused distribution run
+        if: inputs.installer_source_run != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ inputs.installer_source_run }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo '运行 ID 必须是数字' >&2; exit 1; }
+          gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha > "$RUNNER_TEMP/source-run.json"
+          python -c 'import json,os; from pathlib import Path; r=json.loads((Path(os.environ["RUNNER_TEMP"])/"source-run.json").read_text()); assert r["conclusion"] == "success" and r["workflowName"] == "Build distributions", r; print(r)'
+
+      - name: Download validated portable distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.package }}
+          path: dist/source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.installer_source_run || github.run_id }}
+
+      - name: Install build Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Test installer validation
+        run: python -m unittest discover -s scripts/tests -v
+
+      - name: Locate Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $compiler)) {
+            choco install innosetup --version=6.4.3 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (-not (Test-Path $compiler)) { throw '找不到 Inno Setup 编译器' }
+          "K3_ISCC=$compiler" >> $env:GITHUB_ENV
+
+      - name: Build native installer
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          args=("dist/source/$ARCHIVE_NAME")
+          if [[ "$RUNNER_OS" == Windows ]]; then args+=(--iscc "$K3_ISCC"); fi
+          python scripts/build-installer.py "${args[@]}"
+
+      - name: Install Linux package
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ./dist/installers/*.deb
+          k3 --help
+          sudo touch /opt/k3/user-preserved.txt
+
+      - name: Install macOS package
+        if: runner.os == 'macOS'
+        run: |
+          sudo installer -pkg dist/installers/*.pkg -target /
+          /usr/local/bin/k3 --help
+          pkgutil --pkg-info io.github.coanor.k3
+
+      - name: Install Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/installers/*-setup.exe).FullName
+          $root = Join-Path $env:RUNNER_TEMP 'K3 安装测试'
+          $log = Join-Path $env:RUNNER_TEMP 'k3-install.log'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$root`"", "/LOG=`"$log`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content $log; throw "安装失败：$($process.ExitCode)" }
+          "K3_INSTALLED_ROOT=$root" >> $env:GITHUB_ENV
+          Set-Content (Join-Path $root 'user-preserved.txt') '用户数据'
+
+      - name: Check installed programs and offline separation
+        shell: bash
+        env:
+          CLI_ONLY: ${{ matrix.cli_only }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Linux) root=/opt/k3 ;;
+            macOS) root=/usr/local/lib/k3 ;;
+            Windows) root="$K3_INSTALLED_ROOT" ;;
+          esac
+          args=(--installed-root "$root")
+          if [[ "$CLI_ONLY" == true ]]; then args+=(--cli-only); fi
+          python scripts/check-dist.py "${args[@]}"
+
+      - name: Check Linux uninstall preserves user files
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get remove --yes k3
+          test ! -e /usr/bin/k3
+          test ! -e /opt/k3/k3
+          test -f /opt/k3/user-preserved.txt
+
+      - name: Check Windows uninstall preserves user files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath (Join-Path $env:K3_INSTALLED_ROOT 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "卸载失败：$($process.ExitCode)" }
+          if (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'k3.exe')) { throw '卸载未删除程序' }
+          if (-not (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'user-preserved.txt'))) { throw '卸载删除了用户文件' }
+
+      - name: Upload checked installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-installers-${{ matrix.package }}
+          path: dist/installers/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, installers]
     runs-on: ubuntu-latest
     permissions:
       contents: write

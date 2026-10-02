@@ -104,4 +104,5 @@ Windows 将参数换为 `windows k3-windows-x86_64 target/release/k3.exe`，使�
 [python-build-standalone](https://docs.astral.sh/uv/concepts/python-versions/)。
 部分 UVR 模型的许可证尚未声明，清单保留 `NOASSERTION`，不将其写成 MIT。
 
-当前没有图形安装向导、macOS 签名或公证；这些包是可解压运行的便携包。
+系统安装包的格式、安装与卸载方式见[安装包说明](install-packages.md)。
+ZIP/tar.gz 仍作为便携包提供；Windows/macOS 安装包目前未签名，macOS 未公证。

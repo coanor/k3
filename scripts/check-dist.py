@@ -48,35 +48,39 @@ def check(archive: Path, cli_only: bool) -> None:
             raise RuntimeError("发行包必须包含唯一顶级目录")
         root = work / "移动后的 K3 包"
         shutil.move(str(roots[0]), root)
-        extension = ".exe" if os.name == "nt" else ""
-        binary = root / f"k3{extension}"
-        run(binary, "--help", stdout=subprocess.DEVNULL, cwd=work)
-        if cli_only:
-            print("CLI 包启动检查通过")
-            return
-        python = root / ("runtime/python/python.exe" if os.name == "nt" else "runtime/python/bin/python3")
-        # 将用户 Python 环境污染也纳入测试；原生 launcher 必须忽略它。
-        environment = dict(os.environ, PYTHONHOME=str(work / "missing-python"),
-                           PYTHONPATH=str(work / "missing-packages"), K3_LOG_DIR=str(work / "logs"))
-        response = run(root / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
-                       text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
-        health = json.loads(response.stdout)
-        if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
-            raise RuntimeError(f"移动后 worker 健康检查失败：{health}")
-        run(python, "-s", SCRIPTS / "check-runtime.py", root, cwd=work)
-        song = work / "测试音频.wav"
-        with wave.open(str(song), "wb") as stream:
-            stream.setparams((2, 2, 44_100, 0, "NONE", "not compressed"))
-            stream.writeframes(b"".join(
-                struct.pack("<hh", value, value) for value in
-                (int(1000 * math.sin(2 * math.pi * 440 * index / 44_100)) for index in range(22_050))))
-        project = work / "测试工程"
-        run(binary, "new", "--root", project, "--song", song, "--title", "离线包检查", cwd=work)
-        # 不指定 --worker / --model-dir，检查 CLI 自动发现同包 worker 与模型。
-        run(binary, "separate", "--project", project, "--profile", "fast", "--segment-size", "128",
-            "--no-autocast", env=environment, cwd=work)
-        # SoundFile 支持模型输出的 IEEE float WAV；标准库 wave 只支持 PCM。
-        audio_check = """
+        check_root(root, work, cli_only)
+
+
+def check_root(root: Path, work: Path, cli_only: bool) -> None:
+    extension = ".exe" if os.name == "nt" else ""
+    binary = root / f"k3{extension}"
+    run(binary, "--help", stdout=subprocess.DEVNULL, cwd=work)
+    if cli_only:
+        print("CLI 包启动检查通过")
+        return
+    python = root / ("runtime/python/python.exe" if os.name == "nt" else "runtime/python/bin/python3")
+    # 将用户 Python 环境污染也纳入测试；原生 launcher 必须忽略它。
+    environment = dict(os.environ, PYTHONHOME=str(work / "missing-python"),
+                       PYTHONPATH=str(work / "missing-packages"), K3_LOG_DIR=str(work / "logs"))
+    response = run(root / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
+                   text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
+    health = json.loads(response.stdout)
+    if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
+        raise RuntimeError(f"移动后 worker 健康检查失败：{health}")
+    run(python, "-s", SCRIPTS / "check-runtime.py", root, cwd=work)
+    song = work / "测试音频.wav"
+    with wave.open(str(song), "wb") as stream:
+        stream.setparams((2, 2, 44_100, 0, "NONE", "not compressed"))
+        stream.writeframes(b"".join(
+            struct.pack("<hh", value, value) for value in
+            (int(1000 * math.sin(2 * math.pi * 440 * index / 44_100)) for index in range(22_050))))
+    project = work / "测试工程"
+    run(binary, "new", "--root", project, "--song", song, "--title", "离线包检查", cwd=work)
+    # 不指定 --worker / --model-dir，检查 CLI 自动发现同包 worker 与模型。
+    run(binary, "separate", "--project", project, "--profile", "fast", "--segment-size", "128",
+        "--no-autocast", env=environment, cwd=work)
+    # SoundFile 支持模型输出的 IEEE float WAV；标准库 wave 只支持 PCM。
+    audio_check = """
 import sys
 import json
 from pathlib import Path
@@ -89,22 +93,31 @@ for name in ('vocals', 'accompaniment', 'backing_vocals'):
     if len(audio) == 0 or rate != 44100 or not np.isfinite(audio).all():
         raise RuntimeError(f'Invalid separated audio: {name}')
 """
-        run(python, "-I", "-c", audio_check, project, cwd=work)
-        if os.name != "nt" and (root / "separate.sh").is_file():
-            batch_environment = dict(environment, K3_PROFILE="fast", K3_AUTOCAST="false",
-                                     K3_SEGMENT_SIZE="128")
-            run(root / "separate.sh", "-f", song, "-d", work / "batch-projects",
-                env=batch_environment, cwd=work)
-            run(python, "-I", "-c", audio_check,
-                work / "batch-projects" / song.stem, cwd=work)
-        print("发行包校验通过：可移动、模型离线载入、CLI 默认分离与和声输出")
+    run(python, "-I", "-c", audio_check, project, cwd=work)
+    if os.name != "nt" and (root / "separate.sh").is_file():
+        batch_environment = dict(environment, K3_PROFILE="fast", K3_AUTOCAST="false",
+                                 K3_SEGMENT_SIZE="128")
+        run(root / "separate.sh", "-f", song, "-d", work / "batch-projects",
+            env=batch_environment, cwd=work)
+        run(python, "-I", "-c", audio_check,
+            work / "batch-projects" / song.stem, cwd=work)
+    print("程序检查通过：模型离线载入、CLI 默认分离与和声输出")
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archive", type=Path)
+    parser.add_argument("archive", type=Path, nargs="?")
+    parser.add_argument("--installed-root", type=Path, help="检查已经安装的目录，不移动或改写程序文件")
     parser.add_argument("--cli-only", action="store_true")
     args = parser.parse_args()
-    check(args.archive, args.cli_only)
+    if args.installed_root:
+        if args.archive:
+            parser.error("archive 与 --installed-root 不能同时使用")
+        with tempfile.TemporaryDirectory(prefix="k3-installed-check-") as directory:
+            check_root(args.installed_root.resolve(), Path(directory), args.cli_only)
+    elif args.archive:
+        check(args.archive, args.cli_only)
+    else:
+        parser.error("请提供 archive 或 --installed-root")

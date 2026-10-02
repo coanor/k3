@@ -11,7 +11,7 @@ MODEL_CACHE ?=
 RUNTIME_DIR ?= $(DIST_DIR)/runtime-native
 
 .PHONY: help build test lint check dist dist-host dist-linux dist-windows \
-	dist-macos dist-macos-x86_64 dist-macos-aarch64 dist-all dist-runtime dist-windows-cli
+	dist-macos dist-macos-x86_64 dist-macos-aarch64 dist-all dist-runtime dist-windows-cli installer
 
 help:
 	@printf '%s\n' \
@@ -21,6 +21,7 @@ help:
 		'  make lint                   运行严格 Clippy' \
 		'  make check                  依次运行 test 和 lint' \
 		'  make dist                   构建当前平台离线发行包' \
+		'  make installer              构建当前平台系统安装包' \
 		'  make dist-linux             构建 Linux x86_64 包' \
 		'  make dist-windows           在 Windows 原生构建离线包' \
 		'  make dist-windows-cli       使用 cargo-xwin 构建 Windows 纯 CLI 包' \
@@ -121,3 +122,13 @@ dist-all:
 	@gh auth status >/dev/null
 	gh workflow run dist.yml --ref "$(REF)"
 	@printf '已触发 Build distributions：ref=%s\n' "$(REF)"
+
+installer: dist-host
+	@case "$$(uname -s)" in \
+		Linux) archive=k3-linux-x86_64.tar.gz ;; \
+		Darwin) case "$$(uname -m)" in \
+			arm64) archive=k3-macos-aarch64.tar.gz ;; \
+			x86_64) archive=k3-macos-x86_64-cli.tar.gz ;; esac ;; \
+		MINGW*|MSYS*|CYGWIN*) archive=k3-windows-x86_64.zip ;; \
+	esac; \
+	$(PYTHON) scripts/build-installer.py "$(DIST_DIR)/$$archive" --output-dir "$(DIST_DIR)/installers"
