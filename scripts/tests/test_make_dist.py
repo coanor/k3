@@ -13,6 +13,29 @@ REPO = Path(__file__).resolve().parents[2]
 
 @unittest.skipIf(os.name == "nt", "Makefile 入口回归需要 POSIX shell 和 make")
 class MakeDistTests(unittest.TestCase):
+    def test_linux_distribution_uses_configured_python_for_every_step(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            tools.mkdir()
+            uname = tools / "uname"
+            uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n')
+            uname.chmod(0o755)
+            python = tools / "configured-python"
+            python.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$K3_TEST_CALLS"\n')
+            python.chmod(0o755)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "bundle-manifest.json").write_text("{}")
+            calls = root / "calls"
+            environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                               K3_TEST_CALLS=str(calls))
+            subprocess.run(["make", "dist-linux", "CARGO=true", f"PYTHON={python}",
+                            f"RUNTIME_DIR={runtime}"], cwd=REPO, env=environment,
+                           check=True, capture_output=True)
+            self.assertEqual(calls.read_text().splitlines(),
+                             ["scripts/refresh-worker.py", "scripts/package-dist.py", "scripts/check-dist.py"])
+
     def test_native_windows_build_keeps_user_flags_and_links_static_crt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

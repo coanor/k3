@@ -61,7 +61,7 @@ dist-linux:
 	@test "$$(uname -m)" = x86_64 || { echo '完整 Linux 包需要 x86_64 主机' >&2; exit 1; }
 	$(MAKE) dist-runtime
 	$(CARGO) build --release --locked --bins --package k3 --package k3-gui --target x86_64-unknown-linux-gnu
-	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
+	DIST_DIR="$(DIST_DIR)" $(PYTHON) scripts/package-dist.py \
 		linux k3-linux-x86_64 target/x86_64-unknown-linux-gnu/release/k3 "$(RUNTIME_DIR)" \
 		--gui-binary target/x86_64-unknown-linux-gnu/release/k3-gui
 	$(PYTHON) scripts/check-dist.py "$(DIST_DIR)/k3-linux-x86_64.tar.gz"
@@ -94,7 +94,7 @@ dist-windows-cli:
 	@if [[ -n "$(LLVM_BIN)" ]]; then export PATH="$(LLVM_BIN):$$PATH"; fi; \
 	RUSTFLAGS='-C target-feature=+crt-static' \
 		$(CARGO) xwin build --release --locked --bins --package k3 --target x86_64-pc-windows-msvc
-	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
+	DIST_DIR="$(DIST_DIR)" $(PYTHON) scripts/package-dist.py \
 		windows k3-windows-x86_64-cli target/x86_64-pc-windows-msvc/release/k3.exe --cli-only
 
 dist-macos:
@@ -105,7 +105,7 @@ dist-macos-x86_64:
 	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
 	rustup target add x86_64-apple-darwin
 	$(CARGO) build --release --locked --bins --package k3 --target x86_64-apple-darwin
-	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
+	DIST_DIR="$(DIST_DIR)" $(PYTHON) scripts/package-dist.py \
 		macos k3-macos-x86_64-cli target/x86_64-apple-darwin/release/k3 --cli-only
 	$(PYTHON) scripts/check-dist.py "$(DIST_DIR)/k3-macos-x86_64-cli.tar.gz" --cli-only
 
@@ -115,7 +115,7 @@ dist-macos-aarch64:
 	$(MAKE) dist-runtime
 	rustup target add aarch64-apple-darwin
 	$(CARGO) build --release --locked --bins --package k3 --target aarch64-apple-darwin
-	DIST_DIR="$(DIST_DIR)" scripts/package-dist.sh \
+	DIST_DIR="$(DIST_DIR)" $(PYTHON) scripts/package-dist.py \
 		macos k3-macos-aarch64 target/aarch64-apple-darwin/release/k3 "$(RUNTIME_DIR)"
 	$(PYTHON) scripts/check-dist.py "$(DIST_DIR)/k3-macos-aarch64.tar.gz"
 
