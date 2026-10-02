@@ -65,7 +65,7 @@ fn unloading_a_project_releases_audio_and_preserves_volume() {
     assert_eq!(unloaded.project_id, None);
     assert_eq!(unloaded.status, PlaybackStatus::Unavailable);
     assert_eq!(unloaded.track, None);
-    assert_eq!(unloaded.volume, 0.4);
+    assert!((unloaded.volume - 0.4).abs() < f32::EPSILON);
     assert!(unloaded.project_generation > loaded.project_generation);
 }
 
@@ -323,7 +323,7 @@ fn seeking_past_the_end_clamps_before_the_next_relative_seek() {
             .execute(PlaybackCommand::SeekBy(5))
             .unwrap()
             .position,
-        Duration::from_secs(120)
+        Duration::from_mins(2)
     );
     assert_eq!(
         service
@@ -337,7 +337,7 @@ fn seeking_past_the_end_clamps_before_the_next_relative_seek() {
             .execute(PlaybackCommand::SeekTo(Duration::from_secs(200)))
             .unwrap()
             .position,
-        Duration::from_secs(120)
+        Duration::from_mins(2)
     );
 }
 

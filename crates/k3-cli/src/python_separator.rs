@@ -243,9 +243,30 @@ pub fn separation_output_paths(project: &Project) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn cleanup_obsolete_outputs(obsolete: &[PathBuf], retained: &[PathBuf]) {
+pub fn cleanup_obsolete_outputs(project_root: &Path, obsolete: &[PathBuf], retained: &[PathBuf]) {
+    let Ok(root) = project_root.canonicalize() else {
+        return;
+    };
+    let stems = root.join("stems");
     for path in obsolete {
         if retained.contains(path) {
+            continue;
+        }
+        let safe = path.strip_prefix(&stems).is_ok_and(|relative| {
+            relative.components().count() > 0
+                && relative
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+        }) && path.parent().is_some_and(|parent| {
+            parent
+                .canonicalize()
+                .is_ok_and(|parent| parent.starts_with(&stems))
+        });
+        if !safe {
+            eprintln!(
+                "Warning: skipped obsolete stem outside the project stems directory: {}",
+                path.display()
+            );
             continue;
         }
         if let Err(error) = fs::remove_file(path)
@@ -410,7 +431,7 @@ fn validated_project_path(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{PythonSeparatorConfig, PythonStemSeparator};
+    use super::{PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs};
     use k3_core::{SeparationProfile, StemSeparator};
     use std::{
         fs,
@@ -423,6 +444,73 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_outside_project_through_directory_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems/external")).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[project.join("stems/external/sentinel.wav")],
+            &[],
+        );
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_keeps_files_when_stems_directory_is_redirected() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        let external = sandbox.path().join("external");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&external).unwrap();
+        let sentinel = external.join("sentinel.wav");
+        fs::write(&sentinel, b"must survive").unwrap();
+        std::os::unix::fs::symlink(&external, project.join("stems")).unwrap();
+
+        cleanup_obsolete_outputs(&project, &[project.join("stems/sentinel.wav")], &[]);
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+    }
+
+    #[test]
+    fn obsolete_cleanup_removes_only_unretained_stems_and_unlinks_file_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        fs::create_dir_all(project.join("stems")).unwrap();
+        let obsolete = project.join("stems/obsolete.wav");
+        let retained = project.join("stems/retained.wav");
+        let external = sandbox.path().join("external.wav");
+        let link = project.join("stems/link.wav");
+        for path in [&obsolete, &retained, &external] {
+            fs::write(path, b"audio").unwrap();
+        }
+        std::os::unix::fs::symlink(&external, &link).unwrap();
+
+        cleanup_obsolete_outputs(
+            &project,
+            &[
+                obsolete.clone(),
+                retained.clone(),
+                link.clone(),
+                external.clone(),
+            ],
+            std::slice::from_ref(&retained),
+        );
+
+        assert!(!obsolete.exists());
+        assert!(retained.exists());
+        assert!(fs::symlink_metadata(link).is_err());
+        assert_eq!(fs::read(external).unwrap(), b"audio");
+    }
 
     #[test]
     fn cancellation_terminates_and_reaps_worker_process() {

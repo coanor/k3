@@ -590,6 +590,72 @@ pub enum ProjectMutation {
 }
 
 impl FileProjectRepository {
+    /// 在短期工程锁内提交已完成的新混音，再清理不再引用的旧混音。
+    ///
+    /// 新混音必须使用独立文件；提交失败时工程对象和旧文件保持原样，调用方清理新文件。
+    /// 返回的警告只表示提交成功后旧文件未能清理。
+    ///
+    /// # Errors
+    ///
+    /// 工程版本变化、take 不存在、新文件越界或不可读、工程保存失败时返回错误。
+    pub fn commit_take_render(
+        &self,
+        project: &mut Project,
+        take_id: &str,
+        preset: VocalEffectPreset,
+        mix_audio: ProjectPath,
+    ) -> Result<Option<String>, ProjectError> {
+        let previous = project
+            .take(take_id)
+            .ok_or_else(|| ProjectError::TakeNotFound(take_id.to_owned()))?
+            .mix_audio()
+            .cloned();
+        if previous.as_ref() == Some(&mix_audio) {
+            return Err(ProjectError::Invalid(
+                "new mix must use an independent file".into(),
+            ));
+        }
+        let new_file = checked_take_media_path(project.root(), &mix_audio)?;
+        ensure_readable_file(&new_file)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(project.root.join(".project.lock"))?;
+        lock.lock()?;
+        let current = fs::read(project.root.join(PROJECT_FILE))?;
+        if project.document_revision().map(ProjectRevision::as_bytes) != Some(current.as_slice()) {
+            return Err(ProjectError::ConcurrentModification(project.root.clone()));
+        }
+        let mut updated = project.clone();
+        updated.set_take_render(take_id, preset, mix_audio)?;
+        save_unlocked(&mut updated)?;
+        *project = updated;
+
+        let cleanup =
+            (|| -> Result<(), ProjectError> {
+                let Some(previous) = previous else {
+                    return Ok(());
+                };
+                if project.takes.iter().any(|take| {
+                    take.dry_audio() == &previous || take.mix_audio() == Some(&previous)
+                }) || project.source == previous
+                    || project.lyrics.as_ref() == Some(&previous)
+                {
+                    return Ok(());
+                }
+                let old_file = checked_take_media_path(project.root(), &previous)?;
+                match fs::remove_file(old_file) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                    _ => Ok(()),
+                }
+            })();
+        Ok(cleanup
+            .err()
+            .map(|error| format!("mix saved, but old mix cleanup failed: {error}")))
+    }
+
     /// 在工程锁内删除指定 take，提交工程前暂存独占的 dry 与 mix 文件。
     ///
     /// 缺失的音频不妨碍移除记录；其他 take 共用的文件保留。提交失败时恢复暂存文件。
@@ -744,6 +810,22 @@ impl FileProjectRepository {
         save_unlocked(&mut project)?;
         Ok((project, changed_since_load))
     }
+}
+
+fn checked_take_media_path(root: &Path, path: &ProjectPath) -> Result<PathBuf, ProjectError> {
+    if !path.as_str().starts_with("takes/") {
+        return Err(ProjectError::UnsafePath(path.as_str().into()));
+    }
+    let full = path.resolve(root);
+    if !full
+        .parent()
+        .ok_or_else(|| ProjectError::UnsafePath(path.as_str().into()))?
+        .canonicalize()?
+        .starts_with(root.join("takes"))
+    {
+        return Err(ProjectError::UnsafePath(path.as_str().into()));
+    }
+    Ok(full)
 }
 
 impl ProjectRepository for FileProjectRepository {

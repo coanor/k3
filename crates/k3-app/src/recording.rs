@@ -271,6 +271,47 @@ fn save_completed_recording(
     })
 }
 
+struct RecordingPaths {
+    id: String,
+    dry_relative_path: String,
+    dry_temporary_path: PathBuf,
+    dry_final_path: PathBuf,
+    mix_relative_path: String,
+    mix_temporary_path: PathBuf,
+    mix_final_path: PathBuf,
+}
+
+fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    let id = format!("take-{timestamp}");
+    let dry_relative_path = format!("takes/{id}-dry.wav");
+    let dry_final_path = project.root().join(&dry_relative_path);
+    let dry_temporary_path = project.root().join(format!("takes/.{id}-dry.wav.partial"));
+    let mix_relative_path = format!("takes/{id}-mix.wav");
+    let mix_final_path = project.root().join(&mix_relative_path);
+    let mix_temporary_path = project.root().join(format!("takes/.{id}-mix.wav.partial"));
+    if [
+        &dry_final_path,
+        &dry_temporary_path,
+        &mix_final_path,
+        &mix_temporary_path,
+    ]
+    .iter()
+    .any(|path| path.exists())
+    {
+        return Err(format!("recording destination already exists for {id}").into());
+    }
+    Ok(RecordingPaths {
+        id,
+        dry_relative_path,
+        dry_temporary_path,
+        dry_final_path,
+        mix_relative_path,
+        mix_temporary_path,
+        mix_final_path,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{recording_paths, save_completed_recording};
@@ -376,45 +417,4 @@ mod tests {
         }
         writer.finalize().unwrap();
     }
-}
-
-struct RecordingPaths {
-    id: String,
-    dry_relative_path: String,
-    dry_temporary_path: PathBuf,
-    dry_final_path: PathBuf,
-    mix_relative_path: String,
-    mix_temporary_path: PathBuf,
-    mix_final_path: PathBuf,
-}
-
-fn recording_paths(project: &Project) -> Result<RecordingPaths, Box<dyn Error>> {
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let id = format!("take-{timestamp}");
-    let dry_relative_path = format!("takes/{id}-dry.wav");
-    let dry_final_path = project.root().join(&dry_relative_path);
-    let dry_temporary_path = project.root().join(format!("takes/.{id}-dry.wav.partial"));
-    let mix_relative_path = format!("takes/{id}-mix.wav");
-    let mix_final_path = project.root().join(&mix_relative_path);
-    let mix_temporary_path = project.root().join(format!("takes/.{id}-mix.wav.partial"));
-    if [
-        &dry_final_path,
-        &dry_temporary_path,
-        &mix_final_path,
-        &mix_temporary_path,
-    ]
-    .iter()
-    .any(|path| path.exists())
-    {
-        return Err(format!("recording destination already exists for {id}").into());
-    }
-    Ok(RecordingPaths {
-        id,
-        dry_relative_path,
-        dry_temporary_path,
-        dry_final_path,
-        mix_relative_path,
-        mix_temporary_path,
-        mix_final_path,
-    })
 }

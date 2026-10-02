@@ -26,7 +26,7 @@ pub use lyrics_download::{
     default_project_lyrics_query, find_lyrics_again, find_missing_lyrics, find_project_lyrics,
     save_lyrics_choice, save_project_lyrics,
 };
-pub use mix::{render_take_mix, render_take_preview};
+pub use mix::{ensure_take_render, render_and_save_take, render_take_mix};
 pub use playback::{
     AudioCommand, AudioSnapshot, PlaybackBackend, PlaybackCommand, PlaybackEngine, PlaybackService,
     PlaybackServiceError, PlaybackSnapshot, PlaybackStatus,

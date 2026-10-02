@@ -156,13 +156,13 @@ export component K3Window inherits Window {
     callback select-separation-profile(int);
     callback select-quality-model(int);
     pure callback localize-message(string, int) -> string;
+    localize-message(source, _language) => { return source; }
     callback set-key(int);
     callback switch-track(TrackSelection);
     callback seek-lyric(float);
     callback recording-command(bool);
     callback select-effect(int);
     callback select-existing-take(int);
-    callback apply-take-effect(int);
     callback begin-delete-take;
     callback cancel-delete-take;
     callback confirm-delete-take;

@@ -5,7 +5,7 @@ use std::{
 };
 
 use k3_audio::PitchShiftSource;
-use k3_core::{Project, ProjectPath, SeparationState, VocalEffectPreset};
+use k3_core::{FileProjectRepository, Project, ProjectPath, SeparationState, VocalEffectPreset};
 use rodio::{ChannelCount, Decoder, SampleRate, source::UniformSourceIterator};
 
 use crate::effects::VocalEffect;
@@ -13,59 +13,123 @@ use crate::effects::VocalEffect;
 const VOICE_GAIN: f32 = 4.0;
 const BACKING_GAIN: f32 = 0.65;
 
+/// 已提交的新混音及旧文件清理警告。
 pub struct RenderedTake {
     pub path: PathBuf,
-    pub relative_path: ProjectPath,
+    pub cleanup_warning: Option<String>,
 }
 
-/// Rebuilds one preview from its immutable dry recording and project accompaniment.
-pub fn render_take_preview(
-    project: &Project,
+/// 从不可变的干声和伴奏生成独立混音，并提交效果、调号和文件引用。
+///
+/// 渲染时不持有工程锁；提交失败会删除新文件，保留原混音和工程对象。
+///
+/// # Errors
+///
+/// take 或伴奏不存在、音频无效、目录越界、工程版本冲突或文件操作失败时返回错误。
+pub fn render_and_save_take(
+    project: &mut Project,
     take_id: &str,
     preset: VocalEffectPreset,
 ) -> Result<RenderedTake, Box<dyn Error>> {
+    prepare_take_render(project, take_id, preset)?.commit(project, take_id, preset)
+}
+
+/// 播放前根据当前工程的效果、调号和文件状态检查混音，必要时重新渲染并保存。
+///
+/// # Errors
+///
+/// take 不存在，或重新渲染、提交失败时返回错误。
+pub fn ensure_take_render(
+    project: &mut Project,
+    take_id: &str,
+    preset: VocalEffectPreset,
+) -> Result<Option<RenderedTake>, Box<dyn Error>> {
+    let take = project
+        .take(take_id)
+        .ok_or_else(|| format!("take is not part of this project: {take_id}"))?;
+    if take.effect_preset() == preset
+        && take.rendered_key_semitones() == project.key_shift_semitones()
+        && take
+            .mix_audio()
+            .is_some_and(|path| path.resolve(project.root()).is_file())
+    {
+        return Ok(None);
+    }
+    render_and_save_take(project, take_id, preset).map(Some)
+}
+
+struct PreparedTakeRender {
+    path: PathBuf,
+    relative_path: ProjectPath,
+    committed: bool,
+}
+
+impl PreparedTakeRender {
+    fn commit(
+        mut self,
+        project: &mut Project,
+        take_id: &str,
+        preset: VocalEffectPreset,
+    ) -> Result<RenderedTake, Box<dyn Error>> {
+        let cleanup_warning = FileProjectRepository.commit_take_render(
+            project,
+            take_id,
+            preset,
+            self.relative_path.clone(),
+        )?;
+        self.committed = true;
+        Ok(RenderedTake {
+            path: self.path.clone(),
+            cleanup_warning,
+        })
+    }
+}
+
+impl Drop for PreparedTakeRender {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn prepare_take_render(
+    project: &Project,
+    take_id: &str,
+    preset: VocalEffectPreset,
+) -> Result<PreparedTakeRender, Box<dyn Error>> {
     let take = project
         .take(take_id)
         .ok_or_else(|| format!("take is not part of this project: {take_id}"))?;
     let SeparationState::Ready(separation) = project.separation() else {
         return Err("project accompaniment is not ready".into());
     };
-    let relative_path = take
-        .mix_audio()
-        .cloned()
-        .map_or_else(|| ProjectPath::new(format!("takes/{take_id}-mix.wav")), Ok)?;
-    let destination = project.root().join(Path::new(relative_path.as_str()));
-    let temporary = project
-        .root()
-        .join(format!("takes/.{take_id}-effect.partial"));
-    if temporary.exists() {
-        return Err(format!(
-            "effect render is already in progress: {}",
-            temporary.display()
-        )
-        .into());
+    let takes = project.root().join("takes");
+    if takes.canonicalize()? != takes {
+        return Err("take render directory is redirected outside its project location".into());
     }
-    let render = render_take_mix(
-        &project
-            .root()
-            .join(Path::new(separation.accompaniment.as_str())),
-        &project.root().join(Path::new(take.dry_audio().as_str())),
-        &temporary,
+    let relative_path = ProjectPath::new(format!("takes/mix-{}.wav", uuid::Uuid::new_v4()))?;
+    let rendered = PreparedTakeRender {
+        path: relative_path.resolve(project.root()),
+        relative_path,
+        committed: false,
+    };
+    render_take_mix(
+        &separation.accompaniment.resolve(project.root()),
+        &take.dry_audio().resolve(project.root()),
+        &rendered.path,
         project.latency_compensation_ms(),
         project.key_shift_semitones(),
         preset,
-    );
-    if let Err(error) = render {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    replace_rendered_file(&temporary, &destination)?;
-    Ok(RenderedTake {
-        path: destination,
-        relative_path,
-    })
+    )?;
+    Ok(rendered)
 }
 
+/// 将干声效果和完整伴奏合成为立体声 WAV，伴奏使用指定调号。
+///
+/// # Errors
+///
+/// 音频不可读、干声不是有效的 32 位浮点 WAV，或输出写入失败时返回错误。
 pub fn render_take_mix(
     backing_path: &Path,
     dry_path: &Path,
@@ -79,6 +143,11 @@ pub fn render_take_mix(
     if dry_spec.sample_format != hound::SampleFormat::Float || dry_spec.bits_per_sample != 32 {
         return Err("dry take must be a 32-bit float WAV".into());
     }
+    let sample_rate =
+        SampleRate::new(dry_spec.sample_rate).ok_or("dry take sample rate is zero")?;
+    if dry_spec.channels == 0 {
+        return Err("dry take channel count is zero".into());
+    }
     let dry_samples: Vec<f32> = dry_reader.samples::<f32>().collect::<Result<_, _>>()?;
     let dry_channels = usize::from(dry_spec.channels);
     let frames = dry_samples.len() / dry_channels;
@@ -88,8 +157,8 @@ pub fn render_take_mix(
     let backing = Decoder::try_from(File::open(backing_path)?)?;
     let backing = UniformSourceIterator::new(
         backing,
-        ChannelCount::new(2).expect("mix channel count is non-zero"),
-        SampleRate::new(dry_spec.sample_rate).expect("recording sample rate is non-zero"),
+        ChannelCount::new(2).ok_or("mix channel count is zero")?,
+        sample_rate,
     );
     let mut backing = PitchShiftSource::new(backing, key_shift_semitones);
     let spec = hound::WavSpec {
@@ -131,27 +200,9 @@ fn dry_sample(samples: &[f32], channels: usize, frames: usize, frame: i64, chann
         })
 }
 
-fn replace_rendered_file(temporary: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
-    if !destination.exists() {
-        fs::rename(temporary, destination)?;
-        return Ok(());
-    }
-    let backup = destination.with_extension("wav.k3-backup");
-    if backup.exists() {
-        return Err(format!("stale mix backup requires attention: {}", backup.display()).into());
-    }
-    fs::rename(destination, &backup)?;
-    if let Err(error) = fs::rename(temporary, destination) {
-        let _ = fs::rename(&backup, destination);
-        return Err(error.into());
-    }
-    fs::remove_file(backup)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{render_take_mix, render_take_preview};
+    use super::{ensure_take_render, prepare_take_render, render_and_save_take, render_take_mix};
     use k3_core::{FileProjectRepository, ProjectRepository, VocalEffectPreset};
     use std::fs;
 
@@ -321,29 +372,95 @@ mod tests {
 }"#,
         )
         .unwrap();
+        let mut project = FileProjectRepository.open(root).unwrap();
+        exercise_effect_changes(&mut project);
+    }
+
+    fn exercise_effect_changes(project: &mut k3_core::Project) {
+        let root = project.root().to_path_buf();
         let repository = FileProjectRepository;
-        let mut project = repository.open(root).unwrap();
-
-        let ktv = render_take_preview(&project, "take-1", VocalEffectPreset::Ktv).unwrap();
+        let ktv = render_and_save_take(project, "take-1", VocalEffectPreset::Ktv).unwrap();
         let ktv_audio = fs::read(&ktv.path).unwrap();
-        project
-            .set_take_render("take-1", VocalEffectPreset::Ktv, ktv.relative_path)
-            .unwrap();
-        repository.save(&mut project).unwrap();
+        assert!(ktv.cleanup_warning.is_none());
 
-        let theater = render_take_preview(&project, "take-1", VocalEffectPreset::Theater).unwrap();
-        assert_ne!(ktv_audio, fs::read(&theater.path).unwrap());
-        project
-            .set_take_render("take-1", VocalEffectPreset::Theater, theater.relative_path)
-            .unwrap();
-        repository.save(&mut project).unwrap();
-
-        let reopened = repository.open(root).unwrap();
+        // 渲染期间另一前端提交，不能覆盖旧文件或留下未提交的新文件。
+        let failed = prepare_take_render(project, "take-1", VocalEffectPreset::Church).unwrap();
+        let failed_path = failed.path.clone();
+        let mut concurrent = repository.open(&root).unwrap();
+        concurrent.set_latency_compensation_ms(50);
+        repository.save(&mut concurrent).unwrap();
+        assert!(
+            failed
+                .commit(project, "take-1", VocalEffectPreset::Church)
+                .is_err()
+        );
+        assert_eq!(fs::read(&ktv.path).unwrap(), ktv_audio);
+        assert!(!failed_path.exists());
+        assert_eq!(
+            project.take("take-1").unwrap().effect_preset(),
+            VocalEffectPreset::Ktv
+        );
+        let reopened = repository.open(&root).unwrap();
+        assert_eq!(reopened.latency_compensation_ms(), 50);
         assert_eq!(
             reopened.take("take-1").unwrap().effect_preset(),
-            VocalEffectPreset::Theater
+            VocalEffectPreset::Ktv
         );
-        assert!(!root.join("takes/take-1-mix.wav.k3-backup").exists());
+        *project = reopened;
+
+        // 真实写入错误也必须保留原混音和内存状态。
+        fs::create_dir(root.join("project.json.tmp")).unwrap();
+        let failed = prepare_take_render(project, "take-1", VocalEffectPreset::Church).unwrap();
+        let failed_path = failed.path.clone();
+        assert!(
+            failed
+                .commit(project, "take-1", VocalEffectPreset::Church)
+                .is_err()
+        );
+        assert_eq!(fs::read(&ktv.path).unwrap(), ktv_audio);
+        assert!(!failed_path.exists());
+        assert_eq!(
+            project.take("take-1").unwrap().effect_preset(),
+            VocalEffectPreset::Ktv
+        );
+        fs::remove_dir(root.join("project.json.tmp")).unwrap();
+
+        project.set_key_shift_semitones(2).unwrap();
+        let theater = render_and_save_take(project, "take-1", VocalEffectPreset::Theater).unwrap();
+        assert_ne!(ktv_audio, fs::read(&theater.path).unwrap());
+        assert!(theater.cleanup_warning.is_none());
+        assert!(!ktv.path.exists());
+        let reopened = repository.open(&root).unwrap();
+        let saved = reopened.take("take-1").unwrap();
+        assert_eq!(saved.effect_preset(), VocalEffectPreset::Theater);
+        assert_eq!(saved.rendered_key_semitones(), 2);
+        assert_eq!(saved.mix_audio().unwrap().resolve(&root), theater.path);
+        assert_eq!(fs::read_dir(root.join("takes")).unwrap().count(), 2);
+
+        assert!(
+            ensure_take_render(project, "take-1", VocalEffectPreset::Theater)
+                .unwrap()
+                .is_none()
+        );
+        project.set_key_shift_semitones(-2).unwrap();
+        let shifted = ensure_take_render(project, "take-1", VocalEffectPreset::Theater)
+            .unwrap()
+            .expect("changed key must rebuild the mix before playback");
+        assert_ne!(shifted.path, theater.path);
+        assert_eq!(project.take("take-1").unwrap().rendered_key_semitones(), -2);
+        assert!(!theater.path.exists());
+        fs::remove_file(&shifted.path).unwrap();
+        assert!(
+            ensure_take_render(project, "take-1", VocalEffectPreset::Theater)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            ensure_take_render(project, "take-1", VocalEffectPreset::Clean)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(fs::read_dir(root.join("takes")).unwrap().count(), 2);
     }
 
     fn write_wav(path: &std::path::Path, channels: u16, samples: &[f32]) {

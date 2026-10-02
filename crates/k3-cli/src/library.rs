@@ -585,10 +585,10 @@ fn separate_into_project(
     if result.is_ok() {
         let produced_outputs = separation_output_paths(&project);
         if let Err(error) = repository.save(&mut project) {
-            cleanup_obsolete_outputs(&produced_outputs, &previous_outputs);
+            cleanup_obsolete_outputs(project.root(), &produced_outputs, &previous_outputs);
             return Err(error.into());
         }
-        cleanup_obsolete_outputs(&previous_outputs, &produced_outputs);
+        cleanup_obsolete_outputs(project.root(), &previous_outputs, &produced_outputs);
         return Ok(project_root.to_path_buf());
     }
     let error = result.unwrap_err();

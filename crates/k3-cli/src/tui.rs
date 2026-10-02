@@ -22,7 +22,7 @@ use k3_app::{
     AudioRecorder, LyricsChoice, LyricsProgress, LyricsSearch, PlaybackCommand, PlaybackStatus,
     RecordingTimelineAnchor, SessionPlayback, SessionTrackKind, TrackKind as ProjectTrackKind,
     default_lyrics_query, find_lyrics_again, find_missing_lyrics, lyric_countdown, lyric_window,
-    place_recording_on_timeline, render_take_mix, render_take_preview, save_lyrics_choice,
+    place_recording_on_timeline, render_and_save_take, render_take_mix, save_lyrics_choice,
 };
 use k3_core::{
     FileProjectRepository, LyricsTimeline, Project, ProjectPath, ProjectRepository,
@@ -915,15 +915,12 @@ impl App {
         preset: VocalEffectPreset,
     ) -> Result<PathBuf, Box<dyn Error>> {
         let take_id = self.session.project().takes()[index].id().to_owned();
-        let rendered = render_take_preview(self.session.project(), &take_id, preset)?;
-        let path = rendered.path;
-        self.session
-            .set_take_render(&take_id, preset, rendered.relative_path)?;
-        self.project_dirty = true;
-        if !self.save_project() {
-            return Err("cannot save rebuilt take".into());
+        let rendered = render_and_save_take(self.session.project_mut(), &take_id, preset)?;
+        self.project_dirty = false;
+        if let Some(warning) = rendered.cleanup_warning {
+            eprintln!("k3: warning: {warning}");
         }
-        Ok(path)
+        Ok(rendered.path)
     }
 
     fn adjust_key(&mut self, delta: i8) {
@@ -1664,7 +1661,11 @@ fn draw_project(
     frame.render_widget(lyric_panel, areas[1]);
 
     draw_project_footer(frame, areas[2], app, library_focused);
-    if let Some(take_id) = &app.pending_take_delete {
+    draw_take_deletion(frame, area, app.pending_take_delete.as_deref());
+}
+
+fn draw_take_deletion(frame: &mut Frame, area: Rect, take_id: Option<&str>) {
+    if let Some(take_id) = take_id {
         let popup = centered_popup(area, 58, 8);
         frame.render_widget(Clear, popup);
         frame.render_widget(

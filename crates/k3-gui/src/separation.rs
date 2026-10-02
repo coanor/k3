@@ -107,7 +107,6 @@ impl Profile {
         match index {
             0 => Self::Fast,
             1 => Self::Balanced,
-            2 => Self::Quality,
             3 => Self::Compatible,
             _ => Self::Quality,
         }
@@ -180,8 +179,8 @@ fn same_file_contents(first: &Path, second: &Path) -> std::io::Result<bool> {
     }
     let mut first = BufReader::new(File::open(first)?);
     let mut second = BufReader::new(File::open(second)?);
-    let mut left = [0_u8; 64 * 1024];
-    let mut right = [0_u8; 64 * 1024];
+    let mut left = vec![0_u8; 64 * 1024];
+    let mut right = vec![0_u8; 64 * 1024];
     loop {
         let count = first.read(&mut left)?;
         if count == 0 {

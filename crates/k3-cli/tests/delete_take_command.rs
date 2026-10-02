@@ -77,7 +77,7 @@ fn enter_no_and_eof_keep_the_recording() {
 fn yes_deletes_latest_and_preserves_older_take() {
     let (_dir, project) = fixture();
     let output = delete(&project, &[], "y\n");
-    assert!(output.status.success(), "{:?}", output);
+    assert!(output.status.success(), "{output:?}");
     let remaining = FileProjectRepository.open(project.root()).unwrap();
     assert_eq!(remaining.takes().len(), 1);
     assert_eq!(remaining.takes()[0].id(), "older");
@@ -90,7 +90,7 @@ fn yes_deletes_latest_and_preserves_older_take() {
 fn explicit_id_and_confirmation_flag_delete_only_that_take() {
     let (_dir, project) = fixture();
     let output = delete(&project, &["--take", "older", "--yes"], "");
-    assert!(output.status.success(), "{:?}", output);
+    assert!(output.status.success(), "{output:?}");
     let remaining = FileProjectRepository.open(project.root()).unwrap();
     assert_eq!(remaining.takes()[0].id(), "newer");
     assert!(project.root().join("takes/newer-dry.wav").exists());

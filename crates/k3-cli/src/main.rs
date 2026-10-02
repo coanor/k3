@@ -7,20 +7,20 @@ use k3::netease;
 use std::{
     error::Error,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use clap::{Parser, Subcommand, ValueEnum};
 use k3_core::{
     CreateProject, FileProjectRepository, Project, ProjectRepository, SeparationFailure,
-    SeparationProfile, SongPreparation,
+    SeparationProfile, SongPreparation, VocalEffectPreset,
 };
 
 use crate::python_separator::{
     PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
     separation_output_paths,
 };
-use k3_app::render_take_preview;
+use k3_app::render_and_save_take;
 
 #[derive(Debug, Parser)]
 #[command(name = "k3", version, about = "Local terminal karaoke workspace")]
@@ -221,22 +221,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             take,
             preset,
         } => {
-            let mut project = repository.open(&project)?;
-            let take_id = if take == "latest" {
-                project
-                    .takes()
-                    .last()
-                    .ok_or("project has no recorded takes")?
-                    .id()
-                    .to_owned()
-            } else {
-                take
-            };
-            let preset = preset.into();
-            let rendered = render_take_preview(&project, &take_id, preset)?;
-            project.set_take_render(&take_id, preset, rendered.relative_path)?;
-            repository.save(&mut project)?;
-            println!("{}", rendered.path.display());
+            apply_take_effect(&project, &take, preset.into())?;
         }
         Command::Tui {
             project,
@@ -263,36 +248,65 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             }
         }
         Command::DeleteTake { project, take, yes } => {
-            let loaded = repository.open(&project)?;
-            let take_id = if take == "latest" {
-                loaded
-                    .takes()
-                    .last()
-                    .ok_or("project has no recorded takes")?
-                    .id()
-                    .to_owned()
-            } else {
-                loaded
-                    .take(&take)
-                    .ok_or_else(|| format!("take is not part of this project: {take}"))?;
-                take
-            };
-            if !yes {
-                print!("Delete take {take_id} and its dry/mix audio? [y/N] ");
-                io::stdout().flush()?;
-                let mut answer = String::new();
-                io::stdin().read_line(&mut answer)?;
-                if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-                    println!("Take kept");
-                    return Ok(());
-                }
-            }
-            let deleted = repository.delete_take(&project, &take_id, loaded.document_revision())?;
-            println!("Deleted take {take_id}");
-            if let Some(warning) = deleted.cleanup_warning {
-                eprintln!("k3: warning: {warning}");
-            }
+            delete_take(&project, &take, yes)?;
         }
+    }
+    Ok(())
+}
+
+fn apply_take_effect(
+    root: &Path,
+    take: &str,
+    preset: VocalEffectPreset,
+) -> Result<(), Box<dyn Error>> {
+    let mut project = FileProjectRepository.open(root)?;
+    let take_id = if take == "latest" {
+        project
+            .takes()
+            .last()
+            .ok_or("project has no recorded takes")?
+            .id()
+            .to_owned()
+    } else {
+        take.to_owned()
+    };
+    let rendered = render_and_save_take(&mut project, &take_id, preset)?;
+    if let Some(warning) = rendered.cleanup_warning {
+        eprintln!("k3: warning: {warning}");
+    }
+    println!("{}", rendered.path.display());
+    Ok(())
+}
+
+fn delete_take(root: &Path, take: &str, yes: bool) -> Result<(), Box<dyn Error>> {
+    let loaded = FileProjectRepository.open(root)?;
+    let take_id = if take == "latest" {
+        loaded
+            .takes()
+            .last()
+            .ok_or("project has no recorded takes")?
+            .id()
+            .to_owned()
+    } else {
+        loaded
+            .take(take)
+            .ok_or_else(|| format!("take is not part of this project: {take}"))?;
+        take.to_owned()
+    };
+    if !yes {
+        print!("Delete take {take_id} and its dry/mix audio? [y/N] ");
+        io::stdout().flush()?;
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+            println!("Take kept");
+            return Ok(());
+        }
+    }
+    let deleted = FileProjectRepository.delete_take(root, &take_id, loaded.document_revision())?;
+    println!("Deleted take {take_id}");
+    if let Some(warning) = deleted.cleanup_warning {
+        eprintln!("k3: warning: {warning}");
     }
     Ok(())
 }
@@ -305,10 +319,10 @@ fn persist_preparation(
 ) -> Result<(), Box<dyn Error>> {
     let produced_outputs = separation_output_paths(project);
     if let Err(error) = repository.save(project) {
-        cleanup_obsolete_outputs(&produced_outputs, previous_outputs);
+        cleanup_obsolete_outputs(project.root(), &produced_outputs, previous_outputs);
         return Err(error.into());
     }
-    cleanup_obsolete_outputs(previous_outputs, &produced_outputs);
+    cleanup_obsolete_outputs(project.root(), previous_outputs, &produced_outputs);
     result.map_err(Into::into)
 }
 

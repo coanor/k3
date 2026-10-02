@@ -24,8 +24,8 @@ use crate::{
 use k3_app::{
     GuiRecordingController, LoadedProject, LyricsChoice, LyricsSearch, PlaybackCommand,
     PlaybackService, PlaybackSnapshot, PlaybackStatus, ProjectLibrary, ProjectRevision,
-    ProjectSummary, RodioBackend, TrackKind, default_project_lyrics_query, find_project_lyrics,
-    lyric_countdown, render_take_preview, save_project_lyrics,
+    ProjectSummary, RodioBackend, TrackKind, default_project_lyrics_query, ensure_take_render,
+    find_project_lyrics, lyric_countdown, save_project_lyrics,
 };
 use k3_core::{FileProjectRepository, ProjectRepository, VocalEffectPreset};
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
@@ -72,11 +72,18 @@ impl AppData {
     }
 
     fn project_is_open(&self, path: &Path) -> bool {
-        self.projects.iter().any(|project| {
-            project.path == path
-                && (Some(project.id) == self.selected_id
-                    || Some(project.id) == self.pending_open_id)
-        })
+        self.open_project_id(path).is_some()
+    }
+
+    fn open_project_id(&self, path: &Path) -> Option<Uuid> {
+        self.projects
+            .iter()
+            .find(|project| {
+                project.path == path
+                    && (Some(project.id) == self.selected_id
+                        || Some(project.id) == self.pending_open_id)
+            })
+            .map(|project| project.id)
     }
 }
 
@@ -97,8 +104,6 @@ struct SelectedSeparation {
 #[derive(Clone)]
 struct TakeChoice {
     id: String,
-    effect: VocalEffectPreset,
-    mix_ready: bool,
 }
 
 struct PendingTakeDeletion {
@@ -157,35 +162,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     };
     let initial_volume = settings.volume;
-    let initial_effect = settings.recording.default_effect;
     let ui = K3Window::new()?;
-    slint::select_bundled_translation(settings.language.locale())?;
-    ui.set_language_index(settings.language.index());
-    ui.set_separation_profile(settings.separation_profile.index());
-    ui.set_quality_model_index(settings.separation_quality_model.index());
-    if let Ok(path) = GuiSettings::path() {
-        ui.set_settings_path(path_text(&path));
-    }
-    if let Ok(log) = DiagnosticLog::initialize() {
-        ui.set_log_path(path_text(log.path()));
-    }
-    ui.window().set_size(LogicalSize::new(
-        logical_dimension(settings.window.width),
-        logical_dimension(settings.window.height),
-    ));
-    ui.set_volume(settings.volume);
-    ui.set_effect_index(effect_index(initial_effect));
-    ui.set_projects_root(
-        settings
-            .projects_root
-            .as_deref()
-            .map_or_else(SharedString::default, path_text),
-    );
-    ui.set_view_mode(if settings.projects_root.is_none() {
-        ViewMode::Setup
-    } else {
-        ViewMode::Rehearsal
-    });
+    configure_window(&ui, &settings)?;
 
     let data = Arc::new(Mutex::new(AppData {
         settings,
@@ -282,6 +260,38 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn configure_window(ui: &K3Window, settings: &GuiSettings) -> Result<(), Box<dyn Error>> {
+    slint::select_bundled_translation(settings.language.locale())?;
+    ui.set_language_index(settings.language.index());
+    ui.set_separation_profile(settings.separation_profile.index());
+    ui.set_quality_model_index(settings.separation_quality_model.index());
+    if let Ok(path) = GuiSettings::path() {
+        ui.set_settings_path(path_text(&path));
+    }
+    if let Ok(log) = DiagnosticLog::initialize() {
+        ui.set_log_path(path_text(log.path()));
+    }
+    ui.window().set_size(LogicalSize::new(
+        logical_dimension(settings.window.width),
+        logical_dimension(settings.window.height),
+    ));
+    ui.set_volume(settings.volume);
+    ui.set_effect_index(effect_index(settings.recording.default_effect));
+    ui.set_projects_root(
+        settings
+            .projects_root
+            .as_deref()
+            .map_or_else(SharedString::default, path_text),
+    );
+    ui.set_view_mode(if settings.projects_root.is_none() {
+        ViewMode::Setup
+    } else {
+        ViewMode::Rehearsal
+    });
+
+    Ok(())
+}
+
 fn install_window_events(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
@@ -339,15 +349,15 @@ fn install_preference_callbacks(
             let Some(language) = GuiLanguage::from_index(index) else {
                 return;
             };
-            if slint::select_bundled_translation(language.locale()).is_ok() {
-                if let Ok(mut data) = data.lock() {
-                    data.settings.language = language;
-                    if let Some(ui) = weak.upgrade() {
-                        ui.set_take_options(take_options(data.takes.len(), language));
-                    }
-                    if data.settings_writable {
-                        settings_writer.persist(data.settings.clone());
-                    }
+            if slint::select_bundled_translation(language.locale()).is_ok()
+                && let Ok(mut data) = data.lock()
+            {
+                data.settings.language = language;
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_take_options(take_options(data.takes.len(), language));
+                }
+                if data.settings_writable {
+                    settings_writer.persist(data.settings.clone());
                 }
             }
         });
@@ -953,63 +963,25 @@ fn install_start_separation(
             );
             return;
         }
-        let reload_id = exists
-            .then(|| {
-                state
-                    .projects
-                    .iter()
-                    .find(|item| {
-                        (Some(item.id) == state.selected_id
-                            || Some(item.id) == state.pending_open_id)
-                            && item.path == project
-                    })
-                    .map(|item| item.id)
-            })
-            .flatten();
+        let reload_id = exists.then(|| state.open_project_id(&project)).flatten();
         state.separation_running = true;
         state.active_separation_project = Some(project);
         drop(state);
-        if let Some(id) = reload_id {
-            match playback.execute(PlaybackCommand::Unload) {
-                Ok(snapshot) if snapshot.status != PlaybackStatus::Error => {
-                    if let Ok(mut state) = data.lock() {
-                        state.open_generation = state.open_generation.wrapping_add(1);
-                        state.pending_open_id = None;
-                        state.reopen_after_separation = Some(id);
-                        state.discard_snapshots_through_generation =
-                            Some(snapshot.project_generation);
-                    }
-                    ui.set_playback_state(PlaybackState::Loading);
-                }
-                result => {
-                    if let Ok(mut state) = data.lock() {
-                        state.separation_running = false;
-                        state.active_separation_project = None;
-                    }
-                    let message = match result {
-                        Ok(snapshot) => snapshot
-                            .error
-                            .unwrap_or_else(|| "Could not unload audio".into()),
-                        Err(error) => error.to_string(),
-                    };
-                    ui.set_separation_state(SeparationState::Error);
-                    ui.set_separation_message(message.into());
-                    return;
-                }
+        if let Some(id) = reload_id
+            && let Err(message) = unload_for_separation(&playback, &data, id)
+        {
+            if let Ok(mut state) = data.lock() {
+                state.separation_running = false;
+                state.active_separation_project = None;
             }
+            ui.set_separation_state(SeparationState::Error);
+            ui.set_separation_message(message.into());
+            return;
         }
-        ui.set_separation_state(SeparationState::Running);
-        ui.set_separation_progress(-1.0);
-        ui.set_separation_stage(separation::ProgressPhase::Preparing.label().into());
-        ui.set_separation_elapsed_seconds(0);
-        let name = request.source.file_name().map_or_else(
-            || request.source.display().to_string(),
-            |name| name.to_string_lossy().into(),
-        );
-        ui.set_separation_current_song(name.clone().into());
-        ui.set_separation_message(
-            format!("Separating {name}. This may take several minutes…").into(),
-        );
+        if reload_id.is_some() {
+            ui.set_playback_state(PlaybackState::Loading);
+        }
+        show_separation_started(&ui, &request);
         publish_projects(&ui, &data, ui.get_search_query().as_str());
         run_separation_task(
             weak.clone(),
@@ -1019,6 +991,41 @@ fn install_start_separation(
             script,
         );
     });
+}
+
+fn unload_for_separation(
+    playback: &PlaybackService,
+    data: &Mutex<AppData>,
+    id: Uuid,
+) -> Result<(), String> {
+    let snapshot = playback
+        .execute(PlaybackCommand::Unload)
+        .map_err(|error| error.to_string())?;
+    if snapshot.status == PlaybackStatus::Error {
+        return Err(snapshot
+            .error
+            .unwrap_or_else(|| "Could not unload audio".into()));
+    }
+    if let Ok(mut state) = data.lock() {
+        state.open_generation = state.open_generation.wrapping_add(1);
+        state.pending_open_id = None;
+        state.reopen_after_separation = Some(id);
+        state.discard_snapshots_through_generation = Some(snapshot.project_generation);
+    }
+    Ok(())
+}
+
+fn show_separation_started(ui: &K3Window, request: &SeparationRequest) {
+    ui.set_separation_state(SeparationState::Running);
+    ui.set_separation_progress(-1.0);
+    ui.set_separation_stage(separation::ProgressPhase::Preparing.label().into());
+    ui.set_separation_elapsed_seconds(0);
+    let name = request.source.file_name().map_or_else(
+        || request.source.display().to_string(),
+        |name| name.to_string_lossy().into(),
+    );
+    ui.set_separation_current_song(name.clone().into());
+    ui.set_separation_message(format!("Separating {name}. This may take several minutes…").into());
 }
 
 fn run_separation_task(
@@ -1154,24 +1161,24 @@ fn start_next_queued_separation(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
         };
         let Some(next) = next else {
             ui.set_separation_queued_count(0);
-            if let Ok(state) = data.lock() {
-                if state.separation_completed > 0 || !state.separation_errors.is_empty() {
-                    let summary = format!(
-                        "Separated {} song(s); {} failed{}",
-                        state.separation_completed,
-                        state.separation_errors.len(),
-                        state
-                            .separation_errors
-                            .last()
-                            .map_or_else(String::new, |error| format!(". Last error: {error}"))
-                    );
-                    ui.set_separation_state(if state.separation_errors.is_empty() {
-                        SeparationState::Success
-                    } else {
-                        SeparationState::Error
-                    });
-                    ui.set_separation_message(summary.into());
-                }
+            if let Ok(state) = data.lock()
+                && (state.separation_completed > 0 || !state.separation_errors.is_empty())
+            {
+                let summary = format!(
+                    "Separated {} song(s); {} failed{}",
+                    state.separation_completed,
+                    state.separation_errors.len(),
+                    state
+                        .separation_errors
+                        .last()
+                        .map_or_else(String::new, |error| format!(". Last error: {error}"))
+                );
+                ui.set_separation_state(if state.separation_errors.is_empty() {
+                    SeparationState::Success
+                } else {
+                    SeparationState::Error
+                });
+                ui.set_separation_message(summary.into());
             }
             return;
         };
@@ -1394,6 +1401,7 @@ fn request_project_open(
         });
         data.open_generation = data.open_generation.wrapping_add(1);
         data.pending_open_id = Some(id);
+        data.take_operation_running = play_take;
         // An explicit project choice supersedes the automatic reopen of the
         // project that was unloaded for separation.
         data.reopen_after_separation = None;
@@ -1404,6 +1412,9 @@ fn request_project_open(
         return;
     };
     if let Some(ui) = ui.upgrade() {
+        if play_take {
+            ui.set_take_busy(true);
+        }
         begin_project_load(&ui);
     }
     open_project(
@@ -1459,26 +1470,18 @@ fn install_recording_callbacks(
                 let project_id = state.selected_id?;
                 let take_id = state.selected_take_id.as_ref()?;
                 let take = state.takes.iter().find(|take| take.id == *take_id)?;
-                Some((
-                    project_id,
-                    take.id.clone(),
-                    take.effect == effect && take.mix_ready,
-                ))
+                Some((project_id, take.id.clone()))
             });
-            if let Some((project_id, take_id, already_rendered)) = selected {
-                if already_rendered {
-                    request_project_open(
-                        &weak,
-                        &data,
-                        &playback,
-                        &recording,
-                        project_id,
-                        Some(take_id),
-                        true,
-                    );
-                } else {
-                    window.invoke_apply_take_effect(index);
-                }
+            if let Some((project_id, take_id)) = selected {
+                request_project_open(
+                    &weak,
+                    &data,
+                    &playback,
+                    &recording,
+                    project_id,
+                    Some(take_id),
+                    true,
+                );
             }
         });
     }
@@ -1514,7 +1517,6 @@ fn install_take_callbacks(
     recording: &Arc<Mutex<GuiRecordingController>>,
 ) {
     install_select_take_callback(ui, data, playback, recording);
-    install_apply_take_effect_callback(ui, data, playback, recording);
     install_delete_take_callbacks(ui, data, playback, recording);
 }
 
@@ -1606,72 +1608,82 @@ fn install_delete_take_callbacks(
         let playback = Arc::clone(&playback);
         let recording = Arc::clone(&recording);
         let weak = weak.clone();
-        thread::spawn(move || {
-            let result = (|| -> Result<_, String> {
-                let unloaded = playback
-                    .execute(PlaybackCommand::Unload)
-                    .map_err(|e| e.to_string())?;
-                if unloaded.status == PlaybackStatus::Error {
-                    return Err(unloaded
-                        .error
-                        .unwrap_or_else(|| "Could not unload audio".into()));
+        delete_selected_take(weak, data, playback, recording, selection);
+    });
+}
+
+fn delete_selected_take(
+    weak: slint::Weak<K3Window>,
+    data: Arc<Mutex<AppData>>,
+    playback: Arc<PlaybackService>,
+    recording: Arc<Mutex<GuiRecordingController>>,
+    selection: PendingTakeDeletion,
+) {
+    thread::spawn(move || {
+        let result = (|| -> Result<_, String> {
+            let unloaded = playback
+                .execute(PlaybackCommand::Unload)
+                .map_err(|e| e.to_string())?;
+            if unloaded.status == PlaybackStatus::Error {
+                return Err(unloaded
+                    .error
+                    .unwrap_or_else(|| "Could not unload audio".into()));
+            }
+            if let Ok(mut state) = data.lock() {
+                state.discard_snapshots_through_generation = Some(unloaded.project_generation);
+            }
+            FileProjectRepository
+                .delete_take(
+                    &selection.project_root,
+                    &selection.take_id,
+                    selection.revision.as_ref(),
+                )
+                .map_err(|e| e.to_string())
+        })();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak.upgrade() else { return };
+            if let Ok(mut state) = data.lock() {
+                state.take_operation_running = false;
+                if let Ok(deleted) = &result {
+                    let index = state
+                        .takes
+                        .iter()
+                        .position(|take| take.id == selection.take_id)
+                        .unwrap_or(0);
+                    state.selected_take_id = deleted
+                        .project
+                        .takes()
+                        .get(index.min(deleted.project.takes().len().saturating_sub(1)))
+                        .map(|take| take.id().to_owned());
                 }
-                if let Ok(mut state) = data.lock() {
-                    state.discard_snapshots_through_generation = Some(unloaded.project_generation);
+            }
+            window.set_take_busy(false);
+            window.set_take_effect_message(SharedString::default());
+            request_project_open(
+                &weak,
+                &data,
+                &playback,
+                &recording,
+                selection.project_id,
+                None,
+                false,
+            );
+            match result {
+                Ok(deleted) => {
+                    let warning = deleted
+                        .cleanup_warning
+                        .map_or_else(String::new, |warning| format!(" · Warning: {warning}"));
+                    window.set_recording_message(
+                        format!("Deleted take {}{warning}", selection.take_id).into(),
+                    );
+                    clear_general_error(&window);
                 }
-                FileProjectRepository
-                    .delete_take(
-                        &selection.project_root,
-                        &selection.take_id,
-                        selection.revision.as_ref(),
-                    )
-                    .map_err(|e| e.to_string())
-            })();
-            let _ = slint::invoke_from_event_loop(move || {
-                let Some(window) = weak.upgrade() else { return };
-                if let Ok(mut state) = data.lock() {
-                    state.take_operation_running = false;
-                    if let Ok(deleted) = &result {
-                        let index = state
-                            .takes
-                            .iter()
-                            .position(|take| take.id == selection.take_id)
-                            .unwrap_or(0);
-                        state.selected_take_id = deleted
-                            .project
-                            .takes()
-                            .get(index.min(deleted.project.takes().len().saturating_sub(1)))
-                            .map(|take| take.id().to_owned());
-                    }
+                Err(error) => {
+                    window.set_recording_message(SharedString::default());
+                    show_error(&window, format!("Cannot delete take: {error}"));
                 }
-                window.set_take_busy(false);
-                window.set_take_effect_message(SharedString::default());
-                request_project_open(
-                    &weak,
-                    &data,
-                    &playback,
-                    &recording,
-                    selection.project_id,
-                    None,
-                    false,
-                );
-                match result {
-                    Ok(deleted) => {
-                        let warning = deleted
-                            .cleanup_warning
-                            .map_or_else(String::new, |warning| format!(" · Warning: {warning}"));
-                        window.set_recording_message(
-                            format!("Deleted take {}{warning}", selection.take_id).into(),
-                        );
-                        clear_general_error(&window);
-                    }
-                    Err(error) => {
-                        window.set_recording_message(SharedString::default());
-                        show_error(&window, format!("Cannot delete take: {error}"));
-                    }
-                }
-                start_next_queued_separation(&window, &data);
-            });
+            }
+            start_next_queued_separation(&window, &data);
         });
     });
 }
@@ -1699,25 +1711,14 @@ fn install_select_take_callback(
                 data.lock().ok().and_then(|state| {
                     let project_id = state.selected_id?;
                     let take = state.takes.get(index)?;
-                    (!state.take_operation_running).then(|| {
-                        let effect = state.settings.recording.default_effect;
-                        let needs_render = take.effect != effect || !take.mix_ready;
-                        (project_id, take.id.clone(), effect, needs_render)
-                    })
+                    (!state.take_operation_running).then(|| (project_id, take.id.clone()))
                 })
             });
-            let Some((project_id, take_id, effect, needs_render)) = selection else {
+            let Some((project_id, take_id)) = selection else {
                 return;
             };
             if let Some(window) = ui.upgrade() {
                 window.set_take_effect_message(SharedString::default());
-                if needs_render {
-                    if let Ok(mut state) = data.lock() {
-                        state.selected_take_id = Some(take_id);
-                    }
-                    window.invoke_apply_take_effect(effect_index(effect));
-                    return;
-                }
             }
             request_project_open(
                 &ui,
@@ -1730,128 +1731,6 @@ fn install_select_take_callback(
             );
         });
     }
-}
-
-fn install_apply_take_effect_callback(
-    ui: &K3Window,
-    data: &Arc<Mutex<AppData>>,
-    playback: &Arc<PlaybackService>,
-    recording: &Arc<Mutex<GuiRecordingController>>,
-) {
-    {
-        let ui = ui.as_weak();
-        let data = Arc::clone(data);
-        let playback = Arc::clone(playback);
-        let recording = Arc::clone(recording);
-        ui.unwrap().on_apply_take_effect(move |index| {
-            if ui.upgrade().is_none_or(|window| {
-                window.get_recording_state() != RecordingState::Idle
-                    || window.get_loading()
-                    || window.get_current_project_separating()
-            }) {
-                return;
-            }
-            let Some(effect) = effect_for_index(index) else {
-                return;
-            };
-            let selection = data.lock().ok().and_then(|mut state| {
-                if state.take_operation_running {
-                    return None;
-                }
-                let project_id = state.selected_id?;
-                let take_id = state.selected_take_id.clone()?;
-                let project_root = state
-                    .projects
-                    .iter()
-                    .find(|item| item.id == project_id)?
-                    .path
-                    .clone();
-                let revision = state.selected_document_revision.clone();
-                state.take_operation_running = true;
-                Some((project_id, project_root, take_id, revision))
-            });
-            let Some((project_id, project_root, take_id, revision)) = selection else {
-                return;
-            };
-            if let Some(window) = ui.upgrade() {
-                window.set_take_busy(true);
-                window.set_take_effect_message("Rendering selected take…".into());
-                clear_general_error(&window);
-            }
-            let ui = ui.clone();
-            let data = Arc::clone(&data);
-            let playback = Arc::clone(&playback);
-            let recording = Arc::clone(&recording);
-            thread::spawn(move || {
-                let result = render_existing_take(
-                    &playback,
-                    &project_root,
-                    &take_id,
-                    effect,
-                    revision.as_ref(),
-                )
-                .map_err(|error| error.to_string());
-                let _ = slint::invoke_from_event_loop(move || {
-                    let Some(window) = ui.upgrade() else {
-                        return;
-                    };
-                    if let Ok(mut state) = data.lock() {
-                        state.take_operation_running = false;
-                    }
-                    window.set_take_busy(false);
-                    match result {
-                        Ok(()) => {
-                            window.set_take_effect_message(
-                                format!("{} saved · playing", effect.label()).into(),
-                            );
-                            request_project_open(
-                                &ui,
-                                &data,
-                                &playback,
-                                &recording,
-                                project_id,
-                                Some(take_id),
-                                true,
-                            );
-                        }
-                        Err(error) => {
-                            window.set_take_effect_message("Render failed".into());
-                            show_error(&window, format!("Cannot render take: {error}"));
-                        }
-                    }
-                    start_next_queued_separation(&window, &data);
-                });
-            });
-        });
-    }
-}
-
-fn render_existing_take(
-    playback: &PlaybackService,
-    project_root: &Path,
-    take_id: &str,
-    effect: VocalEffectPreset,
-    expected_revision: Option<&ProjectRevision>,
-) -> Result<(), Box<dyn Error>> {
-    let switched = playback.execute(PlaybackCommand::SwitchTrack(TrackKind::Accompaniment))?;
-    if switched.status == PlaybackStatus::Error {
-        return Err(switched
-            .error
-            .unwrap_or_else(|| "cannot release take audio".into())
-            .into());
-    }
-    if switched.status == PlaybackStatus::Playing {
-        playback.execute(PlaybackCommand::Toggle)?;
-    }
-    let repository = FileProjectRepository;
-    let mut project = repository.open(project_root)?;
-    if project.document_revision() != expected_revision {
-        return Err("project changed on disk; reload it before changing the take effect".into());
-    }
-    let rendered = render_take_preview(&project, take_id, effect)?;
-    project.set_take_render(take_id, effect, rendered.relative_path)?;
-    repository.save(&mut project)?;
-    Ok(())
 }
 
 const fn effect_for_index(index: i32) -> Option<VocalEffectPreset> {
@@ -2125,6 +2004,12 @@ fn install_playback_callbacks(
             {
                 return;
             }
+            if track == TrackSelection::Take && !recording_controls_active(&ui) {
+                if let Some(window) = ui.upgrade() {
+                    window.invoke_select_existing_take(window.get_selected_take_index());
+                }
+                return;
+            }
             let track = match track {
                 TrackSelection::Original => TrackKind::Original,
                 TrackSelection::Accompaniment => TrackKind::Accompaniment,
@@ -2275,20 +2160,7 @@ fn scan_library(
                     };
                     ui.set_loading(false);
                     if intent.adopts_root() {
-                        if let Ok(mut state) = data.lock() {
-                            state.selected_separation_sources.clear();
-                        }
-                        ui.set_projects_root(path_text(&root));
-                        ui.set_take_options(ModelRc::new(VecModel::default()));
-                        ui.set_selected_take_index(0);
-                        ui.set_take_effect_message(SharedString::default());
-                        ui.set_separation_source(SharedString::default());
-                        ui.set_separation_selected_count(0);
-                        ui.set_separation_selection_message(SharedString::default());
-                        ui.set_separation_existing(false);
-                        ui.set_separation_state(SeparationState::Idle);
-                        ui.set_separation_message(SharedString::default());
-                        ui.set_separation_panel_open(false);
+                        reset_root_selection(&ui, &data, &root);
                     }
                     ui.set_view_mode(ViewMode::Rehearsal);
                     ui.set_project_changed(project_changed);
@@ -2329,6 +2201,23 @@ fn scan_library(
     });
 }
 
+fn reset_root_selection(ui: &K3Window, data: &Mutex<AppData>, root: &Path) {
+    if let Ok(mut state) = data.lock() {
+        state.selected_separation_sources.clear();
+    }
+    ui.set_projects_root(path_text(root));
+    ui.set_take_options(ModelRc::new(VecModel::default()));
+    ui.set_selected_take_index(0);
+    ui.set_take_effect_message(SharedString::default());
+    ui.set_separation_source(SharedString::default());
+    ui.set_separation_selected_count(0);
+    ui.set_separation_selection_message(SharedString::default());
+    ui.set_separation_existing(false);
+    ui.set_separation_state(SeparationState::Idle);
+    ui.set_separation_message(SharedString::default());
+    ui.set_separation_panel_open(false);
+}
+
 fn open_project(
     ui: slint::Weak<K3Window>,
     data: Arc<Mutex<AppData>>,
@@ -2339,35 +2228,8 @@ fn open_project(
     play_take: bool,
 ) {
     thread::spawn(move || {
-        let loaded = (|| -> Result<(LoadedProject, Vec<TakeChoice>, Option<String>), String> {
-            let project = FileProjectRepository
-                .open(&project.path)
-                .map_err(|error| error.to_string())?;
-            let takes = project
-                .takes()
-                .iter()
-                .map(|take| TakeChoice {
-                    id: take.id().to_owned(),
-                    effect: take.effect_preset(),
-                    mix_ready: take
-                        .mix_audio()
-                        .is_some_and(|mix| mix.resolve(project.root()).is_file())
-                        && take.rendered_key_semitones() == project.key_shift_semitones(),
-                })
-                .collect::<Vec<_>>();
-            let selected = preferred_take
-                .filter(|id| takes.iter().any(|take| take.id == *id))
-                .or_else(|| takes.last().map(|take| take.id.clone()));
-            let loaded = match selected.as_deref() {
-                Some(take_id) => {
-                    LoadedProject::from_project_with_lyrics_for_take(&project, take_id)
-                        .map_err(|error| error.to_string())?
-                }
-                None => LoadedProject::from_project_with_lyrics(&project)
-                    .map_err(|error| error.to_string())?,
-            };
-            Ok((loaded, takes, selected))
-        })();
+        let loaded =
+            load_project_for_playback(&data, &playback, &project.path, preferred_take, play_take);
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -2375,12 +2237,19 @@ fn open_project(
             if !is_current_open(&data, generation) {
                 return;
             }
+            if play_take {
+                if let Ok(mut state) = data.lock() {
+                    state.take_operation_running = false;
+                }
+                ui.set_take_busy(false);
+            }
             let (loaded, takes, selected) = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
                     clear_pending_open(&data, generation);
                     ui.set_loading(false);
                     show_error(&ui, error);
+                    start_next_queued_separation(&ui, &data);
                     return;
                 }
             };
@@ -2414,8 +2283,72 @@ fn open_project(
                     show_playback_error(&ui, error.to_string());
                 }
             }
+            if play_take {
+                start_next_queued_separation(&ui, &data);
+            }
         });
     });
+}
+
+fn load_project_for_playback(
+    data: &Mutex<AppData>,
+    playback: &PlaybackService,
+    root: &Path,
+    preferred_take: Option<String>,
+    play_take: bool,
+) -> Result<(LoadedProject, Vec<TakeChoice>, Option<String>), String> {
+    // 同步经过播放队列，保证此前的调号命令已经保存，再读取实际工程。
+    if play_take {
+        let switched = playback
+            .execute(PlaybackCommand::SwitchTrack(TrackKind::Accompaniment))
+            .map_err(|error| error.to_string())?;
+        if switched.status == PlaybackStatus::Error {
+            return Err(switched
+                .error
+                .unwrap_or_else(|| "cannot release take audio".into()));
+        }
+        if switched.status == PlaybackStatus::Playing {
+            playback
+                .execute(PlaybackCommand::Toggle)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let mut project = FileProjectRepository
+        .open(root)
+        .map_err(|error| error.to_string())?;
+    let takes = project
+        .takes()
+        .iter()
+        .map(|take| TakeChoice {
+            id: take.id().to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let selected = preferred_take
+        .filter(|id| takes.iter().any(|take| take.id == *id))
+        .or_else(|| takes.last().map(|take| take.id.clone()));
+    if play_take && let Some(take_id) = selected.as_deref() {
+        let effect = data
+            .lock()
+            .map_err(|error| error.to_string())?
+            .settings
+            .recording
+            .default_effect;
+        let rendered =
+            ensure_take_render(&mut project, take_id, effect).map_err(|error| error.to_string())?;
+        if let Some(warning) = rendered.and_then(|rendered| rendered.cleanup_warning)
+            && let Ok(log) = DiagnosticLog::initialize()
+        {
+            log.record(warning);
+        }
+    }
+    let loaded = match selected.as_deref() {
+        Some(take_id) => LoadedProject::from_project_with_lyrics_for_take(&project, take_id)
+            .map_err(|error| error.to_string())?,
+        None => {
+            LoadedProject::from_project_with_lyrics(&project).map_err(|error| error.to_string())?
+        }
+    };
+    Ok((loaded, takes, selected))
 }
 
 fn take_options(total: usize, language: GuiLanguage) -> ModelRc<SharedString> {
