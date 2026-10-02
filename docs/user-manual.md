@@ -21,8 +21,10 @@ Intel macOS 提供明确标注的纯 CLI 包；macOS 音频设备尚未完成实
 
 Linux GUI 还需要可用的 Wayland 或 X11 会话，以及支持 OpenGL ES 2.0 或更高版本的
 图形驱动。GUI 不提供软件渲染 fallback；桌面后端不可用时可继续使用 TUI。
+Ubuntu 24.04 的 GUI 运行库可通过
+`sudo apt install libfontconfig1 libxkbcommon-x11-0 libgl1-mesa-dri` 安装。
 
-Windows 原生分离需要 64 位 Python 3.11、PowerShell 5.1 或更高版本以及网络。
+从源码安装 Windows 原生分离环境需要 64 位 Python 3.11、PowerShell 5.1 或更高版本以及网络。
 GPU 模式还需要 NVIDIA 显卡与支持 CUDA 12.8 的驱动；安装脚本会在发行目录创建
 独立的 `.venv-separator`，无需预先安装 Rust、`uv` 或系统 FFmpeg。
 

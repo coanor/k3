@@ -29,6 +29,16 @@ Linux 完整包在 Ubuntu 24.04 runner 构建，要求 glibc 2.39 或更高及 A
 系统音频服务及可用设备。Windows 完整包面向 Windows 10/11 x86_64。
 macOS 完整包面向 macOS 14 或更高的 Apple Silicon 机器。
 
+Linux GUI 还需要 Wayland/X11 会话、支持 OpenGL ES 2.0 的驱动和键盘运行库。
+Ubuntu 24.04 可用以下命令补齐系统库（分离所需 Python 依赖和模型已在包内）：
+
+```bash
+sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libgl1-mesa-dri
+./k3-gui
+```
+
+Windows 解压后双击 `k3-gui.exe` 启动 GUI。
+
 Linux/macOS 在解压目录运行：
 
 ```bash
