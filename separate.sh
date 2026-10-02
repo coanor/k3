@@ -32,7 +32,7 @@ usage() {
 
 print_separation_outputs() {
     local project_dir="$1"
-    "$python_bin" - "$project_dir" <<'PY'
+    "$python_bin" -I -X utf8 - "$project_dir" <<'PY'
 import json
 import sys
 from pathlib import Path
