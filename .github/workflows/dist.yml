@@ -295,11 +295,18 @@ jobs:
       - name: Upload distribution artifact
         uses: actions/upload-artifact@v7
         with:
-          name: dist-${{ matrix.package }}
-          path: dist/${{ matrix.archive }}*
+          path: dist/${{ matrix.archive }}
+          archive: false
           if-no-files-found: error
           retention-days: 14
-          compression-level: 0
+
+      - name: Upload distribution checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ matrix.archive }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
 
   installers:
     name: Install ${{ matrix.package }}
@@ -351,12 +358,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_RUN: ${{ inputs.installer_source_run }}
+          PACKAGE_NAME: ${{ matrix.package }}
+          ARCHIVE_NAME: ${{ matrix.archive }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo '运行 ID 必须是数字' >&2; exit 1; }
           gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha,jobs > "$RUNNER_TEMP/source-run.json"
-          python - "$RUNNER_TEMP/source-run.json" <<'PY'
+          gh api --paginate "repos/$GH_REPO/actions/runs/$SOURCE_RUN/artifacts" \
+            --jq '.artifacts[] | select(.expired == false) | .name' > "$RUNNER_TEMP/source-artifacts.txt"
+          python - "$RUNNER_TEMP/source-run.json" "$RUNNER_TEMP/source-artifacts.txt" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
@@ -370,10 +382,32 @@ jobs:
           # 安装器失败不影响已通过解压、离线运行检查并上传的便携包。
           if source["workflowName"] != "Build distributions" or not expected <= successful:
               raise SystemExit("来源运行的六种便携包构建必须全部成功")
+          artifacts = set(Path(sys.argv[2]).read_text().splitlines())
+          archive = os.environ["ARCHIVE_NAME"]
+          if {archive, archive + ".sha256"} <= artifacts:
+              legacy = "false"
+          elif "dist-" + os.environ["PACKAGE_NAME"] in artifacts:
+              legacy = "true"
+          else:
+              raise SystemExit("来源运行缺少未过期的便携包或校验文件")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"K3_LEGACY_ARTIFACT={legacy}\n")
           print(f"已验证发行包来源：{source['headSha']}")
           PY
 
       - name: Download validated portable distribution
+        if: env.K3_LEGACY_ARTIFACT != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ matrix.archive }}*
+          path: dist/source
+          merge-multiple: true
+          skip-decompress: true
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.installer_source_run || github.run_id }}
+
+      - name: Download legacy wrapped distribution
+        if: env.K3_LEGACY_ARTIFACT == 'true'
         uses: actions/download-artifact@v8
         with:
           name: dist-${{ matrix.package }}
@@ -489,11 +523,36 @@ jobs:
       - name: Upload checked installer
         uses: actions/upload-artifact@v7
         with:
-          name: dist-installers-${{ matrix.package }}
-          path: dist/installers/*
+          path: dist/installers/*.${{ runner.os == 'Windows' && 'exe' || runner.os == 'macOS' && 'pkg' || 'deb' }}
+          archive: false
           if-no-files-found: error
           retention-days: 14
-          compression-level: 0
+
+      - name: Upload installer checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/installers/*.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused distribution without wrapping
+        if: inputs.installer_source_run != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/source/${{ matrix.archive }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused distribution checksum
+        if: inputs.installer_source_run != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/source/${{ matrix.archive }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
 
   release:
     name: Publish GitHub Release
@@ -506,9 +565,10 @@ jobs:
       - name: Download all distributions
         uses: actions/download-artifact@v8
         with:
-          pattern: dist-*
+          pattern: k3*
           path: dist
           merge-multiple: true
+          skip-decompress: true
 
       - name: Create combined checksums
         shell: bash
@@ -541,9 +601,10 @@ jobs:
       - name: Download all distributions
         uses: actions/download-artifact@v8
         with:
-          pattern: dist-*
+          pattern: k3*
           path: dist
           merge-multiple: true
+          skip-decompress: true
 
       - name: Verify distribution checksums
         shell: bash

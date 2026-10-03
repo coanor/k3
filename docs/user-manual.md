@@ -206,7 +206,12 @@ make dist-all REF=main
 - `k3-macos-x86_64-cli.tar.gz`；
 - `k3-macos-aarch64.tar.gz`。
 
-手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天。推送版本 tag 时，
+手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天，直接以原文件名列出。
+Windows 用户点击 `k3-windows-x86_64.zip` 或 `k3-windows-aarch64-cli.zip` 下载，
+解压一次即可看到包含程序的目录；校验文件需单独下载对应的 `.sha256`。
+安装包也直接下载为 `.exe`、`.deb` 或 `.pkg`，无需先解压外层 ZIP。
+旧运行中以 `dist-` 开头的 artifact 仍有外层 ZIP，请使用新运行的产物。
+推送版本 tag 时，
 workflow 会创建或更新同名 GitHub Release，并附加各平台包、各自的 `.sha256` 文件
 和汇总的 `SHA256SUMS`。例如：
 
