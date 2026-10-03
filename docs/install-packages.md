@@ -15,11 +15,16 @@ CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安
 | macOS Apple Silicon | CLI/TUI、CPU 分离环境；macOS ≥ 14；目前无 GUI |
 | macOS Intel | 原生 CLI/TUI；macOS ≥ 14；目前无 GUI 和完整分离依赖 |
 
-从 Release 下载脚本及对应 `.sha256`，校验后运行。以下示例使用私有源码仓库 `coanor/k3`；
-公开发行时将 `--repo` / `-Repo` 改为实际配置的公开二进制仓库。私有仓库需要先在进程环境中
-设置具有该仓库读取权限的 `GITHUB_TOKEN`，安装器通过 GitHub API 下载，不在命令参数中传递令牌。
+`coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
+正式 Release 尚未发布时，请按 [README 快速安装](https://github.com/coanor/k3#快速安装) 下载同一次成功
+Actions 构建的 `online-support` 和对应平台组件，再使用 `--source-dir` / `-SourceDir` 安装。
+正式发行后，从 Release 下载脚本及对应 `.sha256`，校验后运行；完整下载命令也见 README。
+安装器目前通过 GitHub API 下载，匿名访问受每个出口 IP 每小时 60 次请求的额度限制。
+遇到限流导致的 `403` / `429` 时应等待额度恢复；也可在进程环境中设置个人 `GITHUB_TOKEN` 认证。
+额度与等待规则见 [GitHub API 限制](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。
+从私有发行仓库安装时，该令牌还需有仓库读取权限；勿在命令参数或公开文件中写入令牌。
 脚本默认安装最新正式发行版，也可用 `--version v0.1.0` / `-Version v0.1.0` 固定版本。
-此功能需要发布包含在线安装组件的新 Release；历史完整包 Release 不含这些组件。
+此功能需要发布包含在线安装组件的新 Release；仅含完整离线包的 Release 不能用于在线安装。
 
 Linux/macOS：
 

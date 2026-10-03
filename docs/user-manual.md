@@ -205,7 +205,8 @@ CLI、GUI（平台提供时）和分离启动器分别作为独立文件发布�
 
 手动运行的 Artifacts 保留 14 天，`online-` 产物是用于 CI 传输的组件集合；
 用户安装入口应从 Release 下载。新 `v*` tag 的 Release 包含上述原文件和汇总 `SHA256SUMS`。
-Release 的 tag 必须与 `Cargo.toml` 中的版本一致。公开发行尚需维护者配置发行仓库和令牌。
+Release 的 tag 必须与 `Cargo.toml` 中的版本一致。`coanor/k3` 已公开，直接发布到本仓库无需额外配置发行仓库和令牌。
+正式 Release 尚未发布时，可按 [README 快速安装](https://github.com/coanor/k3#快速安装) 使用同一次成功构建的本地组件安装。
 
 需要完整离线归档与 `.exe` / `.deb` / `.pkg` 安装包时，在手动运行中勾选 `offline_bundle`。
 这些可选归档保持单个顶级目录；Windows ZIP 解压一次即可使用，旧 `dist-` artifact 仍有外层 ZIP。
@@ -235,7 +236,9 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
 桌面文件通过 `PATH` 查找 `k3-gui`。如果 `~/.local/bin` 尚未在 `PATH` 中，请先将其加入
 登录环境，或把二进制安装到已有的用户级 `PATH` 目录。
 
-### 2.3 私有源码仓库发布公开二进制
+### 2.3 可选：私有源码仓库发布公开二进制
+
+当前 `coanor/k3` 已公开，无需本节配置；以下仅适用于未来需要保持源码私有、单独公开发行文件的场景。
 
 私有仓库中的 GitHub Release 只有获准访问仓库的人能下载。若要让所有人下载发行包、
 同时保持 `coanor/k3` 私有，可另建一个只有说明文件的公开仓库（例如
@@ -254,8 +257,8 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
    公开 Release 若已存在，任务会报错，不会悄悄覆盖已发布的文件。
 
 未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。在线发行包括原生程序、安装脚本、
-worker 源码、三份用户手册及许可证；Python 依赖和模型由安装器从上游下载。仓库目前尚未
-配置公开发行目标及令牌，因此只完成了发布流程，尚未公开任何发行包。
+worker 源码、三份用户手册及许可证；Python 依赖和模型由安装器从上游下载。
+当前直接使用公开的 `coanor/k3` 即可；在线组件已在 Actions 中验证，正式 Release 尚未发布。
 
 ## 3. 从源码安装本地分离 worker
 
