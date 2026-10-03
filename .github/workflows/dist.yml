@@ -2,6 +2,17 @@ name: Build distributions
 
 on:
   workflow_dispatch:
+    inputs:
+      installer_source_run:
+        description: "Reuse a successful distribution build run (leave empty to build from scratch)"
+        required: false
+        default: ""
+        type: string
+      offline_bundle:
+        description: "Also build full offline archives and system installers (default: online components only)"
+        required: false
+        default: false
+        type: boolean
   pull_request:
   push:
     branches:
@@ -11,13 +22,16 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  PYTHONUTF8: "1"
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_dispatch' || inputs.installer_source_run == ''
     name: Verify workspace
     runs-on: ubuntu-24.04
     steps:
@@ -32,6 +46,15 @@ jobs:
 
       - name: Select repository Rust toolchain
         run: rustup show active-toolchain
+
+      - name: Install uv for runtime reuse regression
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.13"
+
+      - name: Test packaging validation
+        # runtime 复用回归会在临时环境实际安装新旧 worker。
+        run: python3 -m unittest discover -s scripts/tests -v
 
       - name: Run tests
         run: cargo test --workspace --locked
@@ -101,10 +124,15 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo check --workspace --all-targets --locked
 
+      - name: Test Windows launcher cancellation
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo test --package k3 --test separator_launcher --locked
+
       - name: Parse Windows separation scripts
         shell: pwsh
         run: |
-          foreach ($script in @('separate.ps1', 'install-separator.ps1')) {
+          foreach ($script in @('separate.ps1', 'install-separator.ps1', 'install.ps1')) {
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $script), [ref]$null, [ref]$errors
@@ -123,8 +151,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build:
+    if: (github.event_name == 'workflow_dispatch' && inputs.installer_source_run == '') || startsWith(github.ref, 'refs/tags/')
     name: Build ${{ matrix.package }}
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     needs: verify
     strategy:
       fail-fast: false
@@ -132,28 +160,52 @@ jobs:
         include:
           - package: k3-linux-x86_64
             archive: k3-linux-x86_64.tar.gz
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             executable: k3
             rustflags: ""
+            platform: linux
+            cli_only: false
+          - package: k3-linux-aarch64
+            archive: k3-linux-aarch64.tar.gz
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: k3
+            rustflags: ""
+            platform: linux
+            cli_only: false
           - package: k3-windows-x86_64
             archive: k3-windows-x86_64.zip
             os: windows-latest
             target: x86_64-pc-windows-msvc
             executable: k3.exe
             rustflags: -C target-feature=+crt-static
-          - package: k3-macos-x86_64
-            archive: k3-macos-x86_64.tar.gz
+            platform: windows
+            cli_only: false
+          - package: k3-windows-aarch64-cli
+            archive: k3-windows-aarch64-cli.zip
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            executable: k3.exe
+            rustflags: -C target-feature=+crt-static
+            platform: windows
+            cli_only: true
+          - package: k3-macos-x86_64-cli
+            archive: k3-macos-x86_64-cli.tar.gz
             os: macos-15-intel
             target: x86_64-apple-darwin
             executable: k3
             rustflags: ""
+            platform: macos
+            cli_only: true
           - package: k3-macos-aarch64
             archive: k3-macos-aarch64.tar.gz
             os: macos-15
             target: aarch64-apple-darwin
             executable: k3
             rustflags: ""
+            platform: macos
+            cli_only: false
     runs-on: ${{ matrix.os }}
     env:
       PACKAGE_NAME: ${{ matrix.package }}
@@ -167,11 +219,9 @@ jobs:
 
       - name: Install Linux audio headers
         if: runner.os == 'Linux'
-        run: >-
-          sudo apt-get update && sudo apt-get install --yes
-          libasound2-dev libfontconfig1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libfontconfig1-dev libxkbcommon-x11-0 libegl1 libgl1-mesa-dri pkg-config
 
-      - name: Select repository Rust target
+      - name: Select pinned Rust target
         shell: bash
         run: |
           rustup show active-toolchain
@@ -180,93 +230,429 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
-          cargo build --release --locked --target "$BUILD_TARGET" --package k3
-          if [[ "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ]]; then
+          cargo build --release --locked --bins --target "$BUILD_TARGET" --package k3
+          if [[ "${{ matrix.cli_only }}" != "true" && ( "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ) ]]; then
             cargo build --release --locked --target "$BUILD_TARGET" --package k3-gui
           fi
 
-      - name: Package Linux or macOS distribution
+      - name: Install build Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        if: ${{ !matrix.cli_only }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.13"
+
+      - name: Prepare independent online installer assets
+        shell: bash
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python scripts/package-online.py support
+          python scripts/package-online.py programs "$PACKAGE_PLATFORM" "${BUILD_TARGET%%-*}" \
+            "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+
+      - name: Validate Unix online installation
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          bash install.sh --prefix "$RUNNER_TEMP/K3 online 安装" --source-dir "$PWD/dist/online" --yes
+
+      - name: Validate Windows online installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 `
+            -InstallDir "$env:RUNNER_TEMP\K3 online 安装" -SourceDir "$PWD\dist\online" -Yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload independent native assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: online-${{ matrix.package }}
+          path: dist/online/platform/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build offline CPU runtime and models
+        if: inputs.offline_bundle == true && !matrix.cli_only
+        run: python scripts/build-runtime.py --output dist/runtime
+
+      - name: Package distribution
+        if: inputs.offline_bundle == true
+        shell: bash
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+          CLI_ONLY: ${{ matrix.cli_only }}
         run: |
           set -euo pipefail
-          platform=macos
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            platform=linux
-          fi
-          if [[ "$platform" == "linux" ]]; then
-            scripts/package-dist.sh \
-              "$platform" \
-              "$PACKAGE_NAME" \
-              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME" \
-              "target/$BUILD_TARGET/release/k3-gui"
+          package_args=("$PACKAGE_PLATFORM" "$PACKAGE_NAME" "target/$BUILD_TARGET/release/$EXECUTABLE_NAME")
+          if [[ "$CLI_ONLY" == "true" ]]; then
+            package_args+=(--cli-only)
           else
-            scripts/package-dist.sh \
-              "$platform" \
-              "$PACKAGE_NAME" \
-              "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+            package_args+=(dist/runtime)
           fi
+          if [[ "$CLI_ONLY" != "true" && "$PACKAGE_PLATFORM" == "linux" ]]; then
+            package_args+=(--gui-binary "target/$BUILD_TARGET/release/k3-gui")
+          elif [[ "$CLI_ONLY" != "true" && "$PACKAGE_PLATFORM" == "windows" ]]; then
+            package_args+=(--gui-binary "target/$BUILD_TARGET/release/k3-gui.exe")
+          fi
+          python scripts/package-dist.py "${package_args[@]}"
 
-      - name: Package Windows distribution
+      - name: Check extracted distribution
+        if: inputs.offline_bundle == true
+        shell: bash
+        env:
+          CLI_ONLY: ${{ matrix.cli_only }}
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          set -euo pipefail
+          check_args=("dist/$ARCHIVE_NAME")
+          if [[ "$CLI_ONLY" == "true" ]]; then
+            check_args+=(--cli-only)
+          fi
+          python scripts/check-dist.py "${check_args[@]}"
+
+      - name: Verify Linux GUI package contents
+        if: inputs.offline_bundle == true && runner.os == 'Linux'
+        shell: bash
+        run: scripts/verify-linux-gui-package.sh "dist/$ARCHIVE_NAME"
+
+      - name: Verify UTF-8 manifests in Windows PowerShell
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
             -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $packageDir = Join-Path "dist" $env:PACKAGE_NAME
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          $binary = "target/$env:BUILD_TARGET/release/$env:EXECUTABLE_NAME"
-          Copy-Item -LiteralPath $binary -Destination (Join-Path $packageDir "k3.exe")
-          $guiBinary = "target/$env:BUILD_TARGET/release/k3-gui.exe"
-          Copy-Item -LiteralPath $guiBinary -Destination (Join-Path $packageDir "k3-gui.exe")
-          Copy-Item "README.md" $packageDir
-          Copy-Item "docs" $packageDir -Recurse
-          $separatorDir = Join-Path $packageDir "python/separator"
-          New-Item -ItemType Directory -Force -Path $separatorDir | Out-Null
-          Copy-Item "python/separator/README.md" $separatorDir
-          Copy-Item "python/separator/pyproject.toml" $separatorDir
-          Copy-Item "python/separator/requirements-runtime.txt" $separatorDir
-          $separatorScripts = Join-Path $separatorDir "scripts"
-          $separatorPackage = Join-Path $separatorDir "src/k3_separator"
-          New-Item -ItemType Directory -Force -Path $separatorScripts | Out-Null
-          New-Item -ItemType Directory -Force -Path $separatorPackage | Out-Null
-          Copy-Item "python/separator/scripts/*.sh" $separatorScripts
-          Copy-Item "python/separator/src/k3_separator/*.py" $separatorPackage
-          Copy-Item "separate.ps1","install-separator.ps1" $packageDir
-          $archive = Join-Path "dist" $env:ARCHIVE_NAME
-          Compress-Archive -Path $packageDir -DestinationPath $archive -CompressionLevel Optimal
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
-          $checksum = Join-Path "dist" "$($env:ARCHIVE_NAME).sha256"
-          "$hash  $($env:ARCHIVE_NAME)" | Set-Content -LiteralPath $checksum -Encoding ascii
-
-      - name: Verify Linux GUI package contents
-        if: runner.os == 'Linux'
-        shell: bash
-        run: scripts/verify-linux-gui-package.sh "dist/$ARCHIVE_NAME"
 
       - name: Upload distribution artifact
+        if: inputs.offline_bundle == true
         uses: actions/upload-artifact@v7
         with:
+          path: dist/${{ matrix.archive }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload distribution checksum
+        if: inputs.offline_bundle == true
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ matrix.archive }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+  online-support:
+    name: Prepare shared online installer
+    if: inputs.installer_source_run == ''
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check release tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('Release tag must match the Cargo.toml version')
+          PYTHON
+      - run: python3 scripts/package-online.py support
+      - uses: actions/upload-artifact@v7
+        with:
+          name: online-support
+          path: dist/online/support/*
+          if-no-files-found: error
+          retention-days: 14
+
+  installers:
+    name: Install ${{ matrix.package }}
+    needs: build
+    if: >-
+      always() && !cancelled() &&
+      ((inputs.offline_bundle == true && needs.build.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.installer_source_run != ''))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: k3-linux-x86_64
+            archive: k3-linux-x86_64.tar.gz
+            os: ubuntu-24.04
+            cli_only: false
+          - package: k3-linux-aarch64
+            archive: k3-linux-aarch64.tar.gz
+            os: ubuntu-24.04-arm
+            cli_only: false
+          - package: k3-windows-x86_64
+            archive: k3-windows-x86_64.zip
+            os: windows-latest
+            cli_only: false
+          - package: k3-windows-aarch64-cli
+            archive: k3-windows-aarch64-cli.zip
+            os: windows-11-arm
+            cli_only: true
+          - package: k3-macos-aarch64
+            archive: k3-macos-aarch64.tar.gz
+            os: macos-15
+            cli_only: false
+          - package: k3-macos-x86_64-cli
+            archive: k3-macos-x86_64-cli.tar.gz
+            os: macos-15-intel
+            cli_only: true
+    runs-on: ${{ matrix.os }}
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - name: Check out installer source
+        uses: actions/checkout@v7
+
+      - name: Validate reused distribution run
+        if: inputs.installer_source_run != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ inputs.installer_source_run }}
+          PACKAGE_NAME: ${{ matrix.package }}
+          ARCHIVE_NAME: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo 'Run ID must be numeric' >&2; exit 1; }
+          gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha,jobs > "$RUNNER_TEMP/source-run.json"
+          gh api --paginate "repos/$GH_REPO/actions/runs/$SOURCE_RUN/artifacts" \
+            --jq '.artifacts[] | select(.expired == false) | .name' > "$RUNNER_TEMP/source-artifacts.txt"
+          python - "$RUNNER_TEMP/source-run.json" "$RUNNER_TEMP/source-artifacts.txt" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          source = json.loads(Path(sys.argv[1]).read_text())
+          expected = {
+              "Build k3-linux-x86_64", "Build k3-linux-aarch64",
+              "Build k3-windows-x86_64", "Build k3-windows-aarch64-cli",
+              "Build k3-macos-aarch64", "Build k3-macos-x86_64-cli",
+          }
+          successful = {job["name"] for job in source["jobs"] if job["conclusion"] == "success"}
+          # 安装器失败不影响已通过解压、离线运行检查并上传的便携包。
+          if source["workflowName"] != "Build distributions" or not expected <= successful:
+              raise SystemExit("All six portable package builds in the source run must have succeeded")
+          artifacts = set(Path(sys.argv[2]).read_text().splitlines())
+          archive = os.environ["ARCHIVE_NAME"]
+          if {archive, archive + ".sha256"} <= artifacts:
+              legacy = "false"
+          elif "dist-" + os.environ["PACKAGE_NAME"] in artifacts:
+              legacy = "true"
+          else:
+              raise SystemExit("Source run is missing unexpired portable packages or checksum files")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"K3_LEGACY_ARTIFACT={legacy}\n")
+          print(f"Distribution source verified: {source['headSha']}")
+          PY
+
+      - name: Download validated portable distribution
+        if: env.K3_LEGACY_ARTIFACT != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ matrix.archive }}*
+          path: dist/source
+          merge-multiple: true
+          skip-decompress: true
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.installer_source_run || github.run_id }}
+
+      - name: Download legacy wrapped distribution
+        if: env.K3_LEGACY_ARTIFACT == 'true'
+        uses: actions/download-artifact@v8
+        with:
           name: dist-${{ matrix.package }}
-          path: dist/${{ matrix.archive }}*
+          path: dist/source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.installer_source_run || github.run_id }}
+
+      - name: Install build Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Test installer validation
+        run: python -m unittest discover -s scripts/tests -v
+
+      - name: Install uv for refreshed worker
+        if: inputs.installer_source_run != '' && !matrix.cli_only
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.13"
+
+      - name: Locate Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $compiler)) {
+            choco install innosetup --version=6.7.1 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (-not (Test-Path $compiler)) { throw 'Inno Setup compiler not found' }
+          "K3_ISCC=$compiler" >> $env:GITHUB_ENV
+
+      - name: Build native installer
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ matrix.archive }}
+          SOURCE_RUN: ${{ inputs.installer_source_run }}
+        run: |
+          set -euo pipefail
+          args=("dist/source/$ARCHIVE_NAME")
+          if [[ "$RUNNER_OS" == Windows ]]; then args+=(--iscc "$K3_ISCC"); fi
+          if [[ -n "$SOURCE_RUN" ]]; then args+=(--refresh-worker --refresh-portable-manuals); fi
+          python scripts/build-installer.py "${args[@]}"
+
+      - name: Install Linux package
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ./dist/installers/*.deb
+          k3 --help
+          sudo touch /opt/k3/user-preserved.txt
+
+      - name: Install macOS package
+        if: runner.os == 'macOS'
+        run: |
+          sudo installer -pkg dist/installers/*.pkg -target /
+          /usr/local/bin/k3 --help
+          pkgutil --pkg-info io.github.coanor.k3
+
+      - name: Install Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/installers/*-setup.exe).FullName
+          $root = Join-Path $env:RUNNER_TEMP 'K3 安装测试'
+          $log = Join-Path $env:RUNNER_TEMP 'k3-install.log'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$root`"", "/LOG=`"$log`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content $log; throw "Installation failed: $($process.ExitCode)" }
+          "K3_INSTALLED_ROOT=$root" >> $env:GITHUB_ENV
+          Set-Content (Join-Path $root 'user-preserved.txt') '用户数据'
+
+      - name: Check installed programs and offline separation
+        shell: bash
+        env:
+          CLI_ONLY: ${{ matrix.cli_only }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Linux) root=/opt/k3; commands=/usr/bin ;;
+            macOS) root=/usr/local/lib/k3; commands=/usr/local/bin ;;
+            Windows) root="$K3_INSTALLED_ROOT"; commands="$root" ;;
+          esac
+          args=(--installed-root "$root" --command-dir "$commands")
+          if [[ "$CLI_ONLY" == true ]]; then args+=(--cli-only); fi
+          python scripts/check-dist.py "${args[@]}"
+          if [[ "$CLI_ONLY" != true ]]; then
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              worker_python="$root/runtime/python/python.exe"
+            else
+              worker_python="$root/runtime/python/bin/python3"
+            fi
+            "$worker_python" -I -m unittest discover -s python/separator/tests -p test_runtime.py -v
+          fi
+
+      - name: Check Linux uninstall preserves user files
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get remove --yes k3
+          test ! -e /usr/bin/k3
+          test ! -e /opt/k3/k3
+          test -f /opt/k3/user-preserved.txt
+
+      - name: Check Windows uninstall preserves user files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath (Join-Path $env:K3_INSTALLED_ROOT 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Uninstallation failed: $($process.ExitCode)" }
+          if (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'k3.exe')) { throw 'Uninstallation did not remove the program' }
+          if (-not (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'user-preserved.txt'))) { throw 'Uninstallation removed user files' }
+
+      - name: Upload checked installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/installers/*.${{ runner.os == 'Windows' && 'exe' || runner.os == 'macOS' && 'pkg' || 'deb' }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload installer checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/installers/*.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused distribution without wrapping
+        if: inputs.installer_source_run != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/source/${{ matrix.archive }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused distribution checksum
+        if: inputs.installer_source_run != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/source/${{ matrix.archive }}.sha256
+          archive: false
           if-no-files-found: error
           retention-days: 14
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    if: >-
+      always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') &&
+      needs.build.result == 'success' && needs.online-support.result == 'success' &&
+      (needs.installers.result == 'success' || needs.installers.result == 'skipped')
+    needs: [build, online-support, installers]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all distributions
+      - name: Download online installer assets
         uses: actions/download-artifact@v8
         with:
-          pattern: dist-*
+          pattern: online-*
           path: dist
           merge-multiple: true
+
+      - name: Download optional offline distributions
+        if: needs.installers.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: k3*
+          path: dist
+          merge-multiple: true
+          skip-decompress: true
 
       - name: Create combined checksums
         shell: bash
@@ -288,7 +674,6 @@ jobs:
               --generate-notes \
               --title "$RELEASE_TAG"
           fi
-
   public-release:
     name: Publish binaries to public repository
     if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.PUBLIC_RELEASE_REPO != '' }}
@@ -297,12 +682,21 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Download all distributions
+      - name: Download online installer assets
         uses: actions/download-artifact@v8
         with:
-          pattern: dist-*
+          pattern: online-*
           path: dist
           merge-multiple: true
+
+      - name: Download optional offline distributions
+        if: inputs.offline_bundle == true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: k3*
+          path: dist
+          merge-multiple: true
+          skip-decompress: true
 
       - name: Verify distribution checksums
         shell: bash
@@ -319,19 +713,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$GH_TOKEN" ]] || { echo '缺少 PUBLIC_RELEASE_TOKEN secret' >&2; exit 1; }
+          [[ -n "$GH_TOKEN" ]] || { echo 'PUBLIC_RELEASE_TOKEN secret is missing' >&2; exit 1; }
           [[ "$PUBLIC_RELEASE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo 'PUBLIC_RELEASE_REPO 必须是 owner/repo' >&2
+            echo 'PUBLIC_RELEASE_REPO must use owner/repo format' >&2
             exit 1
           }
           visibility="$(gh repo view "$PUBLIC_RELEASE_REPO" --json visibility --jq '.visibility')"
-          [[ "$visibility" == PUBLIC ]] || { echo '目标仓库必须公开' >&2; exit 1; }
+          [[ "$visibility" == PUBLIC ]] || { echo 'Target repository must be public' >&2; exit 1; }
           if gh release view "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
-            echo '公开发行版已存在，请使用新版本号' >&2
+            echo 'Public release already exists; use a new version number' >&2
             exit 1
           fi
           cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF
-          K3 $RELEASE_TAG 的预编译发行包。请下载对应平台的压缩包，并使用 SHA256SUMS 核对文件。
+          K3 $RELEASE_TAG 在线安装：Linux/macOS 下载 install.sh，Windows 下载 install.ps1。
+          运行时用 --repo 或 -Repo 指定 $PUBLIC_RELEASE_REPO；安装器会让你选择磁盘，再下载平台程序、Python 依赖与模型。
+          macOS 当前无 GUI，Intel macOS 与 Windows ARM64 仅提供 CLI/TUI。可使用 SHA256SUMS 核对发行文件。
 
           此仓库仅用于公开发行；K3 源代码仓库仍为私有。
           EOF

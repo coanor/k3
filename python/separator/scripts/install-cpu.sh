@@ -6,7 +6,7 @@ venv_path="${1:-$repo_root/.venv-separator}"
 python_spec="${2:-3.13}"
 
 if ! command -v uv >/dev/null 2>&1; then
-    echo "k3-separator: 需要 uv：https://docs.astral.sh/uv/" >&2
+    echo "k3-separator: uv is required: https://docs.astral.sh/uv/" >&2
     exit 1
 fi
 

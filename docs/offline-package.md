@@ -1,0 +1,121 @@
+# 可选的离线发行包
+
+默认安装方式是[在线安装器](install-packages.md)：程序与模型分别下载，并让用户选择安装磁盘。
+本文描述需要预先包含所有依赖的可选完整归档。
+
+Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整发行包包含：
+
+- K3 CLI/TUI 程序和原生 `k3-separator` 启动器；
+- Linux 与 Windows 包还包含 GUI；Linux 同时包含桌面入口与图标；
+- 独立 CPython 3.13.15，无需系统 Python、Rust 或 uv；
+- PyTorch 2.11 CPU runtime、ONNX Runtime、audio-separator 和全部运行依赖；
+- FFmpeg、默认 Fast / Balanced / Quality 模型及模型配置和元数据；
+- SHA-256 校验文件、依赖版本记录和第三方组件清单。
+
+`docs/` 仅包含英文、简体中文、繁体中文用户指南（`user-manual.md`、
+`user-manual.zh-Hans.md`、`user-manual.zh-Hant.md`），以及本说明 `offline-package.md`
+和安装说明 `install-packages.md`；开发规格、验收记录和调研文档在源码仓库查阅。
+
+包内默认模型为 `uvr-mdx-karaoke-2`、`uvr-mdx-inst-hq-3` 和
+`bs-roformer-viperx-1297`。Fast 模型同时用于保留和声，三个默认档位都可离线使用。
+可选的 MelBand 和 HTDemucs 模型仍需在有网络时下载，或者在构建时通过
+`--model` 显式加入；它们不在默认包中。
+
+Intel macOS 包以 `-cli` 标注，只含 K3 程序与文档。官方 PyTorch 2.2 是最后支持
+Intel macOS 的版本，无法使用本项目的 PyTorch 2.11 runtime。
+参见 [PyTorch 官方说明](https://pytorch.org/blog/pytorch2-2/)。
+
+## 解压与运行
+
+下载与你的系统和 CPU 架构相符的压缩包及 `.sha256` 文件，校验后完整解压到可写目录。
+保留 `k3`、`k3-separator`、`runtime/` 与 `models/` 的相对位置；移动或改名整个目录
+不会破坏环境。不要只复制单个程序。
+
+Linux 完整包在 Ubuntu 24.04 runner 构建，要求 glibc 2.39 或更高及 ALSA、Fontconfig 运行库
+（Ubuntu/Debian 的 `libasound2`，新版本为 `libasound2t64`）；播放和录音还需要
+系统音频服务及可用设备。Windows 完整包面向 Windows 10/11 x86_64。Windows ARM64 仅提供原生 CLI/TUI
+精简包，当前 Python 3.13 / PyTorch 2.11 组合缺少官方 Windows ARM64 wheel。
+macOS 完整包面向 macOS 14 或更高的 Apple Silicon 机器。
+
+Linux GUI 还需要 Wayland/X11 会话、支持 OpenGL ES 2.0 的驱动和键盘运行库。
+Ubuntu 24.04 可用以下命令补齐系统库（分离所需 Python 依赖和模型已在包内）：
+
+```bash
+sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libgl1-mesa-dri
+./k3-gui
+```
+
+Windows 解压后双击 `k3-gui.exe` 启动 GUI。
+
+Linux/macOS 在解压目录运行：
+
+```bash
+./k3 --help
+printf '%s\n' '{"id":"health","method":"health"}' | ./k3-separator
+./k3 new --root ./songs/example --song /path/to/song.flac --title "示例歌曲"
+./k3 separate --project ./songs/example --profile quality --no-autocast
+./k3 tui --project ./songs/example
+```
+
+Windows 在 PowerShell 中运行：
+
+```powershell
+.\k3.exe --help
+'{"id":"health","method":"health"}' | .\k3-separator.exe
+.\k3.exe new --root .\songs\example --song 'D:\Music\song.flac' --title '示例歌曲'
+.\k3.exe separate --project .\songs\example --profile quality --no-autocast
+.\k3.exe tui --project .\songs\example
+```
+
+`k3 separate` 默认找到同目录的 worker；worker 默认使用同包的 `models/`，不需要
+修改 PATH 或激活虚拟环境。自定义 `--worker` 与 `--model-dir` 仍然有效。
+媒体库配置中的 `separation.worker` 可写 `k3-separator`，`model_dir` 可写 `null`。
+CPU 包的示例关闭混合精度，避免 CPU autocast 带来的额外耗时；媒体库配置可将
+`separation.autocast` 设为 `false`。独立 GPU 环境可保留原有混合精度设置。
+
+完整包默认使用 CPU，无需 NVIDIA 驱动。需要 CUDA 加速时，使用源码安装脚本创建
+独立 GPU 环境，再通过 `--worker` 指向该环境；不要覆盖随包 Python 的依赖。
+Windows 随包保留 `install-separator.ps1` 和源码，可用于这种额外安装。
+Linux 随包保留 `separate.sh`，批量分离时自动使用同包程序、worker 和模型：
+
+```bash
+./separate.sh -f /path/to/first.flac /path/to/second.mp3 -d ./songs
+```
+
+## 构建与验证
+
+构建机器需要 Rust、Python 3.11 或更高、uv 和网络；Linux 还需要 ALSA 与 Fontconfig 开发库。
+完整 runtime 必须在目标 OS 和架构上构建，Python wheel 不能跨平台复用。
+
+```bash
+cargo build --release --locked --bins --package k3 --package k3-gui
+python3 scripts/build-runtime.py --output dist/runtime
+python3 scripts/package-dist.py linux k3-linux-x86_64 target/release/k3 dist/runtime
+python3 scripts/check-dist.py dist/k3-linux-x86_64.tar.gz
+```
+
+macOS Apple Silicon 只构建 `--package k3`，将打包参数换为 `macos k3-macos-aarch64`。
+Windows 将参数换为 `windows k3-windows-x86_64 target/release/k3.exe`，使用
+`python` 运行这些脚本，产物为 ZIP。本机构建入口是 `make dist-offline`；GitHub Actions 手动运行时勾选 `offline_bundle`。
+
+`make dist-offline` 复用已有 runtime 时，会通过 uv 重新安装当前源码的 worker，保留其他
+依赖与模型。直接复用 runtime 目录打包前，也应执行
+`python3 scripts/refresh-worker.py dist/runtime/python`。Windows 本机完整包与 CI
+统一静态链接 MSVC C runtime。
+
+`--model-cache /path/to/models` 可以复用已有下载；固定摘要的 checkpoint 仍会校验。
+`--model mel-band-roformer-kim-vocal-2` 可加入额外模型，`--model all` 可加入全部
+内置模型。模型文件较大，打包器会拒绝超过 GitHub Release 单个 asset 的 2 GiB 上限。
+
+校验脚本实际解压、移动到含中文和空格的目录，然后启动程序、验证每个模型文件摘要、
+在禁止网络访问的条件下加载全部随包模型，并通过 CLI 分离真实短音频，检查主唱、
+伴奏和和声输出。CI 在各目标平台执行相同检查，通过后才上传包。
+
+`bundle-manifest.json` 记录随包模型的来源、声明的许可证、SHA-256 和 Python 组件
+版本；各依赖的许可证文件保留在其 `.dist-info` 等安装目录中。
+`requirements-resolved.txt` 记录该次构建的实际依赖版本。UV 安装的 Python 来自
+[python-build-standalone](https://docs.astral.sh/uv/concepts/python-versions/)。
+部分 UVR 模型的许可证尚未声明，清单保留 `NOASSERTION`，不将其写成 MIT。
+
+系统安装包的格式、安装与卸载方式见[安装包说明](install-packages.md)。
+ZIP/tar.gz 仍作为便携包提供；Windows/macOS 安装包目前未签名，macOS 未公证。

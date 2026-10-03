@@ -11,7 +11,7 @@ fn shell_wrapper_prints_paths_from_the_persisted_manifest() {
     let fake_k3 = sandbox.path().join("fake-k3");
     fs::write(
         &fake_k3,
-        r"#!/usr/bin/env python3
+        r"#!/usr/bin/env -S python3 -I
 import json
 import pathlib
 import sys
@@ -57,6 +57,8 @@ else:
         ])
         .env("K3_BIN", &fake_k3)
         .env("K3_PYTHON", python.trim())
+        .env("PYTHONHOME", sandbox.path().join("missing-python"))
+        .env("PYTHONPATH", sandbox.path().join("missing-packages"))
         .output()
         .unwrap();
 

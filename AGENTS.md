@@ -1,22 +1,19 @@
-# K3 协作约定
+# K3 collaboration guidelines
 
-## 沟通语言
+## Communication
 
-- 始终使用中文回复用户。
-- 技术名词、命令、代码标识符和错误原文可保留英文，并用中文解释。
+- Always reply to the user in Chinese.
+- Technical terms, commands, code identifiers and original errors may remain in English, with Chinese explanations where needed.
 
-## 文档语言
+## Project language
 
-- 新增或改写项目文档时使用中文。
-- 面向用户的帮助文字、操作说明和示例说明使用中文。
-- 若必须保留外部协议、标准或工具要求的英文原文，应同时提供中文说明。
+- English is the primary language for the project, new documentation and developer instructions. The root `README.md` is the English entry point.
+- Keep translated documentation in separate language versions (`zh-Hans` and `zh-Hant`); write each translation in its target language.
+- All user-visible CLI, TUI, installer, download bootstrap and runtime text must be English, including help, confirmations, status, progress, warnings and errors.
+- Only UIs with i18n support may display non-English interface text through localization resources. Other interfaces and scripts must not hardcode non-English messages.
+- Preserve user data and original external content, including song titles, lyrics and filenames, in their original language.
+- When changing installation or runtime flows, check their entry points and invoked scripts for compliance with these language rules.
 
-## TUI 语言
+## UI component tests
 
-- TUI 中所有用户可见文字始终使用英文，包括状态、操作提示、进度、警告和错误前缀。
-- 进入 TUI 前为其准备数据时显示的运行时提示（例如在线歌词搜索进度）也使用英文。
-- 中文歌曲名、歌词、文件名和外部服务返回的原始内容保持原样，不进行翻译。
-
-## UI 组件测试
-
-- 禁止为 UI 组件添加测试代码。
+- Do not add tests for UI components.

@@ -9,9 +9,10 @@ import shutil
 import sys
 import tempfile
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol
 
 from .errors import WorkerError
 from .models import SeparationModel
@@ -218,12 +219,14 @@ class AudioSeparatorRuntime:
             )
 
         try:
-            separator = Separator(**common)
-            separator.load_model(model_filename=model.filename)
-            output_names = {stem: self._output_name(stem) for stem in model.output_stems}
-            self._progress.stage(f"separating_{pass_kind}")
-            with self._progress.watch_inference():
-                separator.separate(str(input_path), output_names)
+            with self._inference_model_dir(scratch_dir) as inference_models:
+                common["model_file_dir"] = str(inference_models)
+                separator = Separator(**common)
+                separator.load_model(model_filename=model.filename)
+                output_names = {stem: self._output_name(stem) for stem in model.output_stems}
+                self._progress.stage(f"separating_{pass_kind}")
+                with self._progress.watch_inference():
+                    separator.separate(str(input_path), output_names)
             self._progress.stage("writing_audio")
             vocals = scratch_dir / "vocals.wav"
             accompaniment = scratch_dir / "accompaniment.wav"
@@ -237,6 +240,21 @@ class AudioSeparatorRuntime:
             raise
         except Exception as error:
             raise WorkerError("separation_failed", str(error)) from error
+
+    @contextmanager
+    def _inference_model_dir(self, scratch_dir: Path) -> Iterator[Path]:
+        # onnx2torch 的路径输入在模型旁写入形状推断临时文件。
+        # 系统安装目录只读时，在工程临时目录链接 checkpoint 与元数据；
+        # 原始模型保持只读，大文件无需复制，临时文件随本次分离清理。
+        if os.name == "nt" or os.access(self._model_dir, os.W_OK):
+            yield self._model_dir
+            return
+        with tempfile.TemporaryDirectory(prefix=".k3-models-", dir=scratch_dir) as directory:
+            working_models = Path(directory)
+            for source in self._model_dir.iterdir():
+                if source.is_file():
+                    (working_models / source.name).symlink_to(source)
+            yield working_models
 
     def _prepare_primary_artifact(self, model: SeparationModel) -> None:
         if model.expected_sha256 is None:

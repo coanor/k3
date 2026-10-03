@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import types
@@ -10,6 +11,48 @@ from k3_separator.runtime import AudioSeparatorRuntime
 
 
 class AudioSeparatorRuntimeTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                     "只读模型转换的权限问题需要 Unix 普通用户")
+    def test_readonly_models_allow_converter_temporary_files(self) -> None:
+        class FakeSeparator:
+            def __init__(self, **options):
+                self.output_dir = Path(options["output_dir"])
+                self.model_dir = Path(options["model_file_dir"])
+
+            def load_model(self, model_filename):
+                model_path = self.model_dir / model_filename
+                self.model = model_path.read_bytes()
+                # onnx2torch 的路径输入会在 checkpoint 旁创建临时文件。
+                with tempfile.NamedTemporaryFile(dir=model_path.parent):
+                    pass
+
+            def separate(self, _input_path, output_names):
+                for filename in output_names.values():
+                    (self.output_dir / f"{filename}.wav").write_bytes(b"audio")
+
+        module = types.ModuleType("audio_separator.separator")
+        module.Separator = FakeSeparator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "models"
+            models.mkdir()
+            (models / "fake.onnx").write_bytes(b"model")
+            models.chmod(0o555)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            try:
+                runtime = AudioSeparatorRuntime(models)
+                model = SeparationModel(id="fake-mdx", filename="fake.onnx",
+                                        architecture="mdx-net", profiles=("fast",))
+                with patch.dict(sys.modules, {"audio_separator.separator": module}):
+                    result = runtime.separate(root / "input.wav", scratch, model, {})
+                self.assertEqual(result.vocals.read_bytes(), b"audio")
+                self.assertEqual([path.name for path in models.iterdir()], ["fake.onnx"])
+                self.assertEqual((models / "fake.onnx").read_bytes(), b"model")
+                self.assertFalse(list(scratch.glob(".k3-models-*")))
+            finally:
+                models.chmod(0o755)
+
     def test_windows_runtime_materializes_an_executable_ffmpeg_fallback(self) -> None:
         fake_imageio = types.ModuleType("imageio_ffmpeg")
         with tempfile.TemporaryDirectory() as directory:

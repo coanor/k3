@@ -4,10 +4,16 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="$(realpath -e -- "${BASH_SOURCE[0]}")"
 python_bin="${K3_PYTHON:-$script_dir/.venv-separator/bin/python}"
+if [[ -z "${K3_PYTHON:-}" && -x "$script_dir/runtime/python/bin/python3" ]]; then
+    python_bin="$script_dir/runtime/python/bin/python3"
+fi
 
 # K3 starts this script again as its JSON-lines separation worker. Keeping the
 # launcher here avoids relying on the virtualenv entry point's absolute shebang.
 if [[ "${K3_SEPARATE_WORKER_MODE:-}" == "1" ]]; then
+    if [[ -z "${K3_PYTHON:-}" && -x "$script_dir/k3-separator" ]]; then
+        exec "$script_dir/k3-separator" "$@"
+    fi
     if [[ ! -x "$python_bin" ]]; then
         echo "k3-separate: Python environment not found: $python_bin" >&2
         exit 1
@@ -26,7 +32,7 @@ usage() {
 
 print_separation_outputs() {
     local project_dir="$1"
-    "$python_bin" - "$project_dir" <<'PY'
+    "$python_bin" -I -X utf8 - "$project_dir" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -143,6 +149,8 @@ done
 
 if [[ -n "${K3_BIN:-}" ]]; then
     k3_bin="$K3_BIN"
+elif [[ -x "$script_dir/k3" ]]; then
+    k3_bin="$script_dir/k3"
 elif [[ -x "$script_dir/target/release/k3" ]]; then
     k3_bin="$script_dir/target/release/k3"
 elif [[ -x "$script_dir/target/debug/k3" ]]; then
