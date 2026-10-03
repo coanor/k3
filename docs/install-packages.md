@@ -18,19 +18,21 @@ CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安
 `coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
 当前测试版为 [v0.1.0（pre-release）](https://github.com/coanor/k3/releases/tag/v0.1.0)，使用下面对应系统的
 一行命令即可开始选盘和安装，无需登录 GitHub 或手动下载平台组件。GitHub 的 `latest` 不包含预发行版，
-因此下载地址与安装参数均指定 `v0.1.0`。Bash 命令启用 `pipefail` 以报告下载错误，脚本从终端读取选盘和确认输入，
-安装器仍校验程序、工具、支持文件和模型；运行前核对入口脚本 SHA-256 的可选步骤见 [测试版安装说明](https://github.com/coanor/k3/releases/tag/v0.1.0)。
+因此测试入口固定为 `v0.1.0`。脚本从终端读取选盘和确认输入，Windows 启动脚本自动校验安装入口的 SHA-256
+并处理 UTF-8 编码。Bash 脚本内部已有 `pipefail`，但不能改变外层 `curl | bash` 的退出状态；
+若需自动化捕获 curl 下载失败，请在运行前执行 `set -o pipefail`。安装器仍校验程序、工具、支持文件和模型；
+手动校验入口脚本的可选步骤见 [测试版安装说明](https://github.com/coanor/k3/releases/tag/v0.1.0)。
 
 Linux/macOS：
 
 ```bash
-(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
 ```
 
 Windows PowerShell：
 
 ```powershell
-& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
 ```
 
 安装器目前通过 GitHub API 下载，匿名访问受每个出口 IP 每小时 60 次请求的额度限制。
@@ -89,7 +91,7 @@ GUI 需要图形会话。M1/M2/M3/M4 及后续 ARM64 Apple Silicon 共用 macOS 
 
 ```bash
 make dist
-# dist/online/support：两个入口、支持 ZIP 与校验文件
+# dist/online/support：安装入口、Windows 短启动脚本、支持 ZIP 与校验文件
 # dist/online/platform：本机独立原生程序、清单与校验文件
 bash install.sh --source-dir "$PWD/dist/online" --prefix /mnt/data/K3-check --yes
 ```
@@ -100,7 +102,7 @@ Windows 原生构建后的本地验证使用 `-SourceDir` 指向同样的发行�
 共享支持文件仅包含安装逻辑、worker 源码、许可证和三份用户手册，不包含 Python 环境或模型。
 
 GitHub `Build distributions` 默认生成这六种平台的在线组件，并在原生 runner 上运行安装验证；
-Release 附加两个入口、共享支持文件、独立原生程序、平台清单及 SHA-256。
+Release 附加安装入口、Windows 短启动脚本、共享支持文件、独立原生程序、平台清单及 SHA-256。
 需要额外完整离线归档和系统安装器时，在手动构建中勾选 `offline_bundle`。
 
 ## 可选的完整离线系统安装包

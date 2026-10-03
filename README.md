@@ -27,23 +27,24 @@ sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x1
 ### 一行安装：v0.1.0 测试版
 
 复制对应系统的一行命令即可开始安装，无需登录 GitHub 或手动下载平台组件。
-GitHub 的 `latest` 地址不包含预发行版，因此下载地址和安装参数均固定为 `v0.1.0`。
+GitHub 的 `latest` 地址不包含预发行版，因此下载地址和安装版本均固定为 `v0.1.0`。
 
 Linux/macOS：
 
 ```bash
-(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
 ```
 
 Windows PowerShell：
 
 ```powershell
-& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
 ```
 
-Bash 命令启用 `pipefail`，下载失败会返回错误；脚本从终端读取选盘和确认输入。入口脚本通过 HTTPS 获取，
-安装器仍会校验程序、uv、支持文件与模型。若需运行前查看入口脚本并核对其 SHA-256，
-可展开下面的手动步骤。
+脚本从终端读取选盘和确认输入。Windows 启动脚本自动校验安装入口的 SHA-256 并处理 UTF-8 编码；
+安装器继续校验程序、uv、支持文件与模型。Bash 脚本内部已有 `pipefail`，但它无法改变外层
+`curl | bash` 的退出状态：下载失败时 curl 会报错；若需自动化捕获该失败，请在运行前执行
+`set -o pipefail`。手动查看与校验入口脚本的步骤可在下面展开。
 
 <details>
 <summary>可选：下载入口脚本，核对 SHA-256 后运行</summary>

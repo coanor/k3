@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shutil
@@ -55,6 +56,13 @@ def support(output: Path) -> Path:
         target = output / name
         shutil.copy2(REPO / name, target)
         checksum(target)
+    # ASCII 启动入口可被 PowerShell 5.1 的 irm 正确读取，中文提示在执行时解码。
+    template = (REPO / "scripts/windows-install-bootstrap.ps1.in").read_text(encoding="ascii")
+    message = base64.b64encode("安装入口文件校验失败".encode("utf-8")).decode("ascii")
+    bootstrap = output / "get.ps1"
+    bootstrap.write_text(template.replace("@K3_VERSION@", VERSION)
+                         .replace("@K3_CHECKSUM_ERROR@", message), encoding="ascii")
+    checksum(bootstrap)
     return archive
 
 

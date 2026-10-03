@@ -31,24 +31,26 @@ sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x1
 
 Copy the one-line command for your system to start installation. You do not need to sign in
 to GitHub or download platform components manually. GitHub excludes pre-releases from `latest`,
-so both the download URL and the installation argument explicitly select `v0.1.0`.
+so both the download URL and the installer version explicitly select `v0.1.0`.
 
 Linux/macOS:
 
 ```bash
-(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
 ```
 
-The Bash command enables `pipefail` to report download errors. The script reads disk selection
-and confirmation from the terminal. The entry script is fetched over HTTPS;
-the installer still verifies programs, uv, support files, and models. To inspect the entry script
-and check its SHA-256 before running it, expand the manual steps below.
+The script reads disk selection and confirmation from the terminal. The Windows bootstrap
+verifies the installer SHA-256 and handles UTF-8 decoding; the installer continues to verify
+programs, uv, support files, and models. The Bash script already enables `pipefail` internally,
+but it cannot change the exit status of the outer `curl | bash` pipeline. Curl reports download
+errors; for automation that must capture them, run `set -o pipefail` first. Expand the manual
+steps below to inspect and verify the entry script before running it.
 
 <details>
 <summary>Optional: download the entry script, verify SHA-256, then run it</summary>

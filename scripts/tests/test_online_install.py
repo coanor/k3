@@ -1,5 +1,6 @@
 """验证在线发行的完整性、目标平台限制及失败时的目录保护。"""
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -30,6 +31,62 @@ installer = load("online_installer", "install-online.py")
 
 
 class OnlineInstallerTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("powershell.exe") or shutil.which("powershell"),
+                         "启动入口回归需要 Windows PowerShell")
+    def test_windows_bootstrap_checks_download_before_running_utf8_installer(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            producer.support(output)
+            bootstrap = (output / "get.ps1").read_bytes()
+            self.assertTrue(bootstrap.isascii())
+            for mode in ("valid", "wrong_digest", "wrong_filename", "invalid_checksum", "download_failed"):
+                with self.subTest(mode=mode):
+                    harness = """
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'
+$global:fixtureState = @{started=$false; version=$null}
+$fixture = [char]0xFEFF + '[CmdletBinding()] param([string]$Version); $global:fixtureState.started=$true; $global:fixtureState.version=$Version; $global:fixtureState.message="安装检查"'
+$script:payload = [Text.Encoding]::UTF8.GetBytes($fixture)
+$hash = [Security.Cryptography.SHA256]::Create()
+try { $digest = ([BitConverter]::ToString($hash.ComputeHash($script:payload))).Replace('-', '').ToLowerInvariant() }
+finally { $hash.Dispose() }
+$script:checksum = "$digest  install.ps1"
+if ($script:mode -eq 'wrong_digest') { $script:checksum = ('0' * 64) + '  install.ps1' }
+if ($script:mode -eq 'wrong_filename') { $script:checksum = "$digest  another.ps1" }
+if ($script:mode -eq 'invalid_checksum') { $script:checksum = 'invalid' }
+function Invoke-WebRequest {
+    [CmdletBinding()] param([switch]$UseBasicParsing, [Parameter(Position=0)][string]$Uri)
+    if ($script:mode -eq 'download_failed') { throw 'fixture download failed' }
+    if ($Uri -ne "https://github.com/coanor/k3/releases/download/vEXPECTED_VERSION/install.ps1") { throw 'unexpected URL' }
+    return [PSCustomObject]@{RawContentStream=[IO.MemoryStream]::new($script:payload)}
+}
+function Invoke-RestMethod {
+    [CmdletBinding()] param([Parameter(Position=0)][string]$Uri)
+    if ($Uri -ne "https://github.com/coanor/k3/releases/download/vEXPECTED_VERSION/install.ps1.sha256") { throw 'unexpected URL' }
+    return $script:checksum
+}
+$failed = $false
+try {
+BOOTSTRAP_BODY
+} catch { $failed = $true }
+ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$failed; preference=$ErrorActionPreference.ToString()}
+""".replace("EXPECTED_VERSION", producer.VERSION).replace("BOOTSTRAP_BODY", bootstrap.decode("ascii"))
+                    # 将夹具编码为 UTF-16LE，避免原生命令行编码影响中文数据验证。
+                    harness = f"$script:mode = '{mode}'; " + harness
+                    encoded = base64.b64encode(harness.encode("utf-16le")).decode("ascii")
+                    result = subprocess.check_output(
+                        [powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                        text=True, encoding="utf-8", stderr=subprocess.PIPE, timeout=30)
+                    state = json.loads(result)
+                    self.assertEqual(state["preference"], "Continue")
+                    self.assertEqual(state["state"]["started"], mode == "valid")
+                    self.assertEqual(state["failed"], mode != "valid")
+                    if mode == "valid":
+                        self.assertEqual(state["state"]["version"], "v" + producer.VERSION)
+                        self.assertEqual(state["state"]["message"], "安装检查")
+
     @unittest.skipUnless(shutil.which("powershell.exe") or shutil.which("powershell"),
                          "验证原生 Python 请求需要 Windows PowerShell")
     def test_windows_bootstrap_requests_python_for_the_selected_native_architecture(self):
