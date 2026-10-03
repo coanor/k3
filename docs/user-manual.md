@@ -164,10 +164,12 @@ GUI 打开具有伴奏音轨的工程后，可点击底部 Play 左侧的 Record
 make help
 make check
 make build
-make dist
+make dist  # 默认生成在线安装组件
 ```
 
-`make dist` 根据当前主机生成 Linux x86_64/ARM64 或对应架构的 macOS 包。也可明确指定：
+`make dist` 生成当前主机的独立程序、平台清单、在线安装入口和小型支持文件，不下载模型或分离依赖。
+安装用法与选盘流程见[安装说明](install-packages.md)。需要完整离线包时使用 `make dist-offline`；
+也可明确指定以下可选离线目标：
 
 ```bash
 make dist-linux
@@ -193,32 +195,21 @@ make dist-all REF=main
 
 本地产物写入被 Git 忽略的 `dist/`；可用 `DIST_DIR=/path/to/output` 改变目录。
 
-### 2.2 GitHub Actions 发行包
+### 2.2 GitHub Actions 发行
 
-仓库中的 `Build distributions` workflow 支持在 GitHub Actions 页面手动运行，也会在
-推送 `v*` tag 时自动执行。每次运行先在 Linux 上执行 workspace 测试和严格 Clippy，
-随后并行生成：
+`Build distributions` 支持手动运行和 `v*` tag 构建；默认测试后在六个平台原生构建在线组件：
+Linux x86_64/ARM64、Windows x64/ARM64、macOS Intel/Apple Silicon。
+CLI、GUI（平台提供时）和分离启动器分别作为独立文件发布；平台 JSON 清单记录功能、版本、大小与摘要。
+`install.sh` / `install.ps1` 会选择对应组件，再下载 Python、分离依赖与模型。
+安装支持 ZIP 只含少量安装逻辑、worker 源码、许可证和用户手册。
 
-- `k3-linux-x86_64.tar.gz`；
-- `k3-linux-aarch64.tar.gz`；
-- `k3-windows-x86_64.zip`；
-- `k3-windows-aarch64-cli.zip`；
-- `k3-macos-x86_64-cli.tar.gz`；
-- `k3-macos-aarch64.tar.gz`。
+手动运行的 Artifacts 保留 14 天，`online-` 产物是用于 CI 传输的组件集合；
+用户安装入口应从 Release 下载。新 `v*` tag 的 Release 包含上述原文件和汇总 `SHA256SUMS`。
+Release 的 tag 必须与 `Cargo.toml` 中的版本一致。公开发行尚需维护者配置发行仓库和令牌。
 
-手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天，直接以原文件名列出。
-Windows 用户点击 `k3-windows-x86_64.zip` 或 `k3-windows-aarch64-cli.zip` 下载，
-解压一次即可看到包含程序的目录；校验文件需单独下载对应的 `.sha256`。
-安装包也直接下载为 `.exe`、`.deb` 或 `.pkg`，无需先解压外层 ZIP。
-旧运行中以 `dist-` 开头的 artifact 仍有外层 ZIP，请使用新运行的产物。
-推送版本 tag 时，
-workflow 会创建或更新同名 GitHub Release，并附加各平台包、各自的 `.sha256` 文件
-和汇总的 `SHA256SUMS`。例如：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+需要完整离线归档与 `.exe` / `.deb` / `.pkg` 安装包时，在手动运行中勾选 `offline_bundle`。
+这些可选归档保持单个顶级目录；Windows ZIP 解压一次即可使用，旧 `dist-` artifact 仍有外层 ZIP。
+离线内容、平台要求和验证步骤见[离线说明](offline-package.md)。
 
 Windows 包使用静态 MSVC C runtime。ARM64 Windows 包仅包含原生 CLI/TUI；
 精简包不捆绑 GUI 或离线 runtime；完整离线 runtime 所需的当前 PyTorch 依赖
@@ -248,7 +239,7 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
 
 私有仓库中的 GitHub Release 只有获准访问仓库的人能下载。若要让所有人下载发行包、
 同时保持 `coanor/k3` 私有，可另建一个只有说明文件的公开仓库（例如
-`coanor/k3-binaries`），将四个平台的发行包上传到该仓库的 Release。公开仓库自动生成的
+`coanor/k3-binaries`），将六种平台的在线组件上传到该仓库的 Release。公开仓库自动生成的
 源码压缩包只包含公开仓库自身的内容，不包含私有 `k3` 源码。
 
 1. 创建公开仓库，例如 `gh repo create coanor/k3-binaries --public --add-readme`。
@@ -262,8 +253,8 @@ install -Dm644 share/icons/hicolor/scalable/apps/k3.svg \
    构建并校验发行包，然后保留原有私有 Release，同时向公开仓库发布同名 Release。
    公开 Release 若已存在，任务会报错，不会悄悄覆盖已发布的文件。
 
-未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。发行包包含 README、文档、
-分离脚本、独立 Python、运行依赖、模型及组件许可证清单；公开发布前应检查这些内容。仓库目前尚未
+未设置 `PUBLIC_RELEASE_REPO` 时，公开发布任务会跳过。在线发行包括原生程序、安装脚本、
+worker 源码、三份用户手册及许可证；Python 依赖和模型由安装器从上游下载。仓库目前尚未
 配置公开发行目标及令牌，因此只完成了发布流程，尚未公开任何发行包。
 
 ## 3. 从源码安装本地分离 worker

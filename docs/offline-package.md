@@ -1,4 +1,7 @@
-# 离线发行包
+# 可选的离线发行包
+
+默认安装方式是[在线安装器](install-packages.md)：程序与模型分别下载，并让用户选择安装磁盘。
+本文描述需要预先包含所有依赖的可选完整归档。
 
 Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整发行包包含：
 
@@ -92,9 +95,9 @@ python3 scripts/check-dist.py dist/k3-linux-x86_64.tar.gz
 
 macOS Apple Silicon 只构建 `--package k3`，将打包参数换为 `macos k3-macos-aarch64`。
 Windows 将参数换为 `windows k3-windows-x86_64 target/release/k3.exe`，使用
-`python` 运行这些脚本，产物为 ZIP。更方便的入口是 `make dist` 或 GitHub Actions。
+`python` 运行这些脚本，产物为 ZIP。本机构建入口是 `make dist-offline`；GitHub Actions 手动运行时勾选 `offline_bundle`。
 
-`make dist` 复用已有 runtime 时，会通过 uv 重新安装当前源码的 worker，保留其他
+`make dist-offline` 复用已有 runtime 时，会通过 uv 重新安装当前源码的 worker，保留其他
 依赖与模型。直接复用 runtime 目录打包前，也应执行
 `python3 scripts/refresh-worker.py dist/runtime/python`。Windows 本机完整包与 CI
 统一静态链接 MSVC C runtime。

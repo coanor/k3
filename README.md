@@ -62,10 +62,17 @@ cargo run -p k3 -- separate \
   --model-dir ~/.cache/k3/models
 ```
 
-## 离线发行包
+## 在线安装
+
+推荐使用发行版中的 `install.sh`（Linux/macOS）或 `install.ps1`（Windows）。安装器先让你
+选择磁盘/目录并确认空间，再分别下载 CLI、GUI（平台提供时）、独立 Python、分离依赖和模型，
+完成启动与模型检查；缓存和临时文件也使用所选磁盘。平台支持和用法见
+[安装说明](docs/install-packages.md)。`make dist` 默认只生成在线安装组件。
+
+## 可选的离线发行包
 
 Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整包包含程序、独立
 Python、CPU 分离依赖、FFmpeg 和默认模型；解压后无需安装 Python 或在线下载模型。
 Intel macOS 与 Windows ARM64 提供原生 CLI/TUI 精简包，不包含 GUI 和离线分离环境。
-M1/M2/M3/M4 等 Apple Silicon 芯片共用 macOS ARM64 包，要求 macOS 14 或更高。构建入口为 `make dist` 和 GitHub Actions，具体用法见
+M1/M2/M3/M4 等 Apple Silicon 芯片共用 macOS ARM64 包，要求 macOS 14 或更高。离线构建入口为 `make dist-offline` 和 GitHub Actions 的 `offline_bundle`，具体用法见
 [离线发行包说明](docs/offline-package.md)。

@@ -8,6 +8,11 @@ on:
         required: false
         default: ""
         type: string
+      offline_bundle:
+        description: "额外生成完整离线归档与系统安装包（默认只发布在线安装组件）"
+        required: false
+        default: false
+        type: boolean
   pull_request:
   push:
     branches:
@@ -127,7 +132,7 @@ jobs:
       - name: Parse Windows separation scripts
         shell: pwsh
         run: |
-          foreach ($script in @('separate.ps1', 'install-separator.ps1')) {
+          foreach ($script in @('separate.ps1', 'install-separator.ps1', 'install.ps1')) {
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $script), [ref]$null, [ref]$errors
@@ -214,7 +219,7 @@ jobs:
 
       - name: Install Linux audio headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libfontconfig1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libfontconfig1-dev libxkbcommon-x11-0 libegl1 libgl1-mesa-dri pkg-config
 
       - name: Select pinned Rust target
         shell: bash
@@ -241,11 +246,49 @@ jobs:
         with:
           version: "0.12.13"
 
+      - name: Prepare independent online installer assets
+        shell: bash
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python scripts/package-online.py support
+          python scripts/package-online.py programs "$PACKAGE_PLATFORM" "${BUILD_TARGET%%-*}" \
+            "target/$BUILD_TARGET/release/$EXECUTABLE_NAME"
+
+      - name: Validate Unix online installation
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          bash install.sh --prefix "$RUNNER_TEMP/K3 online 安装" --source-dir "$PWD/dist/online" --yes
+
+      - name: Validate Windows online installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 `
+            -InstallDir "$env:RUNNER_TEMP\K3 online 安装" -SourceDir "$PWD\dist\online" -Yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload independent native assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: online-${{ matrix.package }}
+          path: dist/online/platform/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Build offline CPU runtime and models
-        if: ${{ !matrix.cli_only }}
+        if: inputs.offline_bundle == true && !matrix.cli_only
         run: python scripts/build-runtime.py --output dist/runtime
 
       - name: Package distribution
+        if: inputs.offline_bundle == true
         shell: bash
         env:
           PACKAGE_PLATFORM: ${{ matrix.platform }}
@@ -266,6 +309,7 @@ jobs:
           python scripts/package-dist.py "${package_args[@]}"
 
       - name: Check extracted distribution
+        if: inputs.offline_bundle == true
         shell: bash
         env:
           CLI_ONLY: ${{ matrix.cli_only }}
@@ -280,7 +324,7 @@ jobs:
           python scripts/check-dist.py "${check_args[@]}"
 
       - name: Verify Linux GUI package contents
-        if: runner.os == 'Linux'
+        if: inputs.offline_bundle == true && runner.os == 'Linux'
         shell: bash
         run: scripts/verify-linux-gui-package.sh "dist/$ARCHIVE_NAME"
 
@@ -293,6 +337,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload distribution artifact
+        if: inputs.offline_bundle == true
         uses: actions/upload-artifact@v7
         with:
           path: dist/${{ matrix.archive }}
@@ -301,10 +346,38 @@ jobs:
           retention-days: 14
 
       - name: Upload distribution checksum
+        if: inputs.offline_bundle == true
         uses: actions/upload-artifact@v7
         with:
           path: dist/${{ matrix.archive }}.sha256
           archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+  online-support:
+    name: Prepare shared online installer
+    if: inputs.installer_source_run == ''
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check release tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('发行 tag 必须与 Cargo.toml 版本一致')
+          PYTHON
+      - run: python3 scripts/package-online.py support
+      - uses: actions/upload-artifact@v7
+        with:
+          name: online-support
+          path: dist/online/support/*
           if-no-files-found: error
           retention-days: 14
 
@@ -313,7 +386,7 @@ jobs:
     needs: build
     if: >-
       always() && !cancelled() &&
-      (needs.build.result == 'success' ||
+      ((inputs.offline_bundle == true && needs.build.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && inputs.installer_source_run != ''))
     strategy:
       fail-fast: false
@@ -556,13 +629,24 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, installers]
+    if: >-
+      always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') &&
+      needs.build.result == 'success' && needs.online-support.result == 'success' &&
+      (needs.installers.result == 'success' || needs.installers.result == 'skipped')
+    needs: [build, online-support, installers]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all distributions
+      - name: Download online installer assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: online-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download optional offline distributions
+        if: needs.installers.result == 'success'
         uses: actions/download-artifact@v8
         with:
           pattern: k3*
@@ -598,7 +682,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Download all distributions
+      - name: Download online installer assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: online-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download optional offline distributions
+        if: inputs.offline_bundle == true
         uses: actions/download-artifact@v8
         with:
           pattern: k3*
@@ -633,7 +725,9 @@ jobs:
             exit 1
           fi
           cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF
-          K3 $RELEASE_TAG 的预编译发行包。请下载对应平台的压缩包，并使用 SHA256SUMS 核对文件。
+          K3 $RELEASE_TAG 在线安装：Linux/macOS 下载 install.sh，Windows 下载 install.ps1。
+          运行时用 --repo 或 -Repo 指定 $PUBLIC_RELEASE_REPO；安装器会让你选择磁盘，再下载平台程序、Python 依赖与模型。
+          macOS 当前无 GUI，Intel macOS 与 Windows ARM64 仅提供 CLI/TUI。可使用 SHA256SUMS 核对发行文件。
 
           此仓库仅用于公开发行；K3 源代码仓库仍为私有。
           EOF

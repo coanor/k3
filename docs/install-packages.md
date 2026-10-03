@@ -1,4 +1,88 @@
-# 系统安装包
+# 安装 K3
+
+## 在线安装（默认方式）
+
+Linux/macOS 使用发行版中的 `install.sh`，Windows 使用 `install.ps1`。
+安装器分别下载当前平台的 CLI、GUI（平台提供时）及分离启动器，再准备独立 Python、
+CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安装 Rust、Python 或 uv。
+程序文件与模型分开下载，不需要先下载大型完整 ZIP。
+
+| 平台 | 程序与分离支持 |
+| --- | --- |
+| Linux x86_64 / ARM64 | GUI、CLI/TUI、CPU 分离环境；glibc ≥ 2.39 |
+| Windows x64 | GUI、CLI/TUI、CPU 分离环境；Windows 10/11 |
+| Windows ARM64 | 原生 CLI/TUI；Windows 11；目前无 GUI 和完整分离依赖 |
+| macOS Apple Silicon | CLI/TUI、CPU 分离环境；macOS ≥ 14；目前无 GUI |
+| macOS Intel | 原生 CLI/TUI；macOS ≥ 14；目前无 GUI 和完整分离依赖 |
+
+从 Release 下载脚本及对应 `.sha256`，校验后运行。以下示例使用私有源码仓库 `coanor/k3`；
+公开发行时将 `--repo` / `-Repo` 改为实际配置的公开二进制仓库。私有仓库需要先在进程环境中
+设置具有该仓库读取权限的 `GITHUB_TOKEN`，安装器通过 GitHub API 下载，不在命令参数中传递令牌。
+脚本默认安装最新正式发行版，也可用 `--version v0.1.0` / `-Version v0.1.0` 固定版本。
+此功能需要发布包含在线安装组件的新 Release；历史完整包 Release 不含这些组件。
+
+Linux/macOS：
+
+```bash
+# Linux 使用 sha256sum；macOS 使用 shasum -a 256
+sha256sum --check install.sh.sha256
+bash install.sh --repo coanor/k3
+# 可直接指定挂载盘上的目录，仍然会要求确认
+bash install.sh --repo coanor/k3 --prefix /mnt/data/K3
+```
+
+Windows PowerShell：
+
+```powershell
+# 将输出与 install.ps1.sha256 中的摘要比较
+Get-FileHash .\install.ps1 -Algorithm SHA256
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3
+# 可直接指定磁盘，仍然会要求确认
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -InstallDir 'D:\Apps\K3'
+```
+
+Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录。Linux/macOS 会列出挂载点，
+让你输入相应磁盘上的路径。完整安装目前估计下载约 1–2 GiB、安装后约 2–4 GiB，
+要求至少预留 8 GiB 峰值空间；CLI 精简安装预留 512 MiB。实际大小随平台和依赖变化。
+确认默认是“否”；拒绝时不会下载组件。`--yes` / `-Yes` 只用于自动化，并且必须同时明确指定安装目录。
+
+模型、独立 Python、下载缓存及临时文件均写在所选磁盘；完成或失败后清理安装器临时目录。
+每个程序均校验平台清单中的大小与 SHA-256；uv 固定为 0.12.13 并使用脚本内置摘要。
+完整安装检查 CLI 启动、worker 健康、FFmpeg/模型文件摘要，并禁止联网加载全部默认模型。
+只有检查成功才启用最终目录；已有非空目录会被拒绝，避免覆盖用户文件。更新时请选择新的空目录。
+
+安装后在所选目录运行 `k3` / `k3.exe`，GUI 平台运行 `k3-gui` / `k3-gui.exe`。
+安装器不修改全局 PATH 或系统应用登记。将歌曲工程、媒体库与录音保存到安装目录之外；
+卸载时仅删除确认属于 K3 的安装目录，保留个人数据目录。
+
+Linux 还需要系统图形/音频库。Ubuntu 24.04 示例：
+
+```bash
+sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
+```
+
+无 X11 键盘库时安装器会提示；Wayland 和 CLI 可继续使用。播放/录音需要可用的音频设备，
+GUI 需要图形会话。M1/M2/M3/M4 及后续 ARM64 Apple Silicon 共用 macOS ARM64 程序。
+
+### 本地准备与验证在线发行
+
+```bash
+make dist
+# dist/online/support：两个入口、支持 ZIP 与校验文件
+# dist/online/platform：本机独立原生程序、清单与校验文件
+bash install.sh --source-dir "$PWD/dist/online" --prefix /mnt/data/K3-check --yes
+```
+
+Windows 原生构建后的本地验证使用 `-SourceDir` 指向同样的发行目录。
+`--model-cache` / `-ModelCache` 可复用现有模型，仍会校验固定模型摘要及完整性。
+`--source-dir` / `-SourceDir` 仅替换 K3 发行文件来源；uv、Python 和第三方依赖仍从官方源准备。
+共享支持文件仅包含安装逻辑、worker 源码、许可证和三份用户手册，不包含 Python 环境或模型。
+
+GitHub `Build distributions` 默认生成这六种平台的在线组件，并在原生 runner 上运行安装验证；
+Release 附加两个入口、共享支持文件、独立原生程序、平台清单及 SHA-256。
+需要额外完整离线归档和系统安装器时，在手动构建中勾选 `offline_bundle`。
+
+## 可选的完整离线系统安装包
 
 安装包复用同平台便携包中的程序、Python、FFmpeg 和模型，不需要额外安装 Rust 或 Python。
 下载与你的系统和架构相符的安装包及 `.sha256` 文件，校验后安装。

@@ -11,7 +11,7 @@ MODEL_CACHE ?=
 RUNTIME_DIR ?= $(DIST_DIR)/runtime-native
 
 .PHONY: help build test lint check dist dist-host dist-linux dist-windows \
-	dist-macos dist-macos-x86_64 dist-macos-aarch64 dist-all dist-runtime dist-windows-cli dist-windows-aarch64-cli installer
+	dist-macos dist-macos-x86_64 dist-macos-aarch64 dist-all dist-runtime dist-windows-cli dist-windows-aarch64-cli installer dist-online dist-offline
 
 help:
 	@printf '%s\n' \
@@ -20,8 +20,9 @@ help:
 		'  make test                   运行 workspace 测试' \
 		'  make lint                   运行严格 Clippy' \
 		'  make check                  依次运行 test 和 lint' \
-		'  make dist                   构建当前平台离线发行包' \
-		'  make installer              构建当前平台系统安装包' \
+		'  make dist                   构建当前平台在线安装组件（不下载模型和 Python 依赖）' \
+		'  make dist-offline           可选：构建当前平台完整离线包' \
+		'  make installer              可选：构建当前平台离线系统安装包' \
 		'  make dist-linux             构建本机 Linux x86_64/ARM64 包' \
 		'  make dist-windows           在 Windows 原生构建离线包' \
 		'  make dist-windows-aarch64-cli 原生构建 Windows ARM64 精简包' \
@@ -42,7 +43,30 @@ lint:
 
 check: test lint
 
-dist: dist-host
+dist: dist-online
+
+dist-online:
+	@system="$$(uname -s)"; machine="$$(uname -m)"; \
+	case "$$machine" in arm64) machine=aarch64 ;; x86_64|aarch64) ;; \
+		*) echo '仅支持 x86_64 或 ARM64' >&2; exit 1 ;; esac; \
+	case "$$system" in \
+		Linux) platform=linux; target="$$machine-unknown-linux-gnu" ;; \
+		Darwin) platform=macos; \
+			if [[ $$(sysctl -n hw.optional.arm64 2>/dev/null || true) == 1 ]]; then machine=aarch64; fi; \
+			target="$$machine-apple-darwin" ;; \
+		MINGW*|MSYS*|CYGWIN*) platform=windows; target="$$machine-pc-windows-msvc"; \
+			export RUSTFLAGS="$(RUSTFLAGS) -C target-feature=+crt-static" ;; \
+		*) echo '不支持的本机平台' >&2; exit 1 ;; esac; \
+	packages=(--package k3); \
+	if [[ "$$platform" == linux || "$$platform-$$machine" == windows-x86_64 ]]; then packages+=(--package k3-gui); fi; \
+	rustup target add "$$target"; \
+	$(CARGO) build --release --locked --bins "$${packages[@]}" --target "$$target"; \
+	extension=; if [[ "$$platform" == windows ]]; then extension=.exe; fi; \
+	$(PYTHON) scripts/package-online.py support --output "$(DIST_DIR)/online/support"; \
+	$(PYTHON) scripts/package-online.py programs "$$platform" "$$machine" \
+		"target/$$target/release/k3$$extension" --output "$(DIST_DIR)/online/platform"
+
+dist-offline: dist-host
 
 dist-host:
 	@case "$$(uname -s)" in \
