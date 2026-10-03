@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Linux/macOS 在线安装入口；所有大型下载和缓存写入所选磁盘。
+# 使用完整命令块，管道下载被截断时不会提前执行安装步骤。
+{
 set -euo pipefail
 
 repo=coanor/k3
@@ -60,11 +62,19 @@ if [[ "$system" == macos ]]; then
     fi
 fi
 if [[ "$confirmed" == true && -z "$prefix" ]]; then echo '--yes 必须同时指定 --prefix' >&2; exit 1; fi
+# 管道的标准输入用于脚本；从独立的终端描述符读取选盘和确认。
+if [[ -z "$prefix" || "$confirmed" != true ]]; then
+    if [[ -t 0 ]]; then
+        exec 3<&0
+    elif ! { exec 3</dev/tty; } 2>/dev/null; then
+        echo '非交互运行请指定 --prefix 和 --yes' >&2; exit 1
+    fi
+fi
 if [[ -z "$prefix" ]]; then
-    [[ -t 0 ]] || { echo '非交互运行请指定 --prefix 和 --yes' >&2; exit 1; }
+    [[ -t 3 ]] || { echo '非交互运行请指定 --prefix 和 --yes' >&2; exit 1; }
     echo '可用磁盘/挂载点（安装目录、模型、下载缓存和临时文件将使用同一磁盘）：'
     df -h
-    read -r -p "请输入安装目录 [$default_prefix]：" prefix
+    read -r -u 3 -p "请输入安装目录 [$default_prefix]：" prefix
     prefix=${prefix:-$default_prefix}
 fi
 [[ "$prefix" == /* ]] || prefix="$PWD/$prefix"
@@ -78,8 +88,8 @@ echo "安装目录：$prefix"
 echo "磁盘剩余：$((available / 1024)) MiB；安装峰值预留：$((required / 1024)) MiB"
 echo '完整安装下载量约 1–2 GiB，安装后约 2–4 GiB；精简 CLI 安装明显更小。实际取决于平台和依赖。'
 if [[ "$confirmed" != true ]]; then
-    [[ -t 0 ]] || { echo '非交互运行请加 --yes' >&2; exit 1; }
-    read -r -p '确认开始下载和安装？[y/N]：' answer
+    [[ -t 3 ]] || { echo '非交互运行请加 --yes' >&2; exit 1; }
+    read -r -u 3 -p '确认开始下载和安装？[y/N]：' answer
     case "$answer" in y|Y|yes|YES) ;; *) echo '已取消，未下载任何组件。'; exit 0 ;; esac
 fi
 mkdir -p "$(dirname "$prefix")"
@@ -148,3 +158,4 @@ args=(--prefix "$prefix" --repo "$repo" --uv "$uv")
 if [[ -n "$source_dir" ]]; then args+=(--assets-dir "$source_dir/platform"); fi
 if [[ -n "$model_cache" ]]; then args+=(--model-cache "$model_cache"); fi
 "$python" -I "$work/support/scripts/install-online.py" "${args[@]}"
+}

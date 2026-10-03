@@ -32,16 +32,16 @@ GitHub 的 `latest` 地址不包含预发行版，因此下载地址和安装参
 Linux/macOS：
 
 ```bash
-(k3_installer=$(curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh) && bash -c "$k3_installer" -- --version v0.1.0)
+(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
 ```
 
 Windows PowerShell：
 
 ```powershell
-& ([scriptblock]::Create((irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).TrimStart([char]0xFEFF))) -Version v0.1.0
+& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
 ```
 
-命令会在入口脚本完整下载成功后才执行，保留终端中的选盘和确认步骤。入口脚本通过 HTTPS 获取，
+Bash 命令启用 `pipefail`，下载失败会返回错误；脚本从终端读取选盘和确认输入。入口脚本通过 HTTPS 获取，
 安装器仍会校验程序、uv、支持文件与模型。若需运行前查看入口脚本并核对其 SHA-256，
 可展开下面的手动步骤。
 

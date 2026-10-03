@@ -18,19 +18,19 @@ CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安
 `coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
 当前测试版为 [v0.1.0（pre-release）](https://github.com/coanor/k3/releases/tag/v0.1.0)，使用下面对应系统的
 一行命令即可开始选盘和安装，无需登录 GitHub 或手动下载平台组件。GitHub 的 `latest` 不包含预发行版，
-因此下载地址与安装参数均指定 `v0.1.0`。脚本完整下载成功后才执行，
-安装器仍校验程序、工具、支持文件和模型；运行前核对入口脚本 SHA-256 的可选步骤见 [README 快速安装](https://github.com/coanor/k3/blob/v0.1.0/README.md#快速安装)。
+因此下载地址与安装参数均指定 `v0.1.0`。Bash 命令启用 `pipefail` 以报告下载错误，脚本从终端读取选盘和确认输入，
+安装器仍校验程序、工具、支持文件和模型；运行前核对入口脚本 SHA-256 的可选步骤见 [测试版安装说明](https://github.com/coanor/k3/releases/tag/v0.1.0)。
 
 Linux/macOS：
 
 ```bash
-(k3_installer=$(curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh) && bash -c "$k3_installer" -- --version v0.1.0)
+(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
 ```
 
 Windows PowerShell：
 
 ```powershell
-& ([scriptblock]::Create((irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).TrimStart([char]0xFEFF))) -Version v0.1.0
+& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
 ```
 
 安装器目前通过 GitHub API 下载，匿名访问受每个出口 IP 每小时 60 次请求的额度限制。

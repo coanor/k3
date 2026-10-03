@@ -36,17 +36,17 @@ so both the download URL and the installation argument explicitly select `v0.1.0
 Linux/macOS:
 
 ```bash
-(k3_installer=$(curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh) && bash -c "$k3_installer" -- --version v0.1.0)
+(set -o pipefail; curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0)
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).TrimStart([char]0xFEFF))) -Version v0.1.0
+& ([scriptblock]::Create([IO.StreamReader]::new((iwr -UseBasicParsing -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).RawContentStream).ReadToEnd())) -Version v0.1.0
 ```
 
-The command runs the entry script only after the complete download succeeds and keeps the
-terminal available for disk selection and confirmation. The entry script is fetched over HTTPS;
+The Bash command enables `pipefail` to report download errors. The script reads disk selection
+and confirmation from the terminal. The entry script is fetched over HTTPS;
 the installer still verifies programs, uv, support files, and models. To inspect the entry script
 and check its SHA-256 before running it, expand the manual steps below.
 

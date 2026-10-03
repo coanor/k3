@@ -206,8 +206,8 @@ CLI、GUI（平台提供时）和分离启动器分别作为独立文件发布�
 手动运行的 Artifacts 保留 14 天，`online-` 产物是用于 CI 传输的组件集合；
 用户安装入口应从 Release 下载。新 `v*` tag 的 Release 包含上述原文件和汇总 `SHA256SUMS`。
 Release 的 tag 必须与 `Cargo.toml` 中的版本一致。`coanor/k3` 已公开，直接发布到本仓库无需额外配置发行仓库和令牌。
-当前可按 [README 快速安装](https://github.com/coanor/k3/blob/v0.1.0/README.md#快速安装) 的一行命令安装
-[v0.1.0 预发行测试版](https://github.com/coanor/k3/releases/tag/v0.1.0)，命令明确指定版本；GitHub 的 `latest` 不包含预发行版。
+当前可按 [v0.1.0 预发行测试版](https://github.com/coanor/k3/releases/tag/v0.1.0) 的 Bash/PowerShell 一行命令安装，
+命令明确指定版本；GitHub 的 `latest` 不包含预发行版。
 
 需要完整离线归档与 `.exe` / `.deb` / `.pkg` 安装包时，在手动运行中勾选 `offline_bundle`。
 这些可选归档保持单个顶级目录；Windows ZIP 解压一次即可使用，旧 `dist-` artifact 仍有外层 ZIP。
