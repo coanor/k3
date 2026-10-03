@@ -107,6 +107,7 @@ class PackageTests(unittest.TestCase):
             archive = packager.package("windows", "k3-windows-x86_64", binary, runtime, False, root / "dist")
             with zipfile.ZipFile(archive) as stream:
                 names = set(stream.namelist())
+                self.assertEqual(stream.read("k3-windows-x86_64/LICENSE"), (packager.REPO / "LICENSE").read_bytes())
                 self.assertIn("k3-windows-x86_64/runtime/python/python.exe", names)
                 self.assertIn("k3-windows-x86_64/models/checkpoint.onnx", names)
                 self.assertIn("k3-windows-x86_64/k3-separator.exe", names)
@@ -150,6 +151,8 @@ class PackageTests(unittest.TestCase):
                 packager.package("linux", "k3-linux-x86_64", binary, None, True, root / "dist")
             archive = packager.package("linux", "k3-linux-x86_64-cli", binary, None, True, root / "dist")
             with tarfile.open(archive) as stream:
+                self.assertEqual(stream.extractfile("k3-linux-x86_64-cli/LICENSE").read(),
+                                 (packager.REPO / "LICENSE").read_bytes())
                 self.assertFalse(any("/runtime/" in name for name in stream.getnames()))
 
 

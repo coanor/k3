@@ -194,6 +194,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             download(entry["asset"], destination, base, assets, entry["sha256"], entry["size"])
             destination.chmod(0o755)
         shutil.copytree(SUPPORT / "docs", root / "docs")
+        shutil.copy2(SUPPORT / "LICENSE", root / "LICENSE")
         if gui:
             licenses = root / "licenses"
             licenses.mkdir()

@@ -39,6 +39,7 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
         shutil.copy2(binary, root / f"k3{extension}")
         (root / f"k3{extension}").chmod(0o755)
         copy_manuals(root)
+        shutil.copy2(REPO / "LICENSE", root / "LICENSE")
         if runtime:
             manifest = json.loads((runtime / "bundle-manifest.json").read_text(encoding="utf-8"))
             expected_platform = {"linux": "linux", "windows": "win32", "macos": "darwin"}[platform]

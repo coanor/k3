@@ -45,7 +45,7 @@ def support(output: Path) -> Path:
     paths += sorted((REPO / "python/separator/src").rglob("*.py"))
     paths += [REPO / "crates/k3-gui/assets" / name for name in
               ("fonts/OFL.txt", "licenses/LicenseRef-Slint-Royalty-free-2.0.md", "k3.svg")]
-    paths += [REPO / "separate.sh", REPO / "separate.ps1"]
+    paths += [REPO / "separate.sh", REPO / "separate.ps1", REPO / "LICENSE"]
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as stream:
         for path in paths:
             stream.write(path, path.relative_to(REPO).as_posix())

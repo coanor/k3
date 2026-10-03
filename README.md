@@ -76,3 +76,9 @@ Python、CPU 分离依赖、FFmpeg 和默认模型；解压后无需安装 Pytho
 Intel macOS 与 Windows ARM64 提供原生 CLI/TUI 精简包，不包含 GUI 和离线分离环境。
 M1/M2/M3/M4 等 Apple Silicon 芯片共用 macOS ARM64 包，要求 macOS 14 或更高。离线构建入口为 `make dist-offline` 和 GitHub Actions 的 `offline_bundle`，具体用法见
 [离线发行包说明](docs/offline-package.md)。
+
+## 许可证
+
+K3 自有代码使用 [MIT 许可证](LICENSE)，允许使用、修改和分发，但需保留版权与许可声明；
+软件按现状提供，不附带担保。依赖库、字体和模型分别遵循各自的许可证；仓库内的第三方
+许可声明仍然适用，其中 Slint 的许可原文见 [Slint 许可声明](crates/k3-gui/assets/licenses/LicenseRef-Slint-Royalty-free-2.0.md)。

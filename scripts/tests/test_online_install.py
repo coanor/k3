@@ -44,6 +44,7 @@ class OnlineInstallerTests(unittest.TestCase):
                 self.assertEqual({name for name in names if name.startswith("docs/")},
                                  {"docs/" + name for name in producer.MANUALS})
                 self.assertIn("scripts/install-online.py", names)
+                self.assertEqual(stream.read("LICENSE"), (producer.REPO / "LICENSE").read_bytes())
                 self.assertIn("python/separator/src/k3_separator/bundle.py", names)
                 self.assertFalse(any(name.startswith(("runtime/", "models/")) for name in names))
             self.assertLess(archive.stat().st_size, 1024**2)
@@ -128,11 +129,13 @@ class OnlineInstallerTests(unittest.TestCase):
             (support / "online-version.json").write_text(json.dumps({"version": producer.VERSION}))
             (support / "docs").mkdir()
             (support / "docs/user-manual.md").write_text("用户手册")
+            (support / "LICENSE").write_text("许可声明")
             prefix = base / "选择的磁盘/安装目录"
             with patch.object(installer, "SUPPORT", support), patch.object(installer.platform, "system", return_value="Darwin"), patch.object(installer.platform, "machine", return_value="x86_64"):
                 installer.install(prefix, "org/repo", Path("uv"), assets)
             self.assertEqual((prefix / "k3").read_bytes(), (assets / manifest["files"][0]["asset"]).read_bytes())
-            self.assertEqual({path.name for path in prefix.iterdir()}, {"k3", "docs", "install-manifest.json"})
+            self.assertEqual({path.name for path in prefix.iterdir()}, {"k3", "docs", "LICENSE", "install-manifest.json"})
+            self.assertEqual((prefix / "LICENSE").read_text(), "许可声明")
             self.assertEqual(list(prefix.parent.glob(".k3-install-*")), [])
 
     @unittest.skipIf(os.name == "nt", "进程夹具需要 POSIX shell")
@@ -144,6 +147,7 @@ class OnlineInstallerTests(unittest.TestCase):
             support.mkdir()
             (support / "online-version.json").write_text(json.dumps({"version": producer.VERSION}))
             (support / "docs").mkdir()
+            (support / "LICENSE").write_text("许可声明")
             prefix = base / "K3"
             prefix.mkdir()
             with patch.object(installer, "SUPPORT", support), patch.object(installer.platform, "system", return_value="Darwin"), patch.object(installer.platform, "machine", return_value="x86_64"), patch.object(installer, "check", side_effect=RuntimeError("启动失败")):
