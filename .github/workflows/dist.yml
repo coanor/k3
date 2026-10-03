@@ -161,6 +161,14 @@ jobs:
             rustflags: ""
             platform: linux
             cli_only: false
+          - package: k3-linux-aarch64
+            archive: k3-linux-aarch64.tar.gz
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: k3
+            rustflags: ""
+            platform: linux
+            cli_only: false
           - package: k3-windows-x86_64
             archive: k3-windows-x86_64.zip
             os: windows-latest
@@ -169,6 +177,14 @@ jobs:
             rustflags: -C target-feature=+crt-static
             platform: windows
             cli_only: false
+          - package: k3-windows-aarch64-cli
+            archive: k3-windows-aarch64-cli.zip
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            executable: k3.exe
+            rustflags: -C target-feature=+crt-static
+            platform: windows
+            cli_only: true
           - package: k3-macos-x86_64-cli
             archive: k3-macos-x86_64-cli.tar.gz
             os: macos-15-intel
@@ -210,7 +226,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked --bins --target "$BUILD_TARGET" --package k3
-          if [[ "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ]]; then
+          if [[ "${{ matrix.cli_only }}" != "true" && ( "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "Windows" ) ]]; then
             cargo build --release --locked --target "$BUILD_TARGET" --package k3-gui
           fi
 
@@ -242,9 +258,9 @@ jobs:
           else
             package_args+=(dist/runtime)
           fi
-          if [[ "$PACKAGE_PLATFORM" == "linux" ]]; then
+          if [[ "$CLI_ONLY" != "true" && "$PACKAGE_PLATFORM" == "linux" ]]; then
             package_args+=(--gui-binary "target/$BUILD_TARGET/release/k3-gui")
-          elif [[ "$PACKAGE_PLATFORM" == "windows" ]]; then
+          elif [[ "$CLI_ONLY" != "true" && "$PACKAGE_PLATFORM" == "windows" ]]; then
             package_args+=(--gui-binary "target/$BUILD_TARGET/release/k3-gui.exe")
           fi
           python scripts/package-dist.py "${package_args[@]}"
@@ -300,10 +316,18 @@ jobs:
             archive: k3-linux-x86_64.tar.gz
             os: ubuntu-24.04
             cli_only: false
+          - package: k3-linux-aarch64
+            archive: k3-linux-aarch64.tar.gz
+            os: ubuntu-24.04-arm
+            cli_only: false
           - package: k3-windows-x86_64
             archive: k3-windows-x86_64.zip
             os: windows-latest
             cli_only: false
+          - package: k3-windows-aarch64-cli
+            archive: k3-windows-aarch64-cli.zip
+            os: windows-11-arm
+            cli_only: true
           - package: k3-macos-aarch64
             archive: k3-macos-aarch64.tar.gz
             os: macos-15

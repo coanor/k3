@@ -20,7 +20,9 @@ from pathlib import Path, PurePosixPath
 REPO = Path(__file__).resolve().parent.parent
 PACKAGES = {
     "k3-linux-x86_64": ("linux", "x86_64", False),
+    "k3-linux-aarch64": ("linux", "aarch64", False),
     "k3-windows-x86_64": ("win32", "x86_64", False),
+    "k3-windows-aarch64-cli": ("win32", "aarch64", True),
     "k3-macos-aarch64": ("darwin", "aarch64", False),
     "k3-macos-x86_64-cli": ("darwin", "x86_64", True),
 }
@@ -99,7 +101,8 @@ def unix_payload(root: Path, staging: Path, prefix: str, cli_only: bool) -> Path
     return payload
 
 
-def deb(root: Path, staging: Path, output: Path, version: str) -> Path:
+def deb(root: Path, staging: Path, output: Path, version: str, machine: str) -> Path:
+    architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
     payload = unix_payload(root, staging, "opt", False)
     for source in ("share/applications/k3.desktop", "share/icons/hicolor/scalable/apps/k3.svg"):
         target = staging / "usr" / source
@@ -112,7 +115,7 @@ def deb(root: Path, staging: Path, output: Path, version: str) -> Path:
     control.parent.mkdir()
     size = sum(path.stat().st_size for path in staging.rglob("*") if path.is_file() and not path.is_symlink())
     control.write_text(
-        f"Package: k3\nVersion: {version}\nArchitecture: amd64\n"
+        f"Package: k3\nVersion: {version}\nArchitecture: {architecture}\n"
         "Maintainer: K3 contributors <noreply@github.com>\nSection: sound\nPriority: optional\n"
         f"Installed-Size: {(size + 1023) // 1024}\n"
         "Depends: libc6 (>= 2.39), libgcc-s1, libstdc++6, libasound2t64, libfontconfig1, libxkbcommon-x11-0, libegl1, libgl1\n"
@@ -120,15 +123,18 @@ def deb(root: Path, staging: Path, output: Path, version: str) -> Path:
         "Description: K3 卡拉 OK 播放器与离线音源分离工具\n"
         " 包含 GUI、CLI、独立 Python 环境、FFmpeg 和三个默认分离模型。\n",
         encoding="utf-8")
-    artifact = output / f"k3_{version}_amd64.deb"
+    artifact = output / f"k3_{version}_{architecture}.deb"
     run("dpkg-deb", "--build", "--root-owner-group", "-Zzstd", "-z6", "--threads-max=2", staging, artifact)
     return artifact
 
 
-def windows(root: Path, output: Path, version: str, compiler: str) -> Path:
-    name = f"k3-{version}-windows-x86_64-setup"
+def windows(root: Path, output: Path, version: str, compiler: str, cli_only: bool) -> Path:
+    machine = PACKAGES[root.name][1]
+    name = f"k3-{version}-windows-{machine}{'-cli' if cli_only else ''}-setup"
     run(compiler, f"/DBundleDir={root}", f"/DOutputDir={output}",
-        f"/DAppVersion={version}", f"/DOutputName={name}", REPO / "scripts/installers/windows.iss")
+        f"/DAppVersion={version}", f"/DOutputName={name}",
+        f"/DTargetArchitecture={'arm64' if machine == 'aarch64' else 'x64compatible'}",
+        f"/DCliOnly={int(cli_only)}", REPO / "scripts/installers/windows.iss")
     return output / f"{name}.exe"
 
 
@@ -180,9 +186,9 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
         # 安装说明跟随安装器源码，程序/runtime/模型保持便携包中的版本。
         shutil.copy2(REPO / "docs/install-packages.md", root / "INSTALL-PACKAGE.md")
         if platform == "linux":
-            artifact = deb(root, work / "payload", output, version)
+            artifact = deb(root, work / "payload", output, version, PACKAGES[root.name][1])
         elif platform == "win32":
-            artifact = windows(root, output, version, compiler)
+            artifact = windows(root, output, version, compiler, cli_only)
         else:
             artifact = macos(root, work / "payload", output, version, cli_only)
     if artifact.stat().st_size >= 2 * 1024**3:

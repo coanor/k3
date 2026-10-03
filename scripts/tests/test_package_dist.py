@@ -42,7 +42,7 @@ class PackageTests(unittest.TestCase):
                 )
                 self.assertTrue(any(ord(character) > 127 for character in output.stdout.decode("utf-8")))
 
-    def fixture(self, root: Path, platform: str):
+    def fixture(self, root: Path, platform: str, machine: str = "x86_64"):
         suffix = ".exe" if platform == "windows" else ""
         binary = root / f"k3{suffix}"
         binary.write_bytes(b"native program")
@@ -55,7 +55,7 @@ class PackageTests(unittest.TestCase):
         (runtime / "requirements-resolved.txt").write_text("package==1.0\n")
         (runtime / "bundle-manifest.json").write_text(json.dumps({
             "platform": {"linux": "linux", "windows": "win32", "macos": "darwin"}[platform],
-            "machine": "x86_64",
+            "machine": machine,
         }))
         return binary, runtime
 
@@ -84,6 +84,20 @@ class PackageTests(unittest.TestCase):
             expected = archive.with_name(archive.name + ".sha256").read_text().split()[0]
             self.assertEqual(expected, hashlib.sha256(archive.read_bytes()).hexdigest())
 
+    def test_linux_arm64_bundle_keeps_architecture_and_rejects_x86_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary, runtime = self.fixture(root, "linux", "aarch64")
+            archive = packager.package("linux", "k3-linux-aarch64", binary, runtime, False, root / "dist")
+            with tarfile.open(archive) as stream:
+                manifest = json.load(stream.extractfile("k3-linux-aarch64/bundle-manifest.json"))
+                self.assertEqual(manifest["machine"], "aarch64")
+                self.assertIn("k3-linux-aarch64/k3-gui", stream.getnames())
+                self.assertIn("k3-linux-aarch64/models/checkpoint.onnx", stream.getnames())
+            with self.assertRaisesRegex(ValueError, "平台或架构"):
+                packager.package("linux", "k3-linux-x86_64", binary, runtime, False, root / "dist")
+            self.assertFalse((root / "dist/k3-linux-x86_64.tar.gz").exists())
+
     def test_windows_zip_contains_python_models_and_native_launcher(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -99,6 +113,18 @@ class PackageTests(unittest.TestCase):
                 self.assertIn("k3-windows-x86_64/licenses/SourceHanSansCN-OFL.txt", names)
                 self.assertIn("k3-windows-x86_64/install-separator.ps1", names)
                 self.assertFalse(any("__pycache__" in name for name in names))
+
+    def test_windows_arm64_cli_archive_contains_only_cli_and_documentation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary, _runtime = self.fixture(root, "windows")
+            archive = packager.package("windows", "k3-windows-aarch64-cli", binary, None, True, root / "dist")
+            with zipfile.ZipFile(archive) as stream:
+                names = set(stream.namelist())
+                self.assertIn("k3-windows-aarch64-cli/k3.exe", names)
+                self.assertFalse(any("/runtime/" in name or "/models/" in name for name in names))
+                self.assertNotIn("k3-windows-aarch64-cli/k3-gui.exe", names)
+                self.assertNotIn("k3-windows-aarch64-cli/k3-separator.exe", names)
 
     def test_foreign_runtime_is_rejected_before_creating_archive(self):
         with tempfile.TemporaryDirectory() as directory:

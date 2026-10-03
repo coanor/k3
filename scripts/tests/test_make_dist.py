@@ -36,6 +36,34 @@ class MakeDistTests(unittest.TestCase):
             self.assertEqual(calls.read_text().splitlines(),
                              ["scripts/refresh-worker.py", "scripts/package-dist.py", "scripts/check-dist.py"])
 
+    def test_linux_arm64_installer_uses_native_target_and_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            tools.mkdir()
+            for name, script in {
+                "uname": '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo aarch64 ;; esac\n',
+                "cargo": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$K3_TEST_CALLS"\n',
+                "python": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$K3_TEST_CALLS"\n',
+            }.items():
+                path = tools / name
+                path.write_text(script)
+                path.chmod(0o755)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "bundle-manifest.json").write_text("{}")
+            calls = root / "calls"
+            environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                               K3_TEST_CALLS=str(calls))
+            subprocess.run(["make", "installer", f"CARGO={tools / 'cargo'}",
+                            f"PYTHON={tools / 'python'}", f"RUNTIME_DIR={runtime}", "DIST_DIR=dist/arm-test"],
+                           cwd=REPO, env=environment, check=True, capture_output=True)
+            commands = calls.read_text().splitlines()
+            self.assertIn("--target aarch64-unknown-linux-gnu", commands[1])
+            self.assertIn("linux k3-linux-aarch64 target/aarch64-unknown-linux-gnu/release/k3", commands[2])
+            self.assertEqual(commands[3], "scripts/check-dist.py dist/arm-test/k3-linux-aarch64.tar.gz")
+            self.assertEqual(commands[4], "scripts/build-installer.py dist/arm-test/k3-linux-aarch64.tar.gz --output-dir dist/arm-test/installers")
+
     def test_native_windows_build_keeps_user_flags_and_links_static_crt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,6 +1,6 @@
 # 离线发行包
 
-Windows x86_64、Linux x86_64 与 macOS Apple Silicon 的完整发行包包含：
+Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整发行包包含：
 
 - K3 CLI/TUI 程序和原生 `k3-separator` 启动器；
 - Linux 与 Windows 包还包含 GUI；Linux 同时包含桌面入口与图标；

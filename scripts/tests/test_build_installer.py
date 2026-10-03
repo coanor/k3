@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 import subprocess
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -86,6 +87,26 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual((payload / "runtime/python/bin/python3").read_bytes(), b"python")
                 self.assertEqual((payload / "k3").stat().st_mode & 0o777, 0o755)
                 self.assertEqual((payload / "models/model.onnx").stat().st_mode & 0o777, 0o644)
+
+    @unittest.skipUnless(shutil.which("dpkg-deb"), "实际 DEB 校验需要 dpkg-deb")
+    def test_deb_architecture_matches_payload_and_system_links_work(self):
+        for machine, architecture in (("x86_64", "amd64"), ("aarch64", "arm64")):
+            with self.subTest(machine=machine), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                root = base / "bundle"
+                for entry in ("k3", "k3-separator", "k3-gui", "models/checkpoint.onnx",
+                              "share/applications/k3.desktop", "share/icons/hicolor/scalable/apps/k3.svg"):
+                    path = root / entry
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("fixture")
+                artifact = installer.deb(root, base / "payload", base, "0.1.0", machine)
+                self.assertEqual(artifact.name, f"k3_0.1.0_{architecture}.deb")
+                actual = subprocess.check_output(["dpkg-deb", "--field", str(artifact), "Architecture"], text=True)
+                self.assertEqual(actual.strip(), architecture)
+                extracted = base / "installed"
+                subprocess.run(["dpkg-deb", "--extract", str(artifact), str(extracted)], check=True)
+                self.assertEqual((extracted / "usr/bin/k3").read_text(), "fixture")
+                self.assertTrue((extracted / "opt/k3/models/checkpoint.onnx").is_file())
 
     @unittest.skipIf(os.name == "nt", "macOS 命令入口需要 POSIX shell")
     def test_macos_command_launches_the_real_program_with_unicode_arguments(self):

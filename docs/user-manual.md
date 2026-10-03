@@ -167,11 +167,12 @@ make build
 make dist
 ```
 
-`make dist` 根据当前主机生成 Linux x86_64 或对应架构的 macOS 包。也可明确指定：
+`make dist` 根据当前主机生成 Linux x86_64/ARM64 或对应架构的 macOS 包。也可明确指定：
 
 ```bash
 make dist-linux
 make dist-windows  # Windows 原生环境
+make dist-windows-aarch64-cli  # Windows ARM64 原生精简包
 make dist-windows-cli  # Linux/WSL 交叉构建纯 CLI
 make dist-macos
 ```
@@ -183,7 +184,7 @@ make dist-macos
 `make dist-windows-cli LLVM_BIN=/path/to/llvm/bin` 指定。macOS 目标必须在 macOS
 主机或 GitHub macOS runner 上运行，因为构建需要 Apple SDK。
 
-要从本机触发 GitHub 上的完整四平台构建，先安装并登录 GitHub CLI，然后运行：
+要从本机触发 GitHub 上的全部平台构建，先安装并登录 GitHub CLI，然后运行：
 
 ```bash
 gh auth login
@@ -199,12 +200,14 @@ make dist-all REF=main
 随后并行生成：
 
 - `k3-linux-x86_64.tar.gz`；
+- `k3-linux-aarch64.tar.gz`；
 - `k3-windows-x86_64.zip`；
+- `k3-windows-aarch64-cli.zip`；
 - `k3-macos-x86_64-cli.tar.gz`；
 - `k3-macos-aarch64.tar.gz`。
 
 手动运行时，文件保存在该 workflow run 的 Artifacts 中 14 天。推送版本 tag 时，
-workflow 会创建或更新同名 GitHub Release，并附加四个平台包、各自的 `.sha256` 文件
+workflow 会创建或更新同名 GitHub Release，并附加各平台包、各自的 `.sha256` 文件
 和汇总的 `SHA256SUMS`。例如：
 
 ```bash
@@ -212,7 +215,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Windows 包使用静态 MSVC C runtime。完整包统一包含原生 worker 启动器、独立
+Windows 包使用静态 MSVC C runtime。ARM64 Windows 包仅包含原生 CLI/TUI；
+当前 PyTorch 依赖缺少原生 Windows ARM64 wheel，因此不捆绑 GUI 或离线 runtime。完整包统一包含原生 worker 启动器、独立
 Python、CPU 分离依赖、FFmpeg、默认 Fast / Balanced / Quality 模型及所需配置。
 Windows 额外包含 `separate.ps1` 和 `install-separator.ps1`，便于安装可选 GPU 环境。
 Intel macOS 仅提供 `-cli` 包，因为新版官方 PyTorch 不支持该平台。所有包都先解压

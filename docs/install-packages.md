@@ -6,7 +6,9 @@
 | 平台 | 安装包 | 内容与要求 |
 | --- | --- | --- |
 | Windows x86_64 | `k3-版本-windows-x86_64-setup.exe` | Windows 10/11；GUI、CLI 和完整离线分离环境 |
+| Windows ARM64 | `k3-版本-windows-aarch64-cli-setup.exe` | Windows 11 ARM64；原生 CLI/TUI 精简包，不含 GUI 和离线分离环境 |
 | Linux x86_64 | `k3_版本_amd64.deb` | Ubuntu 24.04 或兼容系统；GUI、CLI 和完整离线分离环境；glibc ≥ 2.39 |
+| Linux ARM64 | `k3_版本_arm64.deb` | Ubuntu 24.04 ARM64 或兼容系统；GUI、CLI 和完整离线分离环境；glibc ≥ 2.39 |
 | macOS Apple Silicon | `k3-版本-macos-aarch64.pkg` | macOS 14 或更高；CLI/TUI 和完整离线分离环境 |
 | macOS Intel | `k3-版本-macos-x86_64-cli.pkg` | macOS 14 或更高；仅 CLI/TUI，需要另行配置分离 worker |
 
@@ -15,18 +17,36 @@ Windows 与 macOS 安装包目前没有代码签名，macOS 包也没有公证�
 
 ## Windows
 
-运行 `.exe` 安装向导，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\K3`，无需管理员权限。
-开始菜单中提供 K3 和卸载入口，可选创建桌面快捷方式。安装完成后启动 K3 GUI。
+运行 `.exe` 安装向导，完整包默认安装到当前用户的 `%LOCALAPPDATA%\Programs\K3`，
+ARM64 精简包安装到 `%LOCALAPPDATA%\Programs\K3-ARM64-CLI`，无需管理员权限。
+两种包使用独立安装目录和卸载记录，可共存。
+x86_64 完整包在开始菜单中提供 K3 和卸载入口，可选创建桌面快捷方式；安装完成后启动 K3 GUI。
+ARM64 精简包提供卸载入口，CLI/TUI 从 PowerShell 中启动。
 CLI 未自动加入 PATH，可在 PowerShell 中使用完整路径：
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\K3\k3.exe" --help
 ```
 
+ARM64 精简包的命令路径为：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\K3-ARM64-CLI\k3.exe" --help
+```
+
 可通过 Windows 设置中的应用列表或开始菜单卸载。工程、媒体库和录音应保存在个人数据目录，
 不要放在安装目录内；卸载器只删除登记的程序文件，保留用户额外创建的文件。
 
+Windows ARM64 暂不提供完整离线包：固定的 PyTorch 2.11.0、torchvision 0.26.0、
+torchaudio 2.11.0 在官方发布源中缺少与 Python 3.13 匹配的原生 Windows ARM64 wheel。
+这是离线分离环境的依赖限制，原生 CLI/TUI 包不包含这些 Python 依赖。
+参见 [PyTorch 发布文件](https://pypi.org/project/torch/2.11.0/#files)与
+[官方 CPU wheel 索引](https://download.pytorch.org/whl/cpu/torch/)。
+
 ## Linux
+
+按 `uname -m` 选择架构：`x86_64` 使用 `amd64.deb`，`aarch64` 使用 `arm64.deb`。
+以下示例用于 x86_64，ARM64 将文件名中的 `amd64` 替换为 `arm64`。
 
 ```bash
 sha256sum --check k3_0.1.0_amd64.deb.sha256
@@ -47,6 +67,10 @@ sudo apt remove k3
 卸载只删除包管理器登记的文件，个人目录中的工程、配置与录音保留。
 
 ## macOS
+
+M1、M2、M3、M4 及后续采用 ARM64 的 Apple Silicon 芯片共用 `macos-aarch64` 包，
+包括 Pro、Max 和 Ultra 型号。它们不需要分别打包；要求 macOS 14 或更高。
+CI 在 Apple Silicon runner 验证，不代表逐代芯片都经过实机测试。
 
 双击对应架构的 `.pkg`，或在终端安装：
 
@@ -78,8 +102,8 @@ python3 scripts/build-installer.py dist/k3-linux-x86_64.tar.gz
 或使用 `--iscc` 指定路径。产物及校验文件默认写到 `dist/installers/`。
 也可用 `make installer` 从头构建当前平台的便携包与安装包。
 
-四平台 CI 实际安装包后，以普通用户执行程序启动、worker 健康检查、禁止网络的默认模型
-加载及真实短音频分离。Intel macOS 只检查 CLI 启动。Windows 与 Linux 还验证卸载保留
+各平台 CI 实际安装包后，以普通用户执行程序启动、worker 健康检查、禁止网络的默认模型
+加载及真实短音频分离。Intel macOS 与 Windows ARM64 精简包只检查 CLI 启动。Windows 与 Linux 还验证卸载保留
 安装目录中额外创建的文件。CI 只在临时 runner 安装，不修改开发者机器。
 
 复用已有成功 CI 的便携包，可避免重新编译或下载模型：
