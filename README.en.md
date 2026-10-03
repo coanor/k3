@@ -16,9 +16,8 @@ standalone Python, separation dependencies, and models, then checks startup and 
 A full installation needs **8 GiB** of free space at its peak and uses about **2–4 GiB** afterward.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
-**Current release status: online installation has been verified on all six platforms, but no
-official Release has been published yet. Use the Actions preview instructions below for now.
-The direct download commands will become available after a Release is published.**
+**Current preview: [v0.1.0 (pre-release)](https://github.com/coanor/k3/releases/tag/v0.1.0).
+Online installation has been verified on all six platforms. Use the one-line command for your system below.**
 
 System requirements: Linux needs glibc ≥ 2.39 (for example, Ubuntu 24.04); macOS needs version
 14 or later; Windows x64 needs Windows 10/11; Windows ARM64 needs Windows 11.
@@ -28,20 +27,71 @@ On Ubuntu 24.04, install the runtime libraries first:
 sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
 ```
 
-### Current preview: download and install
+### One-line installation: v0.1.0 preview
 
-1. Sign in to GitHub and open the [verified six-platform build](https://github.com/coanor/k3/actions/runs/37133730518).
-   Under Artifacts at the bottom of the page, download **`online-support`** and the component
-   group for your system from the table below. Artifacts are retained for 14 days. If they have
-   expired, find a newer successful manual six-platform build in
-   [Actions](https://github.com/coanor/k3/actions/workflows/dist.yml) and download both groups from the same run.
-2. Extract the outer ZIP for `online-support` into `k3-install/support/` and the outer ZIP for
-   your platform components into `k3-install/platform/`. **Keep all `.sha256` files. Do not
-   manually extract the inner `k3-install-support.zip`.**
-3. Open a terminal, go to the directory containing the `k3-install` folder, and run the
-   installation command for your system.
+Copy the one-line command for your system to start installation. You do not need to sign in
+to GitHub or download platform components manually. GitHub excludes pre-releases from `latest`,
+so both the download URL and the installation argument explicitly select `v0.1.0`.
 
-| System | Platform components to download | GUI | Stem separation |
+Linux/macOS:
+
+```bash
+(k3_installer=$(curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh) && bash -c "$k3_installer" -- --version v0.1.0)
+```
+
+Windows PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).TrimStart([char]0xFEFF))) -Version v0.1.0
+```
+
+The command runs the entry script only after the complete download succeeds and keeps the
+terminal available for disk selection and confirmation. The entry script is fetched over HTTPS;
+the installer still verifies programs, uv, support files, and models. To inspect the entry script
+and check its SHA-256 before running it, expand the manual steps below.
+
+<details>
+<summary>Optional: download the entry script, verify SHA-256, then run it</summary>
+
+Linux/macOS:
+
+```bash
+release_url='https://github.com/coanor/k3/releases/download/v0.1.0'
+curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
+curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
+if command -v sha256sum >/dev/null; then
+    sha256sum --check install.sh.sha256
+else
+    shasum -a 256 --check install.sh.sha256
+fi &&
+bash ./install.sh --version v0.1.0
+```
+
+Windows PowerShell:
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.0'
+    Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
+    Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
+    $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
+    if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+        throw 'Installer script SHA-256 verification failed'
+    }
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.0
+}
+```
+
+</details>
+
+After installation it prints the launch paths.
+On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
+`k3 --help` / `k3.exe --help` to list commands. The installer does not automatically change PATH.
+
+### Platform support
+
+| System | Build components (selected automatically) | GUI | Stem separation |
 | --- | --- | --- | --- |
 | Linux x64 | `online-k3-linux-x86_64` | Supported | Supported |
 | Linux ARM64 | `online-k3-linux-aarch64` | Supported | Supported |
@@ -49,6 +99,20 @@ sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x1
 | Windows ARM64 | `online-k3-windows-aarch64-cli` | Not yet supported | Full separation environment not yet available |
 | macOS Apple Silicon (M1/M2/M3/M4, etc.) | `online-k3-macos-aarch64` | Not yet supported | Supported |
 | macOS Intel | `online-k3-macos-x86_64-cli` | Not yet supported | Full separation environment not yet available |
+
+<details>
+<summary>Optional: install the preview from Actions components</summary>
+
+1. Sign in to GitHub and open the [verified six-platform build](https://github.com/coanor/k3/actions/runs/37133730518).
+   Under Artifacts at the bottom of the page, download **`online-support`** and the component
+   group for your system from the table above. Artifacts are retained for 14 days. If they have
+   expired, find a newer successful manual six-platform build in
+   [Actions](https://github.com/coanor/k3/actions/workflows/dist.yml) and download both groups from the same run.
+2. Extract the outer ZIP for `online-support` into `k3-install/support/` and the outer ZIP for
+   your platform components into `k3-install/platform/`. **Keep all `.sha256` files. Do not
+   manually extract the inner `k3-install-support.zip`.**
+3. Open a terminal, go to the directory containing the `k3-install` folder, and run the
+   installation command for your system.
 
 Linux/macOS:
 
@@ -65,46 +129,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\k3-install\support\ins
 These commands prompt you to choose a disk/installation directory and confirm downloads.
 The preview installs the K3 programs from local components; Python, third-party dependencies,
 and models still require an internet connection. Choose a new, empty directory: the installer
-refuses to overwrite a nonempty directory. After installation it prints the launch paths.
-On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
-`k3 --help` / `k3.exe --help` to list commands. The installer does not automatically change PATH.
+refuses to overwrite a nonempty directory.
 
-### Direct installation after an official Release is published
-
-Once online installation components are available in [Releases](https://github.com/coanor/k3/releases),
-use these commands to download and verify the script, then start installation. The script
-automatically selects the latest official version and your platform, so you do not need to
-download platform components manually.
-
-Linux/macOS:
-
-```bash
-release_url='https://github.com/coanor/k3/releases/latest/download'
-curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
-curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
-if command -v sha256sum >/dev/null; then
-    sha256sum --check install.sh.sha256
-else
-    shasum -a 256 --check install.sh.sha256
-fi &&
-bash ./install.sh
-```
-
-Windows PowerShell:
-
-```powershell
-& {
-    $ErrorActionPreference = 'Stop'
-    $releaseUrl = 'https://github.com/coanor/k3/releases/latest/download'
-    Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
-    Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
-    $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
-    if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
-        throw 'Installer script SHA-256 verification failed'
-    }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-}
-```
+</details>
 
 If anonymous downloads hit GitHub API rate limits (`403` / `429`), wait for the allowance to
 reset. The installer currently supports authentication through a personal `GITHUB_TOKEN` set

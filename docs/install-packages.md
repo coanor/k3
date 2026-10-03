@@ -16,24 +16,40 @@ CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安
 | macOS Intel | 原生 CLI/TUI；macOS ≥ 14；目前无 GUI 和完整分离依赖 |
 
 `coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
-正式 Release 尚未发布时，请按 [README 快速安装](https://github.com/coanor/k3#快速安装) 下载同一次成功
-Actions 构建的 `online-support` 和对应平台组件，再使用 `--source-dir` / `-SourceDir` 安装。
-正式发行后，从 Release 下载脚本及对应 `.sha256`，校验后运行；完整下载命令也见 README。
+当前测试版为 [v0.1.0（pre-release）](https://github.com/coanor/k3/releases/tag/v0.1.0)，使用下面对应系统的
+一行命令即可开始选盘和安装，无需登录 GitHub 或手动下载平台组件。GitHub 的 `latest` 不包含预发行版，
+因此下载地址与安装参数均指定 `v0.1.0`。脚本完整下载成功后才执行，
+安装器仍校验程序、工具、支持文件和模型；运行前核对入口脚本 SHA-256 的可选步骤见 [README 快速安装](https://github.com/coanor/k3/blob/v0.1.0/README.md#快速安装)。
+
+Linux/macOS：
+
+```bash
+(k3_installer=$(curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh) && bash -c "$k3_installer" -- --version v0.1.0)
+```
+
+Windows PowerShell：
+
+```powershell
+& ([scriptblock]::Create((irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/install.ps1).TrimStart([char]0xFEFF))) -Version v0.1.0
+```
+
 安装器目前通过 GitHub API 下载，匿名访问受每个出口 IP 每小时 60 次请求的额度限制。
 遇到限流导致的 `403` / `429` 时应等待额度恢复；也可在进程环境中设置个人 `GITHUB_TOKEN` 认证。
 额度与等待规则见 [GitHub API 限制](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。
 从私有发行仓库安装时，该令牌还需有仓库读取权限；勿在命令参数或公开文件中写入令牌。
-脚本默认安装最新正式发行版，也可用 `--version v0.1.0` / `-Version v0.1.0` 固定版本。
+脚本默认安装最新正式发行版；安装预发行版需用 `--version v0.1.0` / `-Version v0.1.0` 明确指定版本。
 此功能需要发布包含在线安装组件的新 Release；仅含完整离线包的 Release 不能用于在线安装。
+
+需要指定安装目录或版本时，先下载并校验入口脚本，再传入参数：
 
 Linux/macOS：
 
 ```bash
 # Linux 使用 sha256sum；macOS 使用 shasum -a 256
 sha256sum --check install.sh.sha256
-bash install.sh --repo coanor/k3
+bash install.sh --repo coanor/k3 --version v0.1.0
 # 可直接指定挂载盘上的目录，仍然会要求确认
-bash install.sh --repo coanor/k3 --prefix /mnt/data/K3
+bash install.sh --repo coanor/k3 --version v0.1.0 --prefix /mnt/data/K3
 ```
 
 Windows PowerShell：
@@ -41,9 +57,9 @@ Windows PowerShell：
 ```powershell
 # 将输出与 install.ps1.sha256 中的摘要比较
 Get-FileHash .\install.ps1 -Algorithm SHA256
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.0
 # 可直接指定磁盘，仍然会要求确认
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -InstallDir 'D:\Apps\K3'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.0 -InstallDir 'D:\Apps\K3'
 ```
 
 Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录。Linux/macOS 会列出挂载点，
