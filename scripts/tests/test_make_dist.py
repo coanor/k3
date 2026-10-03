@@ -64,6 +64,37 @@ class MakeDistTests(unittest.TestCase):
             self.assertEqual(commands[3], "scripts/check-dist.py dist/arm-test/k3-linux-aarch64.tar.gz")
             self.assertEqual(commands[4], "scripts/build-installer.py dist/arm-test/k3-linux-aarch64.tar.gz --output-dir dist/arm-test/installers")
 
+    def test_windows_arm64_host_builds_cli_installer_without_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            tools.mkdir()
+            for name, script in {
+                "uname": '#!/bin/sh\ncase "$1" in -s) echo MINGW64_NT-10.0 ;; -m) echo aarch64 ;; esac\n',
+                "rustup": '#!/bin/sh\nexit 0\n',
+                "cargo": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$K3_TEST_CALLS"\nprintf "%s" "$RUSTFLAGS" > "$K3_TEST_FLAGS"\n',
+                "python": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$K3_TEST_CALLS"\n',
+            }.items():
+                path = tools / name
+                path.write_text(script)
+                path.chmod(0o755)
+            calls = root / "calls"
+            flags = root / "flags"
+            runtime = root / "must-not-be-created"
+            environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                               K3_TEST_CALLS=str(calls), K3_TEST_FLAGS=str(flags))
+            subprocess.run(["make", "installer", f"CARGO={tools / 'cargo'}",
+                            f"PYTHON={tools / 'python'}", f"RUNTIME_DIR={runtime}", "DIST_DIR=dist/arm-test",
+                            "RUSTFLAGS=-C opt-level=2"], cwd=REPO, env=environment, check=True, capture_output=True)
+            commands = calls.read_text().splitlines()
+            self.assertIn("--bin k3 --package k3 --target aarch64-pc-windows-msvc", commands[0])
+            self.assertIn("windows k3-windows-aarch64-cli", commands[1])
+            self.assertIn("--cli-only", commands[1])
+            self.assertEqual(commands[2], "scripts/check-dist.py dist/arm-test/k3-windows-aarch64-cli.zip --cli-only")
+            self.assertEqual(commands[3], "scripts/build-installer.py dist/arm-test/k3-windows-aarch64-cli.zip --output-dir dist/arm-test/installers")
+            self.assertEqual(flags.read_text(), "-C opt-level=2 -C target-feature=+crt-static")
+            self.assertFalse(runtime.exists())
+
     def test_native_windows_build_keeps_user_flags_and_links_static_crt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

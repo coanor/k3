@@ -26,7 +26,8 @@ Intel macOS 的版本，无法使用本项目的 PyTorch 2.11 runtime。
 
 Linux 完整包在 Ubuntu 24.04 runner 构建，要求 glibc 2.39 或更高及 ALSA、Fontconfig 运行库
 （Ubuntu/Debian 的 `libasound2`，新版本为 `libasound2t64`）；播放和录音还需要
-系统音频服务及可用设备。Windows 完整包面向 Windows 10/11 x86_64。
+系统音频服务及可用设备。Windows 完整包面向 Windows 10/11 x86_64。Windows ARM64 仅提供原生 CLI/TUI
+精简包，当前 Python 3.13 / PyTorch 2.11 组合缺少官方 Windows ARM64 wheel。
 macOS 完整包面向 macOS 14 或更高的 Apple Silicon 机器。
 
 Linux GUI 还需要 Wayland/X11 会话、支持 OpenGL ES 2.0 的驱动和键盘运行库。

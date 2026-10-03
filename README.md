@@ -66,5 +66,6 @@ cargo run -p k3 -- separate \
 
 Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整包包含程序、独立
 Python、CPU 分离依赖、FFmpeg 和默认模型；解压后无需安装 Python 或在线下载模型。
-Intel macOS 提供纯 CLI 包。构建入口为 `make dist` 和 GitHub Actions，具体用法见
+Intel macOS 与 Windows ARM64 提供原生 CLI/TUI 精简包，不包含 GUI 和离线分离环境。
+M1/M2/M3/M4 等 Apple Silicon 芯片共用 macOS ARM64 包，要求 macOS 14 或更高。构建入口为 `make dist` 和 GitHub Actions，具体用法见
 [离线发行包说明](docs/offline-package.md)。

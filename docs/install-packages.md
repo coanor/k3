@@ -109,10 +109,11 @@ python3 scripts/build-installer.py dist/k3-linux-x86_64.tar.gz
 复用已有成功 CI 的便携包，可避免重新编译或下载模型：
 
 ```bash
-gh workflow run dist.yml --ref build-package -f installer_source_run=36998727861
+gh workflow run dist.yml --ref build-package -f installer_source_run=37103318484
 ```
 
-输入必须指向本仓库成功的 `Build distributions` 运行。通常的手动构建和 tag 构建会同时
+输入必须指向本仓库成功的 `Build distributions` 运行，并包含全部六种平台归档。
+新增 ARM64 支持之前仅含四种归档的运行无法用于完整安装矩阵复用。通常的手动构建和 tag 构建会同时
 生成便携包与安装包，安装检查通过后才上传安装包。本文中的版本和运行 ID 仅为示例。
 
 复用运行时，CI 使用 uv 从当前源码重新安装 Python worker，不重新构建原生程序、
