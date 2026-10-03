@@ -91,7 +91,7 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
         if platform == "windows":
             # ZIP64 避免 PowerShell Compress-Archive 的单文件 2GB 限制。
             with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED,
-                                 compresslevel=6) as stream:
+                                 compresslevel=9) as stream:
                 for path in sorted(root.rglob("*")):
                     if path.is_file():
                         stream.write(path, path.relative_to(staging))

@@ -378,13 +378,41 @@ $config = Get-Content .\config.json -Raw | ConvertFrom-Json
 
 ### 3.2 三栏媒体库配置
 
-复制示例配置并修改两个根目录与 worker 路径：
+创建配置文件，并把 `music_root` 和 `projects_root` 改成你自己的绝对路径，目录需已存在。
+下面的示例用于包含离线环境的发行包，保存为 `~/.config/k3/config.json`：
+
+```json
+{
+  "music_root": "/path/to/music",
+  "projects_root": "/path/to/projects",
+  "scan": {
+    "recursive": true,
+    "extensions": ["mp3", "flac", "wav", "m4a", "aac", "ogg"]
+  },
+  "separation": {
+    "worker": "k3-separator",
+    "model_dir": null,
+    "profile": "fast",
+    "autocast": false,
+    "preserve_backing_vocals": true
+  },
+  "recording": {"default_effect": "clean"},
+  "lyrics": {"auto_download": true, "netease_fallback": false},
+  "netease": {"enabled": false}
+}
+```
+
+先用 `mkdir -p ~/.config/k3` 创建配置目录，再保存文件。精简包与源码安装需要将
+`worker` 改成自行安装的 worker 路径，`model_dir` 改成自己的模型目录。
+在 Linux/macOS 便携包目录中启动：
 
 ```bash
-mkdir -p ~/.config/k3
-cp docs/library-config.example.json ~/.config/k3/config.json
-target/release/k3 tui --config ~/.config/k3/config.json
+./k3 tui --config ~/.config/k3/config.json
 ```
+
+系统安装包使用 `k3 tui --config ~/.config/k3/config.json`。
+Windows 在 PowerShell 中运行 `.\k3.exe tui --config 'C:\path\to\config.json'`，
+JSON 内的 Windows 路径使用 `/` 分隔或将反斜杠写成 `\\`。
 
 界面左栏列出 `projects_root` 下的 project，右栏递归扫描 `music_root` 中的音频。
 媒体库启动时不会自动打开或播放任何 project；需要在左栏选择后按 `Enter` 打开。
