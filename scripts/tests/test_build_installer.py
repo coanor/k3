@@ -16,6 +16,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "build-installer.py"
 spec = importlib.util.spec_from_file_location("build_installer", SCRIPT)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+INNO = Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6/ISCC.exe"
 
 
 class InstallerTests(unittest.TestCase):
@@ -87,6 +88,21 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual((payload / "runtime/python/bin/python3").read_bytes(), b"python")
                 self.assertEqual((payload / "k3").stat().st_mode & 0o777, 0o755)
                 self.assertEqual((payload / "models/model.onnx").stat().st_mode & 0o777, 0o644)
+
+    @unittest.skipUnless(os.name == "nt" and INNO.is_file(), "真实 Windows 安装器编译回归需要 Inno Setup")
+    def test_inno_compiles_cli_and_full_packages_with_command_line_defines(self):
+        for name, cli_only in (("k3-windows-x86_64", False), ("k3-windows-aarch64-cli", True)):
+            with self.subTest(package=name), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                root = base / name
+                root.mkdir()
+                # 真实 PE 文件用于编译资源检查；实际程序安装/启动由原生 CI 另行验证。
+                shutil.copy2(installer.sys.executable, root / "k3.exe")
+                if not cli_only:
+                    shutil.copy2(installer.sys.executable, root / "k3-gui.exe")
+                artifact = installer.windows(root, base, "0.1.0", str(INNO), cli_only)
+                self.assertTrue(artifact.is_file())
+                self.assertGreater(artifact.stat().st_size, 0)
 
     @unittest.skipUnless(shutil.which("dpkg-deb"), "实际 DEB 校验需要 dpkg-deb")
     def test_deb_architecture_matches_payload_and_system_links_work(self):

@@ -106,13 +106,14 @@ python3 scripts/build-installer.py dist/k3-linux-x86_64.tar.gz
 加载及真实短音频分离。Intel macOS 与 Windows ARM64 精简包只检查 CLI 启动。Windows 与 Linux 还验证卸载保留
 安装目录中额外创建的文件。CI 只在临时 runner 安装，不修改开发者机器。
 
-复用已有成功 CI 的便携包，可避免重新编译或下载模型：
+复用已有 CI 中构建成功的便携包，可避免重新编译或下载模型：
 
 ```bash
 gh workflow run dist.yml --ref build-package -f installer_source_run=37103318484
 ```
 
-输入必须指向本仓库成功的 `Build distributions` 运行，并包含全部六种平台归档。
+输入必须指向本仓库的 `Build distributions` 运行，其中六个便携包构建 job 必须全部成功，
+并包含全部六种平台归档。仅安装器失败的运行也可复用，因此修复安装脚本后无需重编译程序或下载模型。
 新增 ARM64 支持之前仅含四种归档的运行无法用于完整安装矩阵复用。通常的手动构建和 tag 构建会同时
 生成便携包与安装包，安装检查通过后才上传安装包。本文中的版本和运行 ID 仅为示例。
 

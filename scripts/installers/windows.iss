@@ -1,6 +1,6 @@
 ; Windows 当前用户安装；卸载仅处理安装器登记的文件。
 [Setup]
-#if CliOnly
+#if CliOnly == "1"
 AppId={{6F522DA6-E43A-4F10-B6E1-75072B818DA9}
 AppName=K3 ARM64 CLI
 DefaultDirName={localappdata}\Programs\K3-ARM64-CLI
@@ -16,7 +16,7 @@ AppPublisher=K3 contributors
 PrivilegesRequired=lowest
 ArchitecturesAllowed={#TargetArchitecture}
 ArchitecturesInstallIn64BitMode={#TargetArchitecture}
-#if CliOnly
+#if CliOnly == "1"
 MinVersion=10.0.22000
 #else
 MinVersion=10.0
@@ -27,7 +27,7 @@ Compression=lzma2/fast
 SolidCompression=yes
 LZMANumBlockThreads=2
 WizardStyle=modern
-#if CliOnly
+#if CliOnly == "1"
 UninstallDisplayIcon={app}\k3.exe
 #else
 UninstallDisplayIcon={app}\k3-gui.exe
@@ -38,7 +38,7 @@ RestartApplications=no
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
-#if !CliOnly
+#if CliOnly == "0"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
 
@@ -49,14 +49,14 @@ Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Source: "ChineseSimplified-LICENSE.txt"; DestDir: "{app}\licenses"; DestName: "InnoSetup-ChineseSimplified-MIT.txt"; Flags: ignoreversion
 
 [Icons]
-#if !CliOnly
+#if CliOnly == "0"
 Name: "{group}\K3"; Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"
 Name: "{autodesktop}\K3"; Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"; Tasks: desktopicon
 
 #endif
 Name: "{group}\卸载 K3"; Filename: "{uninstallexe}"
 
-#if !CliOnly
+#if CliOnly == "0"
 [Run]
 Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"; Description: "启动 K3"; Flags: nowait postinstall skipifsilent
 

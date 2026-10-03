@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       installer_source_run:
-        description: "复用成功运行的便携包构建安装包（留空则从头构建）"
+        description: "复用发行包构建已成功的运行（留空则从头构建）"
         required: false
         default: ""
         type: string
@@ -354,8 +354,24 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo '运行 ID 必须是数字' >&2; exit 1; }
-          gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha > "$RUNNER_TEMP/source-run.json"
-          python -c 'import json,os; from pathlib import Path; r=json.loads((Path(os.environ["RUNNER_TEMP"])/"source-run.json").read_text()); assert r["conclusion"] == "success" and r["workflowName"] == "Build distributions", r; print(r)'
+          gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha,jobs > "$RUNNER_TEMP/source-run.json"
+          python - "$RUNNER_TEMP/source-run.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          source = json.loads(Path(sys.argv[1]).read_text())
+          expected = {
+              "Build k3-linux-x86_64", "Build k3-linux-aarch64",
+              "Build k3-windows-x86_64", "Build k3-windows-aarch64-cli",
+              "Build k3-macos-aarch64", "Build k3-macos-x86_64-cli",
+          }
+          successful = {job["name"] for job in source["jobs"] if job["conclusion"] == "success"}
+          # 安装器失败不影响已通过解压、离线运行检查并上传的便携包。
+          if source["workflowName"] != "Build distributions" or not expected <= successful:
+              raise SystemExit("来源运行的六种便携包构建必须全部成功")
+          print(f"已验证发行包来源：{source['headSha']}")
+          PY
 
       - name: Download validated portable distribution
         uses: actions/download-artifact@v8

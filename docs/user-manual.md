@@ -216,7 +216,8 @@ git push origin v0.1.0
 ```
 
 Windows 包使用静态 MSVC C runtime。ARM64 Windows 包仅包含原生 CLI/TUI；
-当前 PyTorch 依赖缺少原生 Windows ARM64 wheel，因此不捆绑 GUI 或离线 runtime。完整包统一包含原生 worker 启动器、独立
+精简包不捆绑 GUI 或离线 runtime；完整离线 runtime 所需的当前 PyTorch 依赖
+缺少原生 Windows ARM64 wheel。完整包统一包含原生 worker 启动器、独立
 Python、CPU 分离依赖、FFmpeg、默认 Fast / Balanced / Quality 模型及所需配置。
 Windows 额外包含 `separate.ps1` 和 `install-separator.ps1`，便于安装可选 GPU 环境。
 Intel macOS 仅提供 `-cli` 包，因为新版官方 PyTorch 不支持该平台。所有包都先解压
