@@ -1,6 +1,6 @@
 # K3
 
-[简体中文](README.md) | **繁體中文** | [English](README.en.md)
+[English](README.md) | [简体中文](README.zh-Hans.md) | **繁體中文**
 
 K3 是一個優先在本機運作的 K 歌工作區，提供 Linux/Windows 桌面 GUI 和跨平台 CLI/TUI。它可以
 儲存歌曲專案、匯入 LRC 歌詞、呼叫本機分軌 worker，播放 Original、Accompaniment
