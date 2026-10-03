@@ -12,8 +12,9 @@ Windows x86_64、Linux x86_64/ARM64 与 macOS Apple Silicon 的完整发行包�
 - FFmpeg、默认 Fast / Balanced / Quality 模型及模型配置和元数据；
 - SHA-256 校验文件、依赖版本记录和第三方组件清单。
 
-`docs/` 仅包含用户手册 `user-manual.md`、本说明 `offline-package.md` 和安装说明
-`install-packages.md`；开发规格、验收记录和调研文档在源码仓库查阅。
+`docs/` 仅包含英文、简体中文、繁体中文用户指南（`user-manual.md`、
+`user-manual.zh-Hans.md`、`user-manual.zh-Hant.md`），以及本说明 `offline-package.md`
+和安装说明 `install-packages.md`；开发规格、验收记录和调研文档在源码仓库查阅。
 
 包内默认模型为 `uvr-mdx-karaoke-2`、`uvr-mdx-inst-hq-3` 和
 `bs-roformer-viperx-1297`。Fast 模型同时用于保留和声，三个默认档位都可离线使用。

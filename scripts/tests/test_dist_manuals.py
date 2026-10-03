@@ -21,7 +21,8 @@ class ManualTests(unittest.TestCase):
             (root / "k3.exe").write_bytes(b"application")
             copy_manuals(root)
             self.assertEqual({path.name for path in (root / "docs").iterdir()},
-                             {"user-manual.md", "offline-package.md", "install-packages.md"})
+                             {"user-manual.md", "user-manual.zh-Hans.md", "user-manual.zh-Hant.md",
+                                  "offline-package.md", "install-packages.md"})
             self.assertEqual({path.name for path in root.iterdir()}, {"docs", "k3.exe"})
             self.assertEqual((root / "k3.exe").read_bytes(), b"application")
 

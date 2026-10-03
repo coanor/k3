@@ -115,7 +115,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
         manifest = producer.programs(platform, machine, binary, assets)
         return assets, json.loads(manifest.read_text())
 
-    def test_support_is_small_and_contains_only_the_three_user_manuals(self):
+    def test_support_is_small_and_contains_only_user_manuals(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = producer.support(Path(directory))
             with zipfile.ZipFile(archive) as stream:

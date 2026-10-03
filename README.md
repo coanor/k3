@@ -142,8 +142,9 @@ reset. The installer currently supports authentication through a personal `GITHU
 in the process environment; do not put the token in command arguments or public files.
 See the [installation guide](docs/install-packages.md) for disk selection, directory/version
 options, uninstalling, and optional offline packages. See the [user manual](docs/user-manual.md)
-for song projects, playback, and recording. The linked manuals and technical documentation
-are currently in Simplified Chinese.
+for the GUI workflow, playback, and recording. The user guide is available in English,
+Simplified Chinese and Traditional Chinese. Other installation and technical documents
+remain in Simplified Chinese.
 
 ## Building from source
 

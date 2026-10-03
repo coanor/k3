@@ -155,7 +155,8 @@ class InstallerTests(unittest.TestCase):
             subprocess.run(["dpkg-deb", "--extract", str(artifact), str(installed)], check=True)
             for payload in (refreshed, installed / "opt/k3"):
                 self.assertEqual({path.name for path in (payload / "docs").iterdir()},
-                                 {"user-manual.md", "offline-package.md", "install-packages.md"})
+                                 {"user-manual.md", "user-manual.zh-Hans.md", "user-manual.zh-Hant.md",
+                                  "offline-package.md", "install-packages.md"})
                 self.assertFalse((payload / "README.md").exists())
                 self.assertEqual((payload / "models/checkpoint.onnx").read_bytes(), b"preserved payload")
                 self.assertEqual(os.readlink(payload / "runtime/python/bin/python3"), "python3.13")

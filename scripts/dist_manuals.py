@@ -3,7 +3,8 @@
 from pathlib import Path
 import shutil
 
-MANUALS = ("user-manual.md", "offline-package.md", "install-packages.md")
+MANUALS = ("user-manual.md", "user-manual.zh-Hans.md", "user-manual.zh-Hant.md",
+           "offline-package.md", "install-packages.md")
 SOURCE = Path(__file__).resolve().parent.parent / "docs"
 
 
