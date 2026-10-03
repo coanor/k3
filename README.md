@@ -18,7 +18,7 @@ standalone Python, separation dependencies, and models, then checks startup and 
 A full installation needs **8 GiB** of free space at its peak and uses about **2–4 GiB** afterward.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
-**Current preview: [v0.1.0 (pre-release)](https://github.com/coanor/k3/releases/tag/v0.1.0).
+**Current release: [v0.1.1](https://github.com/coanor/k3/releases/tag/v0.1.1).
 Online installation has been verified on all six platforms. Use the one-line command for your system below.**
 
 System requirements: Linux needs glibc ≥ 2.39 (for example, Ubuntu 24.04); macOS needs version
@@ -29,22 +29,22 @@ On Ubuntu 24.04, install the runtime libraries first:
 sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
 ```
 
-### One-line installation: v0.1.0 preview
+### One-line installation: v0.1.1
 
 Copy the one-line command for your system to start installation. You do not need to sign in
-to GitHub or download platform components manually. GitHub excludes pre-releases from `latest`,
-so both the download URL and the installer version explicitly select `v0.1.0`.
+to GitHub or download platform components manually. These commands select the stable
+`v0.1.1` release explicitly.
 
 Linux/macOS:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.1/install.sh | bash -s -- --version v0.1.1
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.1/get.ps1 | iex
 ```
 
 The script reads disk selection and confirmation from the terminal. The Windows bootstrap
@@ -60,7 +60,7 @@ steps below to inspect and verify the entry script before running it.
 Linux/macOS:
 
 ```bash
-release_url='https://github.com/coanor/k3/releases/download/v0.1.0'
+release_url='https://github.com/coanor/k3/releases/download/v0.1.1'
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
 if command -v sha256sum >/dev/null; then
@@ -68,7 +68,7 @@ if command -v sha256sum >/dev/null; then
 else
     shasum -a 256 --check install.sh.sha256
 fi &&
-bash ./install.sh --version v0.1.0
+bash ./install.sh --version v0.1.1
 ```
 
 Windows PowerShell:
@@ -76,14 +76,14 @@ Windows PowerShell:
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.0'
+    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.1'
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
     $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
     if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
         throw 'Installer script SHA-256 verification failed'
     }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.0
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.1
 }
 ```
 
@@ -105,7 +105,7 @@ On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
 | macOS Intel | `online-k3-macos-x86_64-cli` | Not yet supported | Full separation environment not yet available |
 
 <details>
-<summary>Optional: install the preview from Actions components</summary>
+<summary>Optional: install from Actions components</summary>
 
 1. Sign in to GitHub and open the [verified six-platform build](https://github.com/coanor/k3/actions/runs/37133730518).
    Under Artifacts at the bottom of the page, download **`online-support`** and the component
@@ -131,7 +131,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\k3-install\support\ins
 ```
 
 These commands prompt you to choose a disk/installation directory and confirm downloads.
-The preview installs the K3 programs from local components; Python, third-party dependencies,
+This method installs the K3 programs from local components; Python, third-party dependencies,
 and models still require an internet connection. Choose a new, empty directory: the installer
 refuses to overwrite a nonempty directory.
 

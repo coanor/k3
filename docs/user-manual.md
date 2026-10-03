@@ -11,18 +11,18 @@ The GUI is available on **Windows x64** and **Linux x64/ARM64**.
 macOS and Windows ARM64 currently provide CLI/TUI only; see the
 [project README](https://github.com/coanor/k3) for those platforms.
 
-Install the [v0.1.0 preview](https://github.com/coanor/k3/releases/tag/v0.1.0):
+Install [v0.1.1](https://github.com/coanor/k3/releases/tag/v0.1.1):
 
 Windows — open PowerShell and paste:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.1/get.ps1 | iex
 ```
 
 Linux — open a terminal and paste:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.1/install.sh | bash -s -- --version v0.1.1
 ```
 
 Choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,

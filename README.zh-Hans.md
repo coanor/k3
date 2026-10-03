@@ -14,7 +14,7 @@ Python 或 uv。安装器会让你选择磁盘和目录，确认后下载当前�
 峰值空间，安装后约占 **2–4 GiB**；
 Windows ARM64 和 Intel macOS 的精简 CLI 安装需预留 **512 MiB**。
 
-**当前测试版本：[v0.1.0（pre-release）](https://github.com/coanor/k3/releases/tag/v0.1.0)。
+**当前正式版本：[v0.1.1](https://github.com/coanor/k3/releases/tag/v0.1.1)。
 六平台在线安装已通过验证；请选择下面对应系统的一行命令。**
 
 系统要求：Linux 需 glibc ≥ 2.39（如 Ubuntu 24.04），macOS 需 14 或更高，Windows x64
@@ -24,21 +24,21 @@ Windows ARM64 和 Intel macOS 的精简 CLI 安装需预留 **512 MiB**。
 sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
 ```
 
-### 一行安装：v0.1.0 测试版
+### 一行安装：v0.1.1
 
 复制对应系统的一行命令即可开始安装，无需登录 GitHub 或手动下载平台组件。
-GitHub 的 `latest` 地址不包含预发行版，因此下载地址和安装版本均固定为 `v0.1.0`。
+下面的命令明确选择正式版 `v0.1.1`。
 
 Linux/macOS：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.0/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.1/install.sh | bash -s -- --version v0.1.1
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.1/get.ps1 | iex
 ```
 
 脚本从终端读取选盘和确认输入。Windows 启动脚本自动校验安装入口的 SHA-256 并处理 UTF-8 编码；
@@ -52,7 +52,7 @@ irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.0/get.
 Linux/macOS：
 
 ```bash
-release_url='https://github.com/coanor/k3/releases/download/v0.1.0'
+release_url='https://github.com/coanor/k3/releases/download/v0.1.1'
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
 if command -v sha256sum >/dev/null; then
@@ -60,7 +60,7 @@ if command -v sha256sum >/dev/null; then
 else
     shasum -a 256 --check install.sh.sha256
 fi &&
-bash ./install.sh --version v0.1.0
+bash ./install.sh --version v0.1.1
 ```
 
 Windows PowerShell：
@@ -68,14 +68,14 @@ Windows PowerShell：
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.0'
+    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.1'
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
     $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
     if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
         throw 'Installer script SHA-256 verification failed'
     }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.0
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.1
 }
 ```
 
@@ -96,7 +96,7 @@ Windows PowerShell：
 | macOS Intel | `online-k3-macos-x86_64-cli` | 暂不支持 | 暂不提供完整分离环境 |
 
 <details>
-<summary>可选：从 Actions 组件安装测试版</summary>
+<summary>可选：从 Actions 组件安装</summary>
 
 1. 登录 GitHub，打开[已验证的六平台构建](https://github.com/coanor/k3/actions/runs/37133730518)，
    在页面底部 Artifacts 下载 **`online-support`** 和上表中与你的系统对应的一组组件。
@@ -118,7 +118,7 @@ Windows PowerShell：
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\k3-install\support\install.ps1 -SourceDir "$PWD\k3-install"
 ```
 
-这两条命令会提示选择磁盘/安装目录和确认下载。测试版从本地组件安装 K3 程序，
+这两条命令会提示选择磁盘/安装目录和确认下载。这种方式从本地组件安装 K3 程序，
 Python、第三方依赖和模型仍需联网下载。选择新的空目录，安装器会拒绝覆盖非空目录。
 
 </details>
