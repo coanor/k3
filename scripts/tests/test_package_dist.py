@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "package-dist.py"
+sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("package_dist", SCRIPT)
 packager = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packager)
@@ -113,6 +114,10 @@ class PackageTests(unittest.TestCase):
                 self.assertIn("k3-windows-x86_64/licenses/SourceHanSansCN-OFL.txt", names)
                 self.assertIn("k3-windows-x86_64/install-separator.ps1", names)
                 self.assertFalse(any("__pycache__" in name for name in names))
+                self.assertEqual({name.split("/docs/", 1)[1] for name in names if "/docs/" in name},
+                                 {"user-manual.md", "offline-package.md", "install-packages.md"})
+                self.assertNotIn("k3-windows-x86_64/README.md", names)
+                self.assertNotIn("k3-windows-x86_64/INSTALL.md", names)
 
     def test_windows_arm64_cli_archive_contains_only_cli_and_documentation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -125,6 +130,9 @@ class PackageTests(unittest.TestCase):
                 self.assertFalse(any("/runtime/" in name or "/models/" in name for name in names))
                 self.assertNotIn("k3-windows-aarch64-cli/k3-gui.exe", names)
                 self.assertNotIn("k3-windows-aarch64-cli/k3-separator.exe", names)
+                self.assertEqual({name.split("/docs/", 1)[1] for name in names if "/docs/" in name},
+                                 {"user-manual.md", "offline-package.md", "install-packages.md"})
+                self.assertNotIn("k3-windows-aarch64-cli/README.md", names)
 
     def test_foreign_runtime_is_rejected_before_creating_archive(self):
         with tempfile.TemporaryDirectory() as directory:

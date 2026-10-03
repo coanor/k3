@@ -6,6 +6,7 @@ import io
 import os
 import subprocess
 import shutil
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ import zipfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "build-installer.py"
+sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("build_installer", SCRIPT)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)

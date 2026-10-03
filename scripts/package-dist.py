@@ -15,6 +15,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from dist_manuals import copy_manuals
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -38,8 +40,7 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
         root.mkdir()
         shutil.copy2(binary, root / f"k3{extension}")
         (root / f"k3{extension}").chmod(0o755)
-        shutil.copy2(REPO / "README.md", root)
-        shutil.copytree(REPO / "docs", root / "docs")
+        copy_manuals(root)
         if runtime:
             manifest = json.loads((runtime / "bundle-manifest.json").read_text(encoding="utf-8"))
             expected_platform = {"linux": "linux", "windows": "win32", "macos": "darwin"}[platform]
@@ -58,7 +59,6 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
             shutil.copytree(runtime / "models", root / "models")
             for filename in ("bundle-manifest.json", "requirements-resolved.txt"):
                 shutil.copy2(runtime / filename, root)
-            shutil.copy2(REPO / "docs/offline-package.md", root / "INSTALL.md")
             if platform in ("linux", "windows"):
                 gui = gui_binary or binary.with_name(f"k3-gui{extension}")
                 if not gui.is_file():

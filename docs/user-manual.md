@@ -82,7 +82,7 @@ GUI 再次启动时会加载上次工程，但始终从头保持暂停。
 工程错误会写入该日志；GUI 无法初始化显示后端时，终端诊断也会给出日志路径和 `k3 tui`
 回退命令。Windows 双击 `k3-gui.exe` 不会附带命令行窗口；启动失败时会显示含诊断日志路径的
 错误弹窗。GUI 后台分离也不会弹出命令行窗口。维护者的平台与性能验收步骤见
-[GUI 验收记录](gui-acceptance.md)。
+[GUI 验收记录](https://github.com/coanor/k3/blob/main/docs/gui-acceptance.md)。
 
 要在 GUI 中加入新歌，点击右侧 `Separate song`，可一次选择多首本地音频，选择 Fast、Balanced、
 Quality 或 Compatible 档位，再点击 `Queue selected`。首次默认使用 Quality，之后记住
@@ -506,7 +506,7 @@ Chrome 导入只会在你按 `c` 时读取 `music.163.com` 的 Cookie，并只�
 权限运行，部分设备绑定会话仍可能无法导入。遇到这些情况可继续使用二维码登录。
 
 完整边界、失败语义和验收标准见
-[网易云音乐实验性集成规格](netease-music-integration-spec.md)。
+[网易云音乐实验性集成规格](https://github.com/coanor/k3/blob/main/docs/netease-music-integration-spec.md)。
 
 ### 3.4 候选状态图标（待选）
 
@@ -767,7 +767,7 @@ TUI 以及进入 TUI 前的歌词检索进度统一使用英文提示；中文�
 网易云回退使用其免登录网页接口，该接口没有面向第三方开发者的稳定性承诺；若服务
 方调整接口，K3 会显示该来源错误并保留 LRCLIB 与本地歌词流程，不会覆盖已有歌词。
 各来源的官方能力、限制与接入判断见
-[歌词来源调研](lyrics-sources-research.md)。
+[歌词来源调研](https://github.com/coanor/k3/blob/main/docs/lyrics-sources-research.md)。
 
 如果录下的人声相对伴奏偏后，可用毫秒数将人声提前，并把设置保存到
 `project.json`：
@@ -907,7 +907,7 @@ printf '%s\n' '{"id":"models","method":"list_models"}' | \
 ```
 
 自定义模型注册表的格式和安全要求见
-[`python/separator/README.md`](../python/separator/README.md)。PyTorch `.ckpt`
+[`python/separator/README.md`](https://github.com/coanor/k3/blob/main/python/separator/README.md)。PyTorch `.ckpt`
 可能包含 pickle 数据，只应使用可信来源并固定 SHA-256。
 
 ## 9. 常见问题

@@ -17,6 +17,8 @@ import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from dist_manuals import copy_manuals
+
 REPO = Path(__file__).resolve().parent.parent
 PACKAGES = {
     "k3-linux-x86_64": ("linux", "x86_64", False),
@@ -183,8 +185,8 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
             raise ValueError(f"二进制版本 {actual!r} 与安装包版本 {version!r} 不一致")
         if refresh_worker and not cli_only:
             run(sys.executable, REPO / "scripts/refresh-worker.py", root / "runtime/python")
-        # 安装说明跟随安装器源码，程序/runtime/模型保持便携包中的版本。
-        shutil.copy2(REPO / "docs/install-packages.md", root / "INSTALL-PACKAGE.md")
+        # 用户手册跟随安装器源码；复用旧包时也清理开发文档。
+        copy_manuals(root)
         if platform == "linux":
             artifact = deb(root, work / "payload", output, version, PACKAGES[root.name][1])
         elif platform == "win32":
