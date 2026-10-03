@@ -98,10 +98,10 @@ Windows PowerShell：
 <details>
 <summary>可选：从 Actions 组件安装</summary>
 
-1. 登录 GitHub，打开[已验证的六平台构建](https://github.com/coanor/k3/actions/runs/37133730518)，
+1. 登录 GitHub，打开[已验证的六平台构建](https://github.com/coanor/k3/actions/runs/37147301570)，
    在页面底部 Artifacts 下载 **`online-support`** 和上表中与你的系统对应的一组组件。
-   测试产物保留 14 天；若已过期，请从 [Actions](https://github.com/coanor/k3/actions/workflows/dist.yml)
-   选择较新的成功六平台手动构建，并从同一次构建下载两组文件。
+   构建产物保留 14 天；若已过期，请从 [Actions](https://github.com/coanor/k3/actions/workflows/dist.yml)
+   选择较新的成功六平台构建，并从同一次构建下载两组文件。
 2. 将 `online-support` 的外层 ZIP 解压到 `k3-install/support/`，平台组件的外层 ZIP 解压到
    `k3-install/platform/`。**保留全部 `.sha256` 文件；内部的 `k3-install-support.zip` 无需手动解压。**
 3. 打开终端，进入包含 `k3-install` 文件夹的目录，运行对应安装命令。

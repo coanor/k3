@@ -107,10 +107,10 @@ On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
 <details>
 <summary>Optional: install from Actions components</summary>
 
-1. Sign in to GitHub and open the [verified six-platform build](https://github.com/coanor/k3/actions/runs/37133730518).
+1. Sign in to GitHub and open the [verified six-platform build](https://github.com/coanor/k3/actions/runs/37147301570).
    Under Artifacts at the bottom of the page, download **`online-support`** and the component
    group for your system from the table above. Artifacts are retained for 14 days. If they have
-   expired, find a newer successful manual six-platform build in
+   expired, find a newer successful six-platform build in
    [Actions](https://github.com/coanor/k3/actions/workflows/dist.yml) and download both groups from the same run.
 2. Extract the outer ZIP for `online-support` into `k3-install/support/` and the outer ZIP for
    your platform components into `k3-install/platform/`. **Keep all `.sha256` files. Do not
