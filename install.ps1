@@ -82,7 +82,8 @@ try {
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $digest) { throw 'uv SHA-256 不匹配' }
     Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $work 'uv')
     $uv = Join-Path $work 'uv\uv.exe'
-    & $uv --no-config python install 3.13.15 --install-dir $env:UV_PYTHON_INSTALL_DIR --no-bin --no-registry
+    # uv 在 Windows ARM64 上默认选用仿真 x64 Python；固定原生架构以保持平台识别一致。
+    & $uv --no-config python install "cpython-3.13.15-windows-$machine-none" --install-dir $env:UV_PYTHON_INSTALL_DIR --no-bin --no-registry
     if ($LASTEXITCODE -ne 0) { throw '独立 Python 下载失败' }
     $installations = @(Get-ChildItem -LiteralPath $env:UV_PYTHON_INSTALL_DIR -Directory -Filter 'cpython-3.13.15-*')
     if ($installations.Count -ne 1) { throw '无法定位独立 Python' }

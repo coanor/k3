@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -28,6 +30,26 @@ installer = load("online_installer", "install-online.py")
 
 
 class OnlineInstallerTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("powershell.exe") or shutil.which("powershell"),
+                         "验证原生 Python 请求需要 Windows PowerShell")
+    def test_windows_bootstrap_requests_python_for_the_selected_native_architecture(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        script = (producer.REPO / "install.ps1").read_text(encoding="utf-8-sig")
+        command = next(line.strip() for line in script.splitlines()
+                       if line.strip().startswith("& $uv --no-config python install "))
+        for machine in ("x86_64", "aarch64"):
+            with self.subTest(machine=machine):
+                # 执行真实安装入口中的 uv 调用，仅替换下载程序以捕获 Python 请求。
+                harness = ("$ErrorActionPreference = 'Stop'; "
+                           "function Capture-Uv { $script:captured = @($args) }; "
+                           f"$uv = 'Capture-Uv'; $machine = '{machine}'; "
+                           "$env:UV_PYTHON_INSTALL_DIR = 'C:\\fixture path'; "
+                           + command + "; ConvertTo-Json -Compress -InputObject $script:captured")
+                output = subprocess.check_output(
+                    [powershell, "-NoProfile", "-NonInteractive", "-Command", harness],
+                    text=True, timeout=30)
+                self.assertIn(f"cpython-3.13.15-windows-{machine}-none", json.loads(output))
+
     def fixture(self, base, platform="macos", machine="x86_64"):
         binary = base / "k3"
         binary.write_text(f'#!/bin/sh\nprintf "k3 {producer.VERSION}\\n"\n')
