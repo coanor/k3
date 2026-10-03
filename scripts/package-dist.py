@@ -4,18 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
 import shutil
 import sys
-import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 
 from dist_manuals import copy_manuals
+from dist_archive import write_archive
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -87,24 +85,7 @@ def package(platform: str, name: str, binary: Path, runtime: Path | None,
                 shutil.copytree(REPO / "python/separator", root / "python/separator",
                                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
         archive = dist / f"{name}{'.zip' if platform == 'windows' else '.tar.gz'}"
-        temporary = staging / archive.name
-        if platform == "windows":
-            # ZIP64 避免 PowerShell Compress-Archive 的单文件 2GB 限制。
-            with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED,
-                                 compresslevel=9) as stream:
-                for path in sorted(root.rglob("*")):
-                    if path.is_file():
-                        stream.write(path, path.relative_to(staging))
-        else:
-            with tarfile.open(temporary, "w:gz", compresslevel=6) as stream:
-                stream.add(root, arcname=name)
-        if temporary.stat().st_size >= 2 * 1024**3:
-            raise ValueError("发行包超过 GitHub Release 的 2 GiB 限制；请缩减额外模型")
-        temporary.replace(archive)
-    with archive.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    archive.with_name(archive.name + ".sha256").write_text(
-        f"{digest}  {archive.name}\n", encoding="ascii")
+        write_archive(root, archive)
     print(f"已生成：{archive}（{archive.stat().st_size / 1024**2:.1f} MiB）")
     return archive
 

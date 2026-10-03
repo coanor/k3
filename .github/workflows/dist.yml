@@ -450,7 +450,7 @@ jobs:
           set -euo pipefail
           args=("dist/source/$ARCHIVE_NAME")
           if [[ "$RUNNER_OS" == Windows ]]; then args+=(--iscc "$K3_ISCC"); fi
-          if [[ -n "$SOURCE_RUN" ]]; then args+=(--refresh-worker); fi
+          if [[ -n "$SOURCE_RUN" ]]; then args+=(--refresh-worker --refresh-portable-manuals); fi
           python scripts/build-installer.py "${args[@]}"
 
       - name: Install Linux package

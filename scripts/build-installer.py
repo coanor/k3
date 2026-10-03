@@ -18,6 +18,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from dist_manuals import copy_manuals
+from dist_archive import write_archive
 
 REPO = Path(__file__).resolve().parent.parent
 PACKAGES = {
@@ -167,7 +168,8 @@ def macos(root: Path, staging: Path, output: Path, version: str, cli_only: bool)
     return artifact
 
 
-def build(archive: Path, output: Path, version: str, compiler: str, refresh_worker: bool = False) -> Path:
+def build(archive: Path, output: Path, version: str, compiler: str, refresh_worker: bool = False,
+          refresh_portable_manuals: bool = False) -> Path:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("安装包版本必须是 major.minor.patch 三段数字")
     output = output.resolve()
@@ -183,10 +185,13 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
         actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
         if actual != f"k3 {version}":
             raise ValueError(f"二进制版本 {actual!r} 与安装包版本 {version!r} 不一致")
-        if refresh_worker and not cli_only:
-            run(sys.executable, REPO / "scripts/refresh-worker.py", root / "runtime/python")
         # 用户手册跟随安装器源码；复用旧包时也清理开发文档。
         copy_manuals(root)
+        if refresh_worker and not cli_only:
+            run(sys.executable, REPO / "scripts/refresh-worker.py", root / "runtime/python")
+        if refresh_portable_manuals:
+            # 便携包和安装器使用同一份更新后的用户手册与 worker。
+            write_archive(root, archive.resolve())
         if platform == "linux":
             artifact = deb(root, work / "payload", output, version, PACKAGES[root.name][1])
         elif platform == "win32":
@@ -211,5 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--version", default=tomllib.loads((REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"])
     parser.add_argument("--iscc", default="ISCC.exe", help="Windows Inno Setup 编译器路径")
     parser.add_argument("--refresh-worker", action="store_true", help="用当前源码重新安装 worker；保留原生程序、其他依赖和模型，需要 uv")
+    parser.add_argument("--refresh-portable-manuals", action="store_true", help="同时更新输入便携包的用户手册、压缩包与校验文件")
     args = parser.parse_args()
-    build(args.archive, args.output_dir, args.version, args.iscc, args.refresh_worker)
+    build(args.archive, args.output_dir, args.version, args.iscc, args.refresh_worker,
+          args.refresh_portable_manuals)

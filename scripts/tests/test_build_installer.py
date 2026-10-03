@@ -126,6 +126,42 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual((extracted / "usr/bin/k3").read_text(), "fixture")
                 self.assertTrue((extracted / "opt/k3/models/checkpoint.onnx").is_file())
 
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("dpkg-deb"),
+                         "复用安装包回归需要 Linux 和 dpkg-deb")
+    def test_reused_archive_and_installer_refresh_manuals_preserving_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            name = "k3-linux-x86_64"
+            root = base / name
+            for entry in ("k3-separator", "k3-gui", "runtime/python/bin/python3.13",
+                          "runtime/bin/ffmpeg", "models/checkpoint.onnx", "docs/internal-spec.md",
+                          "README.md", "share/applications/k3.desktop",
+                          "share/icons/hicolor/scalable/apps/k3.svg"):
+                path = root / entry
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"preserved payload")
+            (root / "runtime/python/bin/python3").symlink_to("python3.13")
+            (root / "bundle-manifest.json").write_text('{"platform":"linux","machine":"x86_64"}')
+            binary = root / "k3"
+            binary.write_text('#!/bin/sh\nprintf "k3 0.1.0\\n"\n')
+            binary.chmod(0o755)
+            archive = base / (name + ".tar.gz")
+            installer.write_archive(root, archive)
+            old_digest = archive.with_name(archive.name + ".sha256").read_text()
+            artifact = installer.build(archive, base / "installers", "0.1.0", "unused",
+                                       refresh_portable_manuals=True)
+            refreshed, _, _ = installer.unpack(archive, base / "refreshed")
+            installed = base / "installed"
+            subprocess.run(["dpkg-deb", "--extract", str(artifact), str(installed)], check=True)
+            for payload in (refreshed, installed / "opt/k3"):
+                self.assertEqual({path.name for path in (payload / "docs").iterdir()},
+                                 {"user-manual.md", "offline-package.md", "install-packages.md"})
+                self.assertFalse((payload / "README.md").exists())
+                self.assertEqual((payload / "models/checkpoint.onnx").read_bytes(), b"preserved payload")
+                self.assertEqual(os.readlink(payload / "runtime/python/bin/python3"), "python3.13")
+                self.assertEqual((payload / "k3").read_bytes(), binary.read_bytes())
+            self.assertNotEqual(old_digest, archive.with_name(archive.name + ".sha256").read_text())
+
     @unittest.skipIf(os.name == "nt", "macOS 命令入口需要 POSIX shell")
     def test_macos_command_launches_the_real_program_with_unicode_arguments(self):
         with tempfile.TemporaryDirectory(prefix="K3 安装 ") as directory:
