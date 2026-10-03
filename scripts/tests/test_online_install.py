@@ -147,7 +147,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             asset.write_bytes(b"original")
             producer.checksum(asset)
             asset.write_bytes(b"modified")
-            with self.assertRaisesRegex(ValueError, "完整性"):
+            with self.assertRaisesRegex(ValueError, "integrity"):
                 installer.download("program", base / "downloaded", "unused", base)
 
     def test_checksum_must_match_manifest_and_the_named_asset(self):
@@ -156,10 +156,10 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             asset = base / "program"
             asset.write_bytes(b"payload")
             producer.checksum(asset)
-            with self.assertRaisesRegex(ValueError, "不一致"):
+            with self.assertRaisesRegex(ValueError, "do not match"):
                 installer.download("program", base / "downloaded", "unused", base, "0" * 64)
             (base / "program.sha256").write_text("a" * 64 + "  another-program\n")
-            with self.assertRaisesRegex(ValueError, "无效校验"):
+            with self.assertRaisesRegex(ValueError, "Invalid checksum"):
                 installer.download("program", base / "downloaded", "unused", base)
 
     def test_download_refuses_an_oversized_payload_before_copying_it(self):
@@ -168,7 +168,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             asset = base / "program"
             asset.write_bytes(b"unexpectedly large")
             digest = producer.checksum(asset)
-            with self.assertRaisesRegex(ValueError, "大小上限"):
+            with self.assertRaisesRegex(ValueError, "size limit"):
                 installer.download("program", base / "downloaded", "unused", base, digest, 3)
             self.assertFalse((base / "downloaded").exists())
 
@@ -183,7 +183,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
 
     def test_malformed_credentials_are_rejected_without_echoing_the_secret(self):
         with patch.dict(os.environ, GITHUB_TOKEN="private-secret\ninvalid"):
-            with self.assertRaisesRegex(ValueError, "GITHUB_TOKEN 格式") as error:
+            with self.assertRaisesRegex(ValueError, "GITHUB_TOKEN format") as error:
                 installer.request("https://api.github.com/repos/org/repo/releases/latest")
             self.assertNotIn("private-secret", str(error.exception))
 
@@ -193,7 +193,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             prefix.mkdir()
             saved = prefix / "my-song.wav"
             saved.write_bytes(b"user audio")
-            with patch.object(installer, "download") as download, self.assertRaisesRegex(ValueError, "覆盖"):
+            with patch.object(installer, "download") as download, self.assertRaisesRegex(ValueError, "overwritten"):
                 installer.install(prefix, "org/repo", Path("uv"), None)
             download.assert_not_called()
             self.assertEqual(saved.read_bytes(), b"user audio")

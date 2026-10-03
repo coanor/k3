@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""解压到含空格和中文的新路径，验证包内程序、Python 与真实短音频分离。"""
+"""Relocate a package and verify native programs, Python and audio separation."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def check(archive: Path, cli_only: bool) -> None:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     expected = archive.with_name(archive.name + ".sha256").read_text().split()[0]
     if digest != expected:
-        raise RuntimeError("发行包 SHA-256 校验失败")
+        raise RuntimeError("Package SHA-256 verification failed")
     with tempfile.TemporaryDirectory(prefix="k3-dist-check-") as directory:
         work = Path(directory)
         unpacked = work / "unpacked"
@@ -45,7 +45,7 @@ def check(archive: Path, cli_only: bool) -> None:
                 stream.extractall(unpacked, filter="data")
         roots = list(unpacked.iterdir())
         if len(roots) != 1 or not roots[0].is_dir():
-            raise RuntimeError("发行包必须包含唯一顶级目录")
+            raise RuntimeError("Package must contain exactly one top-level directory")
         root = work / "移动后的 K3 包"
         shutil.move(str(roots[0]), root)
         check_root(root, work, cli_only)
@@ -57,7 +57,7 @@ def check_root(root: Path, work: Path, cli_only: bool, command_dir: Path | None 
     binary = commands / f"k3{extension}"
     run(binary, "--help", stdout=subprocess.DEVNULL, cwd=work)
     if cli_only:
-        print("CLI 包启动检查通过")
+        print("CLI package startup check passed")
         return
     python = root / ("runtime/python/python.exe" if os.name == "nt" else "runtime/python/bin/python3")
     # 将用户 Python 环境污染也纳入测试；原生 launcher 必须忽略它。
@@ -67,10 +67,10 @@ def check_root(root: Path, work: Path, cli_only: bool, command_dir: Path | None 
         response = run(commands / f"k3-separator{extension}", input='{"id":"check","method":"health"}\n',
                        text=True, encoding="utf-8", capture_output=True, env=environment, cwd=work)
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"worker 健康检查失败：{error.stderr}") from error
+        raise RuntimeError(f"Worker health check failed: {error.stderr}") from error
     health = json.loads(response.stdout)
     if not health["ok"] or not health["result"]["runtime"]["audio_separator_installed"]:
-        raise RuntimeError(f"移动后 worker 健康检查失败：{health}")
+        raise RuntimeError(f"Worker health check failed after relocation: {health}")
     run(python, "-s", SCRIPTS / "check-runtime.py", root, cwd=work)
     song = work / "测试音频.wav"
     with wave.open(str(song), "wb") as stream:
@@ -105,7 +105,7 @@ for name in ('vocals', 'accompaniment', 'backing_vocals'):
             env=batch_environment, cwd=work)
         run(python, "-I", "-c", audio_check,
             work / "batch-projects" / song.stem, cwd=work)
-    print("程序检查通过：模型离线载入、CLI 默认分离与和声输出")
+    print("Program checks passed: offline model loading, default CLI separation and backing vocals output")
 
 
 if __name__ == "__main__":
@@ -113,18 +113,18 @@ if __name__ == "__main__":
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, nargs="?")
-    parser.add_argument("--installed-root", type=Path, help="检查已经安装的目录，不移动或改写程序文件")
-    parser.add_argument("--command-dir", type=Path, help="检查系统命令链接所在目录")
+    parser.add_argument("--installed-root", type=Path, help="Check an existing installation without relocating or rewriting program files")
+    parser.add_argument("--command-dir", type=Path, help="Check the directory containing system command links")
     parser.add_argument("--cli-only", action="store_true")
     args = parser.parse_args()
     if args.installed_root:
         if args.archive:
-            parser.error("archive 与 --installed-root 不能同时使用")
+            parser.error("archive and --installed-root cannot be combined")
         with tempfile.TemporaryDirectory(prefix="k3-installed-check-") as directory:
             check_root(args.installed_root.resolve(), Path(directory), args.cli_only, args.command_dir)
     elif args.archive:
         if args.command_dir:
-            parser.error("--command-dir 需要 --installed-root")
+            parser.error("--command-dir requires --installed-root")
         check(args.archive, args.cli_only)
     else:
-        parser.error("请提供 archive 或 --installed-root")
+        parser.error("Provide archive or --installed-root")

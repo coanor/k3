@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""使用包内 Python 校验模型；禁止网络，防止遗漏元数据后偷偷补下载。"""
+"""Verify models using bundled Python with network access disabled."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 def deny_network(event, _args) -> None:
     if event in {"socket.connect", "socket.getaddrinfo"}:
-        raise RuntimeError("离线检查禁止访问网络")
+        raise RuntimeError("Network access is disabled during offline checks")
 
 
 def check_artifacts(root: Path, artifacts: dict[str, str]) -> None:
@@ -25,7 +25,7 @@ def check_artifacts(root: Path, artifacts: dict[str, str]) -> None:
         with path.open("rb") as stream:
             actual = hashlib.file_digest(stream, "sha256").hexdigest()
         if actual != expected:
-            raise RuntimeError(f"文件摘要不匹配：{name}")
+            raise RuntimeError(f"File checksum mismatch: {name}")
 
 
 def check(root: Path) -> None:
@@ -41,13 +41,13 @@ def check(root: Path) -> None:
     runtime = AudioSeparatorRuntime(root / "models")
     status = runtime.status()
     if not status["audio_separator_installed"] or not status["torch_installed"] or not status["ffmpeg"]:
-        raise RuntimeError(f"runtime 健康检查失败：{status}")
+        raise RuntimeError(f"Runtime health check failed: {status}")
     for entry in manifest["models"]:
         model = registry.select(entry["profiles"][0], entry["id"])
         runtime._prepare_primary_artifact(model)
         separator = Separator(model_file_dir=str(root / "models"), output_format="WAV")
         separator.load_model(model_filename=model.filename)
-        print(f"离线模型载入通过：{model.id}", flush=True)
+        print(f"Offline model loading passed: {model.id}", flush=True)
         del separator
         gc.collect()
 

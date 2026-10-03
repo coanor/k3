@@ -9,53 +9,53 @@ param(
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
-if ($Repo -notmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$') { throw '仓库必须是 owner/repo' }
-if ($Version -ne 'latest' -and $Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw '版本必须是 latest 或 v数字.数字.数字' }
+if ($Repo -notmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$') { throw 'Repository must use owner/repo format' }
+if ($Version -ne 'latest' -and $Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Version must be latest or vX.Y.Z' }
 $architecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine')
 if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITEW6432; if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE } }
 switch ($architecture) {
     'AMD64' { $machine = 'x86_64'; $digest = 'a86c9dc7bad9b03f388583b7187c05fe9951c2e0d392217e8fd43d97787f6ec2' }
     'ARM64' { $machine = 'aarch64'; $digest = '1efb2654b06e7063d4ac1fc9d49a9bda9a6704d82f035b589a2751a592f14151' }
-    default { throw '仅支持 Windows x64 和 ARM64' }
+    default { throw 'Only Windows x64 and ARM64 are supported' }
 }
 $os = [Version](Get-CimInstance Win32_OperatingSystem).Version
-if ($os.Major -lt 10 -or ($machine -eq 'aarch64' -and $os.Build -lt 22000)) { throw '需要 Windows 10/11；ARM64 需要 Windows 11' }
+if ($os.Major -lt 10 -or ($machine -eq 'aarch64' -and $os.Build -lt 22000)) { throw 'Windows 10/11 is required; ARM64 requires Windows 11' }
 $required = 8GB
-Write-Host "目标平台：Windows $machine"
+Write-Host "Target platform: Windows $machine"
 if ($machine -eq 'aarch64') {
-    Write-Host 'Windows ARM64 当前仅安装原生 CLI/TUI，没有 GUI、Python 分离环境和模型。'
+    Write-Host 'Windows ARM64 currently installs native CLI/TUI only, without a GUI, Python separation runtime or models.'
     $required = 512MB
 }
-if ($Yes -and -not $InstallDir) { throw '-Yes 必须同时指定 -InstallDir' }
+if ($Yes -and -not $InstallDir) { throw '-Yes requires -InstallDir' }
 if (-not $InstallDir) {
     $drives = @(Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Free -and $_.Free -gt 0 })
-    if ($drives.Count -eq 0) { throw '没有可用磁盘，请用 -InstallDir 指定本地安装目录' }
-    Write-Host '请选择磁盘：程序、模型、下载缓存和临时文件都将使用该磁盘。'
+    if ($drives.Count -eq 0) { throw 'No disks are available; use -InstallDir to select a local installation directory' }
+    Write-Host 'Select a disk for programs, models, download cache and temporary files.'
     for ($index = 0; $index -lt $drives.Count; $index++) {
-        Write-Host ("[{0}] {1}  剩余 {2:N1} GiB" -f ($index + 1), $drives[$index].Root, ($drives[$index].Free / 1GB))
+        Write-Host ("[{0}] {1}  Free: {2:N1} GiB" -f ($index + 1), $drives[$index].Root, ($drives[$index].Free / 1GB))
     }
-    $choice = Read-Host '输入磁盘编号'
+    $choice = Read-Host 'Enter disk number'
     $number = 0
-    if (-not [int]::TryParse($choice, [ref]$number) -or $number -lt 1 -or $number -gt $drives.Count) { throw '无效磁盘编号' }
+    if (-not [int]::TryParse($choice, [ref]$number) -or $number -lt 1 -or $number -gt $drives.Count) { throw 'Invalid disk number' }
     $defaultPath = Join-Path $drives[$number - 1].Root 'K3'
-    $InstallDir = Read-Host "请输入安装目录 [$defaultPath]"
+    $InstallDir = Read-Host "Enter installation directory [$defaultPath]"
     if (-not $InstallDir) { $InstallDir = $defaultPath }
 }
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
-if ($InstallDir.StartsWith('\\')) { throw '请安装到本机磁盘，不支持网络共享目录' }
+if ($InstallDir.StartsWith('\\')) { throw 'Install on a local disk; network shares are unsupported' }
 if (Test-Path -LiteralPath $InstallDir) {
     $existing = Get-Item -LiteralPath $InstallDir -Force
-    if (-not $existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @(Get-ChildItem -LiteralPath $InstallDir -Force).Count -gt 0) { throw '安装目录必须不存在或为空，不能覆盖现有文件' }
+    if (-not $existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @(Get-ChildItem -LiteralPath $InstallDir -Force).Count -gt 0) { throw 'Installation directory must be absent or empty; existing files cannot be overwritten' }
 }
 $driveInfo = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($InstallDir))
-if ($driveInfo.DriveType -eq [IO.DriveType]::Network) { throw '请安装到本机磁盘，不支持映射网络磁盘' }
-if (-not $driveInfo.IsReady -or $driveInfo.AvailableFreeSpace -lt $required) { throw '所选磁盘空间不足，请换一个目录或磁盘' }
-Write-Host "安装目录：$InstallDir"
-Write-Host ("磁盘剩余：{0:N1} GiB；安装峰值预留：{1:N1} GiB" -f ($driveInfo.AvailableFreeSpace / 1GB), ($required / 1GB))
-Write-Host '完整安装下载量约 1–2 GiB，安装后约 2–4 GiB；精简 CLI 安装明显更小。实际取决于平台和依赖。'
+if ($driveInfo.DriveType -eq [IO.DriveType]::Network) { throw 'Install on a local disk; mapped network drives are unsupported' }
+if (-not $driveInfo.IsReady -or $driveInfo.AvailableFreeSpace -lt $required) { throw 'Insufficient space on the selected disk; choose another directory or disk' }
+Write-Host "Installation directory: $InstallDir"
+Write-Host ("Free disk space: {0:N1} GiB; reserved space for peak installation usage: {1:N1} GiB" -f ($driveInfo.AvailableFreeSpace / 1GB), ($required / 1GB))
+Write-Host 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. CLI-only installations are smaller. Sizes vary by platform and dependencies.'
 if (-not $Yes) {
-    $answer = Read-Host '确认开始下载和安装？[y/N]'
-    if ($answer -notin @('y', 'Y', 'yes', 'YES')) { Write-Host '已取消，未下载任何组件。'; return }
+    $answer = Read-Host 'Start downloading and installing? [y/N]'
+    if ($answer -notin @('y', 'Y', 'yes', 'YES')) { Write-Host 'Cancelled. No components were downloaded.'; return }
 }
 $parent = Split-Path -Parent $InstallDir
 [void][IO.Directory]::CreateDirectory($parent)
@@ -77,16 +77,16 @@ try {
     [void][IO.Directory]::CreateDirectory($env:TMPDIR)
     [Net.ServicePointManager]::SecurityProtocol = $previousTls -bor [Net.SecurityProtocolType]::Tls12
     $archive = Join-Path $work 'uv.zip'
-    Write-Host '下载已固定版本并校验的安装工具 uv 0.12.13'
+    Write-Host 'Downloading pinned installer tool uv 0.12.13 with checksum verification'
     Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-$machine-pc-windows-msvc.zip" -OutFile $archive -TimeoutSec 300
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $digest) { throw 'uv SHA-256 不匹配' }
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $digest) { throw 'uv SHA-256 mismatch' }
     Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $work 'uv')
     $uv = Join-Path $work 'uv\uv.exe'
     # uv 在 Windows ARM64 上默认选用仿真 x64 Python；固定原生架构以保持平台识别一致。
     & $uv --no-config python install "cpython-3.13.15-windows-$machine-none" --install-dir $env:UV_PYTHON_INSTALL_DIR --no-bin --no-registry
-    if ($LASTEXITCODE -ne 0) { throw '独立 Python 下载失败' }
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone Python download failed' }
     $installations = @(Get-ChildItem -LiteralPath $env:UV_PYTHON_INSTALL_DIR -Directory -Filter 'cpython-3.13.15-*')
-    if ($installations.Count -ne 1) { throw '无法定位独立 Python' }
+    if ($installations.Count -ne 1) { throw 'Could not locate standalone Python' }
     $python = Join-Path $installations[0].FullName 'python.exe'
     # PowerShell 5.1 调用原生程序时会丢弃空字符串参数，使用显式哨兵。
     $sourceArgument = '-'
@@ -100,13 +100,13 @@ if source == '-': source = ''
 work = Path(directory)
 class Redirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, url):
-        if not url.startswith('https://'): raise RuntimeError('下载跳转必须使用 HTTPS')
+        if not url.startswith('https://'): raise RuntimeError('Download redirects must use HTTPS')
         return super().redirect_request(request, response, code, message, headers, url)
 def request(url, accept='application/vnd.github+json'):
     req = urllib.request.Request(url, headers={'Accept': accept, 'User-Agent': 'K3-installer'})
     token = os.environ.get('GITHUB_TOKEN')
     if token:
-        if len(token) > 1024 or not re.fullmatch('[A-Za-z0-9_.-]+', token): raise ValueError('GITHUB_TOKEN 格式不正确')
+        if len(token) > 1024 or not re.fullmatch('[A-Za-z0-9_.-]+', token): raise ValueError('Invalid GITHUB_TOKEN format')
         req.add_unredirected_header('Authorization', 'Bearer ' + token)
     return urllib.request.build_opener(Redirect()).open(req, timeout=60)
 if not source:
@@ -118,29 +118,29 @@ for name in ('k3-install-support.zip', 'k3-install-support.zip.sha256'):
     if source: shutil.copyfile(Path(source) / 'support' / name, target)
     else:
         url = assets[name]['url']
-        if not url.startswith(f'https://api.github.com/repos/{repo}/releases/assets/'): raise RuntimeError('无效发行文件地址')
+        if not url.startswith(f'https://api.github.com/repos/{repo}/releases/assets/'): raise RuntimeError('Invalid release asset URL')
         with request(url, 'application/octet-stream') as response, target.open('wb') as output: shutil.copyfileobj(response, output)
 archive = work / 'k3-install-support.zip'
 fields = archive.with_name(archive.name + '.sha256').read_text(encoding='ascii').split()
 with archive.open('rb') as stream: actual = hashlib.file_digest(stream, 'sha256').hexdigest()
-if len(fields) != 2 or fields[1] != archive.name or not re.fullmatch('[0-9a-f]{64}', fields[0]) or fields[0] != actual: raise RuntimeError('安装支持文件 SHA-256 不匹配')
+if len(fields) != 2 or fields[1] != archive.name or not re.fullmatch('[0-9a-f]{64}', fields[0]) or fields[0] != actual: raise RuntimeError('Installation support archive SHA-256 mismatch')
 with zipfile.ZipFile(archive) as z:
     for entry in z.infolist():
         p = PurePosixPath(entry.filename)
-        if p.is_absolute() or '..' in p.parts or '\\' in entry.filename or ':' in entry.filename: raise RuntimeError('安装支持文件含不安全路径')
-    if sum(entry.file_size for entry in z.infolist()) > 20 * 1024**2: raise RuntimeError('安装支持文件异常过大')
+        if p.is_absolute() or '..' in p.parts or '\\' in entry.filename or ':' in entry.filename: raise RuntimeError('Installation support archive contains an unsafe path')
+    if sum(entry.file_size for entry in z.infolist()) > 20 * 1024**2: raise RuntimeError('Installation support archive exceeds the size limit')
     z.extractall(work / 'support')
 installed = json.loads((work / 'support/online-version.json').read_text())['version']
-if version != 'latest' and version != 'v' + installed: raise RuntimeError('请求版本与安装支持文件不一致')
-if not source and release['tag_name'] != 'v' + installed: raise RuntimeError('发行 tag 与安装支持文件版本不一致')
+if version != 'latest' and version != 'v' + installed: raise RuntimeError('Requested version does not match installation support files')
+if not source and release['tag_name'] != 'v' + installed: raise RuntimeError('Release tag does not match installation support file version')
 '@
     & $python -I -c $bootstrap $Repo $Version $work $sourceArgument
-    if ($LASTEXITCODE -ne 0) { throw '安装支持文件下载或校验失败' }
+    if ($LASTEXITCODE -ne 0) { throw 'Installation support file download or verification failed' }
     $arguments = @('-I', (Join-Path $work 'support\scripts\install-online.py'), '--prefix', $InstallDir, '--repo', $Repo, '--uv', $uv)
     if ($SourceDir) { $arguments += @('--assets-dir', (Join-Path $SourceDir 'platform')) }
     if ($ModelCache) { $arguments += @('--model-cache', $ModelCache) }
     & $python @arguments
-    if ($LASTEXITCODE -ne 0) { throw 'K3 安装或启动检查失败' }
+    if ($LASTEXITCODE -ne 0) { throw 'K3 installation or startup check failed' }
 } finally {
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
     [Net.ServicePointManager]::SecurityProtocol = $previousTls

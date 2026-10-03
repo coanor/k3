@@ -13,7 +13,7 @@
     }
     if ($bytes.Length -gt 262144 -or $fields.Count -ne 2 -or $fields[1] -cne 'install.ps1' -or
         $fields[0] -cnotmatch '^[0-9a-f]{64}$' -or $actual -cne $fields[0]) {
-        throw ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@K3_CHECKSUM_ERROR@')))
+        throw 'Installer entry checksum verification failed'
     }
     $reader = [IO.StreamReader]::new([IO.MemoryStream]::new($bytes), [Text.Encoding]::UTF8)
     try {

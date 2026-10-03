@@ -15,22 +15,22 @@ RUNTIME_DIR ?= $(DIST_DIR)/runtime-native
 
 help:
 	@printf '%s\n' \
-		'K3 常用目标：' \
-		'  make build                  构建当前平台 release' \
-		'  make test                   运行 workspace 测试' \
-		'  make lint                   运行严格 Clippy' \
-		'  make check                  依次运行 test 和 lint' \
-		'  make dist                   构建当前平台在线安装组件（不下载模型和 Python 依赖）' \
-		'  make dist-offline           可选：构建当前平台完整离线包' \
-		'  make installer              可选：构建当前平台离线系统安装包' \
-		'  make dist-linux             构建本机 Linux x86_64/ARM64 包' \
-		'  make dist-windows           在 Windows 原生构建离线包' \
-		'  make dist-windows-aarch64-cli 原生构建 Windows ARM64 精简包' \
-		'  make dist-windows-cli       使用 cargo-xwin 构建 Windows 纯 CLI 包' \
-		'  make dist-macos             构建本机架构 macOS 包（Intel 仅 CLI）' \
-		'  make dist-all REF=main      通过 gh 触发全部平台 GitHub Actions' \
+		'Common K3 targets:' \
+		'  make build                  Build a release for the current platform' \
+		'  make test                   Run workspace tests' \
+		'  make lint                   Run strict Clippy checks' \
+		'  make check                  Run tests, then lint' \
+		'  make dist                   Build online installation components for the current platform (no models or Python dependencies)' \
+		'  make dist-offline           Optional: build a full offline package for the current platform' \
+		'  make installer              Optional: build an offline system installer for the current platform' \
+		'  make dist-linux             Build a native Linux x86_64/ARM64 package' \
+		'  make dist-windows           Build an offline package natively on Windows' \
+		'  make dist-windows-aarch64-cli Build a native Windows ARM64 CLI-only package' \
+		'  make dist-windows-cli       Build a Windows CLI-only package using cargo-xwin' \
+		'  make dist-macos             Build a native macOS package (Intel CLI only)' \
+		'  make dist-all REF=main      Trigger GitHub Actions builds for all platforms using gh' \
 		'' \
-		'可选变量：DIST_DIR、CARGO、PYTHON、MODEL_CACHE、RUNTIME_DIR、LLVM_BIN、REF'
+		'Optional variables: DIST_DIR, CARGO, PYTHON, MODEL_CACHE, RUNTIME_DIR, LLVM_BIN, REF'
 
 build:
 	$(CARGO) build --release --locked --bins
@@ -48,7 +48,7 @@ dist: dist-online
 dist-online:
 	@system="$$(uname -s)"; machine="$$(uname -m)"; \
 	case "$$machine" in arm64) machine=aarch64 ;; x86_64|aarch64) ;; \
-		*) echo '仅支持 x86_64 或 ARM64' >&2; exit 1 ;; esac; \
+		*) echo 'Only x86_64 or ARM64 is supported' >&2; exit 1 ;; esac; \
 	case "$$system" in \
 		Linux) platform=linux; target="$$machine-unknown-linux-gnu" ;; \
 		Darwin) platform=macos; \
@@ -56,7 +56,7 @@ dist-online:
 			target="$$machine-apple-darwin" ;; \
 		MINGW*|MSYS*|CYGWIN*) platform=windows; target="$$machine-pc-windows-msvc"; \
 			export RUSTFLAGS="$(RUSTFLAGS) -C target-feature=+crt-static" ;; \
-		*) echo '不支持的本机平台' >&2; exit 1 ;; esac; \
+		*) echo 'Unsupported native platform' >&2; exit 1 ;; esac; \
 	packages=(--package k3); \
 	if [[ "$$platform" == linux || "$$platform-$$machine" == windows-x86_64 ]]; then packages+=(--package k3-gui); fi; \
 	rustup target add "$$target"; \
@@ -75,19 +75,19 @@ dist-host:
 			case "$$(uname -m)" in \
 				x86_64) $(MAKE) dist-macos-x86_64 ;; \
 				arm64) $(MAKE) dist-macos-aarch64 ;; \
-				*) printf '不支持的 macOS 架构：%s\n' "$$(uname -m)" >&2; exit 1 ;; \
+				*) printf 'Unsupported macOS architecture: %s\n' "$$(uname -m)" >&2; exit 1 ;; \
 			esac ;; \
 		MINGW*|MSYS*|CYGWIN*) case "$$(uname -m)" in \
 			aarch64|arm64) $(MAKE) dist-windows-aarch64-cli ;; \
 			*) $(MAKE) dist-windows ;; esac ;; \
-		*) printf '不支持的本地平台：%s\n' "$$(uname -s)" >&2; exit 1 ;; \
+		*) printf 'Unsupported local platform: %s\n' "$$(uname -s)" >&2; exit 1 ;; \
 	esac
 
 dist-linux:
-	@test "$$(uname -s)" = Linux || { echo 'dist-linux 必须在 Linux 上运行' >&2; exit 1; }
+	@test "$$(uname -s)" = Linux || { echo 'dist-linux must run on Linux' >&2; exit 1; }
 	@case "$$(uname -m)" in \
 		x86_64|aarch64) ;; \
-		*) echo '完整 Linux 包需要 x86_64 或 aarch64 主机' >&2; exit 1 ;; esac
+		*) echo 'Full Linux packages require an x86_64 or aarch64 host' >&2; exit 1 ;; esac
 	$(MAKE) dist-runtime
 	@architecture="$$(uname -m)"; target="$$architecture-unknown-linux-gnu"; \
 	$(CARGO) build --release --locked --bins --package k3 --package k3-gui --target "$$target"; \
@@ -102,14 +102,14 @@ dist-runtime:
 		if [[ -n "$(MODEL_CACHE)" ]]; then args+=(--model-cache "$(MODEL_CACHE)"); fi; \
 		$(PYTHON) scripts/build-runtime.py "$${args[@]}"; \
 	else \
-		printf '复用离线 runtime：%s\n' "$(RUNTIME_DIR)"; \
+		printf 'Reusing offline runtime: %s\n' "$(RUNTIME_DIR)"; \
 		$(PYTHON) scripts/refresh-worker.py "$(RUNTIME_DIR)/python"; \
 	fi
 
 dist-windows:
 	@case "$$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; \
-		*) echo '完整 Windows 包需要 Windows 原生环境；可用 make dist-all 或 dist-windows-cli' >&2; exit 1 ;; esac
-	@case "$$(uname -m)" in aarch64|arm64) echo 'Windows ARM64 请使用 dist-windows-aarch64-cli' >&2; exit 1 ;; esac
+		*) echo 'Full Windows packages require native Windows; use make dist-all or dist-windows-cli' >&2; exit 1 ;; esac
+	@case "$$(uname -m)" in aarch64|arm64) echo 'On Windows ARM64, use dist-windows-aarch64-cli' >&2; exit 1 ;; esac
 	$(MAKE) dist-runtime
 	RUSTFLAGS="$(RUSTFLAGS) -C target-feature=+crt-static" \
 		$(CARGO) build --release --locked --bins --package k3 --package k3-gui --target x86_64-pc-windows-msvc
@@ -120,9 +120,9 @@ dist-windows:
 
 dist-windows-aarch64-cli:
 	@case "$$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; \
-		*) echo 'Windows ARM64 包需要 Windows ARM64 原生环境' >&2; exit 1 ;; esac
+		*) echo 'Windows ARM64 packages require native Windows ARM64' >&2; exit 1 ;; esac
 	@case "$$(uname -m)" in aarch64|arm64) ;; \
-		*) echo 'Windows ARM64 包需要 ARM64 主机' >&2; exit 1 ;; esac
+		*) echo 'Windows ARM64 packages require an ARM64 host' >&2; exit 1 ;; esac
 	rustup target add aarch64-pc-windows-msvc
 	RUSTFLAGS="$(RUSTFLAGS) -C target-feature=+crt-static" \
 		$(CARGO) build --release --locked --bin k3 --package k3 --target aarch64-pc-windows-msvc
@@ -132,7 +132,7 @@ dist-windows-aarch64-cli:
 
 dist-windows-cli:
 	@command -v cargo-xwin >/dev/null 2>&1 || { \
-		echo '缺少 cargo-xwin；请先运行 cargo install cargo-xwin' >&2; exit 1; \
+		echo 'cargo-xwin is missing; run cargo install cargo-xwin first' >&2; exit 1; \
 	}
 	@if [[ -n "$(LLVM_BIN)" ]]; then export PATH="$(LLVM_BIN):$$PATH"; fi; \
 	RUSTFLAGS='-C target-feature=+crt-static' \
@@ -141,11 +141,11 @@ dist-windows-cli:
 		windows k3-windows-x86_64-cli target/x86_64-pc-windows-msvc/release/k3.exe --cli-only
 
 dist-macos:
-	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
+	@test "$$(uname -s)" = Darwin || { echo 'macOS packages must be built on macOS' >&2; exit 1; }
 	$(MAKE) dist-host
 
 dist-macos-x86_64:
-	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
+	@test "$$(uname -s)" = Darwin || { echo 'macOS packages must be built on macOS' >&2; exit 1; }
 	rustup target add x86_64-apple-darwin
 	$(CARGO) build --release --locked --bins --package k3 --target x86_64-apple-darwin
 	DIST_DIR="$(DIST_DIR)" $(PYTHON) scripts/package-dist.py \
@@ -153,8 +153,8 @@ dist-macos-x86_64:
 	$(PYTHON) scripts/check-dist.py "$(DIST_DIR)/k3-macos-x86_64-cli.tar.gz" --cli-only
 
 dist-macos-aarch64:
-	@test "$$(uname -s)" = Darwin || { echo 'macOS 包必须在 macOS 上构建' >&2; exit 1; }
-	@test "$$(uname -m)" = arm64 || { echo '完整 Apple Silicon 包需要 arm64 主机' >&2; exit 1; }
+	@test "$$(uname -s)" = Darwin || { echo 'macOS packages must be built on macOS' >&2; exit 1; }
+	@test "$$(uname -m)" = arm64 || { echo 'Full Apple Silicon packages require an arm64 host' >&2; exit 1; }
 	$(MAKE) dist-runtime
 	rustup target add aarch64-apple-darwin
 	$(CARGO) build --release --locked --bins --package k3 --target aarch64-apple-darwin
@@ -163,10 +163,10 @@ dist-macos-aarch64:
 	$(PYTHON) scripts/check-dist.py "$(DIST_DIR)/k3-macos-aarch64.tar.gz"
 
 dist-all:
-	@command -v gh >/dev/null 2>&1 || { echo '缺少 GitHub CLI（gh）' >&2; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { echo 'GitHub CLI (gh) is missing' >&2; exit 1; }
 	@gh auth status >/dev/null
 	gh workflow run dist.yml --ref "$(REF)"
-	@printf '已触发 Build distributions：ref=%s\n' "$(REF)"
+	@printf 'Build distributions triggered: ref=%s\n' "$(REF)"
 
 installer: dist-host
 	@case "$$(uname -s)" in \

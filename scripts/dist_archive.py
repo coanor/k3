@@ -22,9 +22,9 @@ def write_archive(root: Path, archive: Path) -> None:
             with tarfile.open(temporary, "w:gz", compresslevel=6) as stream:
                 stream.add(root, arcname=root.name)
         else:
-            raise ValueError(f"不支持的归档格式：{archive.name}")
+            raise ValueError(f"Unsupported archive format: {archive.name}")
         if temporary.stat().st_size >= 2 * 1024**3:
-            raise ValueError("发行包超过 GitHub Release 的 2 GiB 限制；请缩减额外模型")
+            raise ValueError("Package exceeds the GitHub Release 2 GiB limit; reduce additional models")
         with temporary.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         checksum = temporary.with_name(temporary.name + ".sha256")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在用户选定的磁盘上安装原生程序、独立 Python 和默认模型。"""
+"""Install native programs, standalone Python and default models on the selected disk."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, request, response, code, message, headers, url):
         if not url.startswith("https://"):
-            raise RuntimeError("下载跳转必须使用 HTTPS")
+            raise RuntimeError("Download redirects must use HTTPS")
         redirected = super().redirect_request(request, response, code, message, headers, url)
         if redirected is not None:
             redirected.remove_header("Authorization")
@@ -45,7 +45,7 @@ def request(url: str, accept: str = "application/vnd.github+json"):
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         if len(token) > 1024 or not re.fullmatch(r"[A-Za-z0-9_.-]+", token):
-            raise ValueError("GITHUB_TOKEN 格式不正确")
+            raise ValueError("Invalid GITHUB_TOKEN format")
         req.add_unredirected_header("Authorization", "Bearer " + token)
     return urllib.request.build_opener(HTTPSRedirect()).open(req, timeout=60)
 
@@ -55,35 +55,35 @@ def release_assets(endpoint: str) -> dict:
     with request(endpoint) as response:
         body = response.read(2 * 1024**2 + 1)
     if len(body) > 2 * 1024**2:
-        raise ValueError("发行元数据异常过大")
+        raise ValueError("Release metadata exceeds the size limit")
     release = json.loads(body)
     if release.get("tag_name") != endpoint.rsplit("/", 1)[-1]:
-        raise ValueError("发行版本与请求的 tag 不一致")
+        raise ValueError("Release version does not match the requested tag")
     return {entry["name"]: entry for entry in release["assets"]}
 
 
 def fetch(name: str, destination: Path, base_url: str, assets: Path | None,
           maximum: int) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in {".", ".."}:
-        raise ValueError("无效发行文件名")
+        raise ValueError("Invalid release asset name")
     if assets:
         if (assets / name).stat().st_size > maximum:
-            raise ValueError(f"发行文件超过大小上限：{name}")
+            raise ValueError(f"Release asset exceeds the size limit: {name}")
         shutil.copyfile(assets / name, destination)
     else:
         entry = release_assets(base_url).get(name)
         if not entry:
-            raise ValueError(f"发行版缺少文件：{name}")
+            raise ValueError(f"Release is missing asset: {name}")
         url = entry["url"]
         if not url.startswith(base_url.split("/releases/")[0] + "/releases/assets/"):
-            raise ValueError("无效发行文件地址")
+            raise ValueError("Invalid release asset URL")
         with request(url, "application/octet-stream") as response:
             with destination.open("wb") as output:
                 written = 0
                 while chunk := response.read(min(1024**2, maximum - written + 1)):
                     written += len(chunk)
                     if written > maximum:
-                        raise ValueError(f"发行文件超过大小上限：{name}")
+                        raise ValueError(f"Release asset exceeds the size limit: {name}")
                     output.write(chunk)
 
 
@@ -92,14 +92,14 @@ def download(name: str, destination: Path, base_url: str, assets: Path | None,
     fetch(name + ".sha256", destination.with_name(destination.name + ".sha256"), base_url, assets, 4096)
     fields = destination.with_name(destination.name + ".sha256").read_text(encoding="ascii").split()
     if len(fields) != 2 or fields[1] != name or not re.fullmatch(r"[0-9a-f]{64}", fields[0]):
-        raise ValueError(f"无效校验文件：{name}")
+        raise ValueError(f"Invalid checksum file: {name}")
     if expected is not None and fields[0] != expected:
-        raise ValueError(f"清单与校验文件不一致：{name}")
+        raise ValueError(f"Manifest and checksum file do not match: {name}")
     fetch(name, destination, base_url, assets, size if size is not None else 2 * 1024**2)
     with destination.open("rb") as stream:
         actual = hashlib.file_digest(stream, "sha256").hexdigest()
     if actual != fields[0] or (size is not None and destination.stat().st_size != size):
-        raise ValueError(f"发行文件完整性检查失败：{name}")
+        raise ValueError(f"Release asset integrity check failed: {name}")
     destination.with_name(destination.name + ".sha256").unlink()
 
 
@@ -108,7 +108,7 @@ def validate_manifest(manifest: dict, version: str, system: str, machine: str) -
     if (manifest.get("format"), manifest.get("version"), manifest.get("platform"),
             manifest.get("machine"), manifest.get("gui"), manifest.get("runtime")) != (
             1, version, system, machine, gui, runtime):
-        raise ValueError("发行清单的版本、平台、架构或功能不匹配")
+        raise ValueError("Release manifest version, platform, architecture or capabilities do not match")
     extension = ".exe" if system == "windows" else ""
     required = {"k3" + extension}
     if gui:
@@ -117,13 +117,13 @@ def validate_manifest(manifest: dict, version: str, system: str, machine: str) -
         required.add("k3-separator" + extension)
     files = manifest.get("files", [])
     if len(files) != len(required) or {entry.get("path") for entry in files} != required:
-        raise ValueError("发行清单缺少所需程序或包含意外路径")
+        raise ValueError("Release manifest is missing required programs or contains unexpected paths")
     for entry in files:
         command = entry["path"].removesuffix(extension) if extension else entry["path"]
         if (entry.get("asset") != f"{command}-{system}-{machine}{extension}"
                 or not isinstance(entry.get("size"), int) or not 0 < entry["size"] < 512 * 1024**2
                 or not re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", ""))):
-            raise ValueError("无效程序文件信息")
+            raise ValueError("Invalid program file metadata")
 
 
 def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
@@ -137,7 +137,7 @@ def check(root: Path, version: str, runtime: bool) -> None:
                    if name not in {"GITHUB_TOKEN", "GH_TOKEN", "PYTHONHOME", "PYTHONPATH"}}
     actual = run(binary, "--version", text=True, capture_output=True, env=environment).stdout.strip()
     if actual != "k3 " + version:
-        raise RuntimeError("下载程序的版本与发行清单不一致")
+        raise RuntimeError("Downloaded program version does not match the release manifest")
     run(binary, "--help", stdout=subprocess.DEVNULL, env=environment)
     if not runtime:
         return
@@ -147,7 +147,7 @@ def check(root: Path, version: str, runtime: bool) -> None:
     status = health.get("result", {}).get("runtime", {})
     if not health.get("ok") or not all(status.get(key) for key in
                                        ("audio_separator_installed", "torch_installed", "ffmpeg")):
-        raise RuntimeError("分离环境健康检查失败")
+        raise RuntimeError("Separation runtime health check failed")
     python = root / ("runtime/python/python.exe" if os.name == "nt" else "runtime/python/bin/python3")
     run(python, "-I", SUPPORT / "scripts/check-runtime.py", root, env=environment)
 
@@ -155,9 +155,9 @@ def check(root: Path, version: str, runtime: bool) -> None:
 def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             cache: Path | None = None) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
-        raise ValueError("发行仓库必须是 owner/repo")
+        raise ValueError("Release repository must use owner/repo format")
     if prefix.is_symlink() or (prefix.exists() and (not prefix.is_dir() or any(prefix.iterdir()))):
-        raise ValueError("安装目录必须不存在或为空，不能覆盖现有文件")
+        raise ValueError("Installation directory must be absent or empty; existing files cannot be overwritten")
     prefix = prefix.absolute()
     prefix.parent.mkdir(parents=True, exist_ok=True)
     system = {"Linux": "linux", "Windows": "windows", "Darwin": "macos"}[platform.system()]
@@ -168,17 +168,17 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
         missing = [name for name in ("asound", "fontconfig", "EGL", "GL")
                    if not ctypes.util.find_library(name)]
         if missing:
-            raise RuntimeError("缺少系统运行库：" + ", ".join(missing)
-                               + "；Ubuntu 24.04 请安装 libasound2t64 libfontconfig1 "
+            raise RuntimeError("Missing system libraries: " + ", ".join(missing)
+                               + ". On Ubuntu 24.04, install libasound2t64 libfontconfig1 "
                                "libxkbcommon-x11-0 libegl1 libgl1-mesa-dri")
         if not ctypes.util.find_library("xkbcommon-x11"):
-            print("提示：X11 GUI 还需要 libxkbcommon-x11-0；Wayland 与 CLI 可继续安装。", flush=True)
+            print("Note: the X11 GUI also requires libxkbcommon-x11-0. Wayland and CLI installation can continue.", flush=True)
     minimum = (6 * 1024**3 if runtime else 128 * 1024**2)
     if shutil.disk_usage(prefix.parent).free < minimum:
-        raise RuntimeError("所选磁盘剩余空间不足")
+        raise RuntimeError("Insufficient free space on the selected disk")
     version = json.loads((SUPPORT / "online-version.json").read_text())["version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise ValueError("无效发行版本")
+        raise ValueError("Invalid release version")
     base = f"https://api.github.com/repos/{repo}/releases/tags/v{version}"
     with tempfile.TemporaryDirectory(prefix=".k3-install-", dir=prefix.parent) as directory:
         work = Path(directory)
@@ -189,7 +189,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         validate_manifest(manifest, version, system, machine)
         for entry in manifest["files"]:
-            print(f"下载程序：{entry['path']}", flush=True)
+            print(f"Downloading program: {entry['path']}", flush=True)
             destination = root / entry["path"]
             download(entry["asset"], destination, base, assets, entry["sha256"], entry["size"])
             destination.chmod(0o755)
@@ -202,7 +202,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             shutil.copy2(SUPPORT / "crates/k3-gui/assets/licenses/LicenseRef-Slint-Royalty-free-2.0.md", licenses)
             shutil.copy2(SUPPORT / "crates/k3-gui/assets/k3.svg", root / "k3.svg")
         if runtime:
-            print("准备独立 Python、CPU 分离依赖、FFmpeg 和默认模型", flush=True)
+            print("Preparing standalone Python, CPU separation dependencies, FFmpeg and default models", flush=True)
             environment = dict(os.environ, PATH=str(uv.parent) + os.pathsep + os.environ.get("PATH", ""),
                                UV_CACHE_DIR=str(work / "cache"), UV_NO_CONFIG="1",
                                TMPDIR=str(work / "tmp"), TMP=str(work / "tmp"), TEMP=str(work / "tmp"),
@@ -220,7 +220,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             if system != "macos":
                 shutil.copy2(SUPPORT / batch, root / batch)
                 (root / batch).chmod(0o755)
-        print("检查程序启动、分离环境及模型离线加载", flush=True)
+        print("Checking program startup, separation runtime and offline model loading", flush=True)
         check(root, version, runtime)
         (root / "install-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                                     encoding="utf-8")
@@ -228,12 +228,12 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
         if prefix.exists():
             prefix.rmdir()
         root.rename(prefix)
-    print(f"安装完成：{prefix}", flush=True)
+    print(f"Installation complete: {prefix}", flush=True)
     command = str(prefix / ('k3.exe' if system == 'windows' else 'k3'))
     command = "& '" + command.replace("'", "''") + "'" if system == "windows" else shlex.quote(command)
-    print(f"CLI：{command} --help", flush=True)
+    print(f"CLI: {command} --help", flush=True)
     if gui:
-        print(f"GUI：{prefix / ('k3-gui.exe' if system == 'windows' else 'k3-gui')}", flush=True)
+        print(f"GUI: {prefix / ('k3-gui.exe' if system == 'windows' else 'k3-gui')}", flush=True)
 
 
 if __name__ == "__main__":
@@ -243,11 +243,11 @@ if __name__ == "__main__":
     parser.add_argument("--prefix", type=Path, required=True)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--uv", type=Path, required=True)
-    parser.add_argument("--assets-dir", type=Path, help="使用本地平台发行文件，仍校验摘要")
-    parser.add_argument("--model-cache", type=Path, help="复用已下载模型，仍执行完整性检查")
+    parser.add_argument("--assets-dir", type=Path, help="Use local platform release assets with checksum verification")
+    parser.add_argument("--model-cache", type=Path, help="Reuse downloaded models with integrity checks")
     args = parser.parse_args()
     try:
         install(args.prefix, args.repo, args.uv, args.assets_dir, args.model_cache)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f"安装失败：{error}", file=sys.stderr)
+        print(f"Installation failed: {error}", file=sys.stderr)
         sys.exit(1)

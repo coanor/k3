@@ -50,8 +50,8 @@ class ShellInstallEntryTests(unittest.TestCase):
                     process.wait()
                 os.close(master)
             self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
-            self.assertIn("确认开始下载和安装", output.decode())
-            self.assertIn("已取消，未下载任何组件。", output.decode())
+            self.assertIn("Start downloading and installing", output.decode())
+            self.assertIn("Cancelled. No components were downloaded.", output.decode())
             self.assertFalse(destination.parent.exists())
             self.assertEqual(list(Path(directory).iterdir()), [])
 
@@ -63,7 +63,7 @@ class ShellInstallEntryTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-c", 'set -o pipefail; { cat "$K3_PARTIAL_SOURCE"; exit 18; } | bash'],
                 env=dict(os.environ, K3_PARTIAL_SOURCE=str(partial)),
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, errors="replace", timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
 
@@ -73,7 +73,7 @@ class ShellInstallEntryTests(unittest.TestCase):
             env=dict(os.environ, K3_ENTRY_SOURCE=str(ENTRY)),
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("用法：bash install.sh", result.stdout)
+        self.assertIn("Usage: bash install.sh", result.stdout)
 
 
 if __name__ == "__main__":

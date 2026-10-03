@@ -1,4 +1,4 @@
-"""准备发行包模型、配置、FFmpeg 和第三方组件清单。"""
+"""Prepare release models, configuration, FFmpeg and third-party component metadata."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def prepare(output: Path, cache: Path | None, extra_models: list[str]) -> None:
                     if "all" in extra_models or model["id"] in extra_models)
     unknown = set(extra_models) - {model["id"] for model in registry.list()} - {"all"}
     if unknown:
-        raise ValueError(f"未知模型：{', '.join(sorted(unknown))}")
+        raise ValueError(f"Unknown models: {', '.join(sorted(unknown))}")
     models = [registry.select(entry["profiles"][0], entry["id"])
               for entry in registry.list() if entry["id"] in selected]
     model_dir = output / "models"
@@ -44,12 +44,12 @@ def prepare(output: Path, cache: Path | None, extra_models: list[str]) -> None:
     runtime = AudioSeparatorRuntime(model_dir)
     separator = Separator(model_file_dir=str(model_dir), output_format="WAV")
     for model in models:
-        print(f"准备模型：{model.id}", flush=True)
+        print(f"Preparing model: {model.id}", flush=True)
         runtime._prepare_primary_artifact(model)
         separator.download_model_and_data(model.filename)
         # 在打包前拒绝上游下载失败残留的空文件。
         if not (model_dir / model.filename).stat().st_size:
-            raise ValueError(f"模型文件为空：{model.filename}")
+            raise ValueError(f"Model file is empty: {model.filename}")
     artifacts = {path.relative_to(output).as_posix(): _hash_file(path)
                  for path in sorted(model_dir.rglob("*")) if path.is_file()}
     artifacts[ffmpeg.relative_to(output).as_posix()] = _hash_file(ffmpeg)

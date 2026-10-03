@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       installer_source_run:
-        description: "复用发行包构建已成功的运行（留空则从头构建）"
+        description: "Reuse a successful distribution build run (leave empty to build from scratch)"
         required: false
         default: ""
         type: string
       offline_bundle:
-        description: "额外生成完整离线归档与系统安装包（默认只发布在线安装组件）"
+        description: "Also build full offline archives and system installers (default: online components only)"
         required: false
         default: false
         type: boolean
@@ -371,7 +371,7 @@ jobs:
           from pathlib import Path
           version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
           if os.environ['RELEASE_TAG'] != 'v' + version:
-              raise SystemExit('发行 tag 必须与 Cargo.toml 版本一致')
+              raise SystemExit('Release tag must match the Cargo.toml version')
           PYTHON
       - run: python3 scripts/package-online.py support
       - uses: actions/upload-artifact@v7
@@ -435,7 +435,7 @@ jobs:
           ARCHIVE_NAME: ${{ matrix.archive }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo '运行 ID 必须是数字' >&2; exit 1; }
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo 'Run ID must be numeric' >&2; exit 1; }
           gh run view "$SOURCE_RUN" --json conclusion,workflowName,headSha,jobs > "$RUNNER_TEMP/source-run.json"
           gh api --paginate "repos/$GH_REPO/actions/runs/$SOURCE_RUN/artifacts" \
             --jq '.artifacts[] | select(.expired == false) | .name' > "$RUNNER_TEMP/source-artifacts.txt"
@@ -454,7 +454,7 @@ jobs:
           successful = {job["name"] for job in source["jobs"] if job["conclusion"] == "success"}
           # 安装器失败不影响已通过解压、离线运行检查并上传的便携包。
           if source["workflowName"] != "Build distributions" or not expected <= successful:
-              raise SystemExit("来源运行的六种便携包构建必须全部成功")
+              raise SystemExit("All six portable package builds in the source run must have succeeded")
           artifacts = set(Path(sys.argv[2]).read_text().splitlines())
           archive = os.environ["ARCHIVE_NAME"]
           if {archive, archive + ".sha256"} <= artifacts:
@@ -462,10 +462,10 @@ jobs:
           elif "dist-" + os.environ["PACKAGE_NAME"] in artifacts:
               legacy = "true"
           else:
-              raise SystemExit("来源运行缺少未过期的便携包或校验文件")
+              raise SystemExit("Source run is missing unexpired portable packages or checksum files")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
               output.write(f"K3_LEGACY_ARTIFACT={legacy}\n")
-          print(f"已验证发行包来源：{source['headSha']}")
+          print(f"Distribution source verified: {source['headSha']}")
           PY
 
       - name: Download validated portable distribution
@@ -511,7 +511,7 @@ jobs:
             choco install innosetup --version=6.7.1 --yes --no-progress
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          if (-not (Test-Path $compiler)) { throw '找不到 Inno Setup 编译器' }
+          if (-not (Test-Path $compiler)) { throw 'Inno Setup compiler not found' }
           "K3_ISCC=$compiler" >> $env:GITHUB_ENV
 
       - name: Build native installer
@@ -549,7 +549,7 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP 'K3 安装测试'
           $log = Join-Path $env:RUNNER_TEMP 'k3-install.log'
           $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$root`"", "/LOG=`"$log`"") -Wait -PassThru
-          if ($process.ExitCode -ne 0) { Get-Content $log; throw "安装失败：$($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) { Get-Content $log; throw "Installation failed: $($process.ExitCode)" }
           "K3_INSTALLED_ROOT=$root" >> $env:GITHUB_ENV
           Set-Content (Join-Path $root 'user-preserved.txt') '用户数据'
 
@@ -589,9 +589,9 @@ jobs:
         shell: pwsh
         run: |
           $process = Start-Process -FilePath (Join-Path $env:K3_INSTALLED_ROOT 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "卸载失败：$($process.ExitCode)" }
-          if (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'k3.exe')) { throw '卸载未删除程序' }
-          if (-not (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'user-preserved.txt'))) { throw '卸载删除了用户文件' }
+          if ($process.ExitCode -ne 0) { throw "Uninstallation failed: $($process.ExitCode)" }
+          if (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'k3.exe')) { throw 'Uninstallation did not remove the program' }
+          if (-not (Test-Path (Join-Path $env:K3_INSTALLED_ROOT 'user-preserved.txt'))) { throw 'Uninstallation removed user files' }
 
       - name: Upload checked installer
         uses: actions/upload-artifact@v7
@@ -713,15 +713,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$GH_TOKEN" ]] || { echo '缺少 PUBLIC_RELEASE_TOKEN secret' >&2; exit 1; }
+          [[ -n "$GH_TOKEN" ]] || { echo 'PUBLIC_RELEASE_TOKEN secret is missing' >&2; exit 1; }
           [[ "$PUBLIC_RELEASE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo 'PUBLIC_RELEASE_REPO 必须是 owner/repo' >&2
+            echo 'PUBLIC_RELEASE_REPO must use owner/repo format' >&2
             exit 1
           }
           visibility="$(gh repo view "$PUBLIC_RELEASE_REPO" --json visibility --jq '.visibility')"
-          [[ "$visibility" == PUBLIC ]] || { echo '目标仓库必须公开' >&2; exit 1; }
+          [[ "$visibility" == PUBLIC ]] || { echo 'Target repository must be public' >&2; exit 1; }
           if gh release view "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
-            echo '公开发行版已存在，请使用新版本号' >&2
+            echo 'Public release already exists; use a new version number' >&2
             exit 1
           fi
           cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF

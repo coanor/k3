@@ -40,7 +40,7 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 #if CliOnly == "0"
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 #endif
 
@@ -54,10 +54,10 @@ Name: "{group}\K3"; Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"
 Name: "{autodesktop}\K3"; Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"; Tasks: desktopicon
 
 #endif
-Name: "{group}\卸载 K3"; Filename: "{uninstallexe}"
+Name: "{group}\Uninstall K3"; Filename: "{uninstallexe}"
 
 #if CliOnly == "0"
 [Run]
-Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"; Description: "启动 K3"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\k3-gui.exe"; WorkingDir: "{userdocs}"; Description: "Launch K3"; Flags: nowait postinstall skipifsilent
 
 #endif

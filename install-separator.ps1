@@ -34,7 +34,7 @@ function Invoke-Checked {
 
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "命令执行失败（退出码 $LASTEXITCODE）：$Executable $($Arguments -join ' ')"
+        throw "Command failed (exit code $LASTEXITCODE): $Executable $($Arguments -join ' ')"
     }
 }
 
@@ -55,17 +55,17 @@ function Set-JsonProperty {
 $separatorRoot = Join-Path $PSScriptRoot "python\separator"
 $requirements = Join-Path $separatorRoot "requirements-runtime.txt"
 if (-not (Test-Path -LiteralPath (Join-Path $separatorRoot "pyproject.toml") -PathType Leaf)) {
-    throw "找不到 Windows 分离包源码：$separatorRoot"
+    throw "Windows separator sources not found: $separatorRoot"
 }
 
 $pythonLauncher = Get-Command "py.exe" -ErrorAction SilentlyContinue
 if ($null -eq $pythonLauncher) {
-    throw "找不到 Python Launcher。请先安装 64 位 Python $PythonVersion。"
+    throw "Python Launcher not found. Install 64-bit Python $PythonVersion first."
 }
 
 $VenvPath = [IO.Path]::GetFullPath($VenvPath)
 $pythonSelector = "-$PythonVersion"
-Write-Host "正在创建 Windows 分离环境：$VenvPath"
+Write-Host "Creating Windows separation runtime: $VenvPath"
 Invoke-Checked -Executable $pythonLauncher.Source -Arguments @(
     $pythonSelector, "-m", "venv", $VenvPath
 )
@@ -73,7 +73,7 @@ Invoke-Checked -Executable $pythonLauncher.Source -Arguments @(
 $venvPython = Join-Path $VenvPath "Scripts\python.exe"
 $worker = Join-Path $VenvPath "Scripts\k3-separator.exe"
 if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
-    throw "虚拟环境创建后未找到 Python：$venvPython"
+    throw "Python not found after creating the virtual environment: $venvPython"
 }
 
 Invoke-Checked -Executable $venvPython -Arguments @(
@@ -119,11 +119,11 @@ print(json.dumps(result, ensure_ascii=False))
 '@
 $runtime = $runtimeCheck | & $venvPython -
 if ($LASTEXITCODE -ne 0) {
-    throw "Windows 分离 runtime 健康检查失败。"
+    throw "Windows separation runtime health check failed."
 }
 $runtimeStatus = $runtime | Select-Object -Last 1 | ConvertFrom-Json
 if ($Backend -eq "gpu" -and -not $runtimeStatus.cuda_available) {
-    throw "已安装 GPU worker，但 PyTorch 无法使用 CUDA。"
+    throw "The GPU worker is installed, but CUDA is unavailable in PyTorch."
 }
 
 $modelDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL_DIR)) {
@@ -142,11 +142,11 @@ $env:HF_HOME = Join-Path $modelDir "huggingface"
 $healthText = '{"id":"health","method":"health"}' |
     & $worker --model-dir $modelDir
 if ($LASTEXITCODE -ne 0) {
-    throw "k3-separator.exe 健康检查执行失败。"
+    throw "k3-separator.exe health check failed to run."
 }
 $health = $healthText | ConvertFrom-Json
 if (-not $health.ok -or -not $health.result.runtime.audio_separator_installed) {
-    throw "k3-separator.exe 健康检查未通过：$healthText"
+    throw "k3-separator.exe health check failed: $healthText"
 }
 
 if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
@@ -163,9 +163,9 @@ if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
         $json + [Environment]::NewLine,
         [Text.UTF8Encoding]::new($false)
     )
-    Write-Host "已更新配置：$ConfigPath"
+    Write-Host "Configuration updated: $ConfigPath"
 }
 
-Write-Host "Windows 分离 worker 已就绪：$worker"
-Write-Host "CUDA 可用：$($runtimeStatus.cuda_available)"
-Write-Host "模型目录：$modelDir"
+Write-Host "Windows separation worker ready: $worker"
+Write-Host "CUDA available: $($runtimeStatus.cuda_available)"
+Write-Host "Model directory: $modelDir"

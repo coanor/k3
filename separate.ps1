@@ -18,7 +18,7 @@ function ConvertTo-Boolean {
     switch ($Value.ToLowerInvariant()) {
         { $_ -in @("1", "true", "yes", "on") } { return $true }
         { $_ -in @("0", "false", "no", "off") } { return $false }
-        default { throw "$Name 必须是 true 或 false。" }
+        default { throw "$Name must be true or false." }
     }
 }
 
@@ -39,7 +39,7 @@ function Invoke-K3 {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & $script:K3Bin @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "k3.exe 执行失败（退出码 $LASTEXITCODE）。"
+        throw "k3.exe failed (exit code $LASTEXITCODE)."
     }
 }
 
@@ -48,13 +48,13 @@ function Write-SeparationOutputs {
 
     $document = Get-Content -LiteralPath (Join-Path $Project "project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($document.separation.status -ne "ready") {
-        throw "project 未保存 ready 状态的分离 manifest：$Project"
+        throw "Project has no ready separation manifest: $Project"
     }
     $details = $document.separation.details
     foreach ($output in @(
-        @{ Label = "主唱"; Name = "vocals" },
-        @{ Label = "和声"; Name = "backing_vocals" },
-        @{ Label = "伴奏"; Name = "accompaniment" }
+        @{ Label = "Lead vocals"; Name = "vocals" },
+        @{ Label = "Backing vocals"; Name = "backing_vocals" },
+        @{ Label = "Accompaniment"; Name = "accompaniment" }
     )) {
         $relative = Get-PropertyValue -Object $details -Name $output.Name -Default $null
         if (-not [string]::IsNullOrWhiteSpace($relative)) {
@@ -82,11 +82,11 @@ if ([string]::IsNullOrWhiteSpace($Directory)) {
     } elseif ($null -ne $config) {
         $Directory = Get-PropertyValue -Object $config -Name "projects_root" -Default $null
     } else {
-        throw "未指定 project 总目录；请使用 -d 或设置 K3_OUTPUT_DIR。"
+        throw "Project root is missing; use -d or set K3_OUTPUT_DIR."
     }
 }
 if ([string]::IsNullOrWhiteSpace($Directory)) {
-    throw "未指定 project 总目录；请使用 -d、设置 K3_OUTPUT_DIR 或配置 projects_root。"
+    throw "Project root is missing; use -d, set K3_OUTPUT_DIR or configure projects_root."
 }
 New-Item -ItemType Directory -Force -Path $Directory | Out-Null
 $projectsRoot = (Resolve-Path -LiteralPath $Directory).Path
@@ -97,7 +97,7 @@ $script:K3Bin = if (-not [string]::IsNullOrWhiteSpace($env:K3_BIN)) {
     Join-Path $PSScriptRoot "k3.exe"
 }
 if (-not (Test-Path -LiteralPath $script:K3Bin -PathType Leaf)) {
-    throw "找不到 k3.exe：$script:K3Bin"
+    throw "k3.exe not found: $script:K3Bin"
 }
 
 $bundledWorker = Join-Path $PSScriptRoot "k3-separator.exe"
@@ -120,7 +120,7 @@ if (-not [IO.Path]::IsPathRooted($worker)) {
     $worker = Join-Path $PSScriptRoot $worker
 }
 if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
-    throw "找不到 Windows 分离 worker：$worker；请先运行 .\install-separator.ps1。"
+    throw "Windows separation worker not found: $worker. Run .\install-separator.ps1 first."
 }
 
 $configuredProfile = Get-PropertyValue -Object $separationConfig -Name "profile" -Default "quality"
@@ -175,16 +175,16 @@ $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgno
 foreach ($file in $Files) {
     $resolved = (Resolve-Path -LiteralPath $file -ErrorAction Stop).Path
     if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
-        throw "音频文件不存在：$file"
+        throw "Audio file not found: $file"
     }
     $name = [IO.Path]::GetFileNameWithoutExtension($resolved)
     if (-not $seen.Add($name)) {
-        throw "多个输入会映射到同一个 project：$name"
+        throw "Multiple inputs map to the same project: $name"
     }
     $project = Join-Path $projectsRoot $name
     if ((Test-Path -LiteralPath $project) -and
         -not (Test-Path -LiteralPath (Join-Path $project "project.json") -PathType Leaf)) {
-        throw "目标目录已存在但不是有效 project：$project"
+        throw "Destination exists but is not a valid project: $project"
     }
     $inputs += $resolved
     $projects += $project
@@ -199,9 +199,9 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
         if ($env:K3_NO_OVERWRITE -eq "1") {
             throw "project already exists; refusing to replace stems: $project"
         }
-        Write-Host "正在按当前配置重新分离：$title"
+        Write-Host "Separating again with current settings: $title"
     } else {
-        Write-Host "正在创建 project：$title"
+        Write-Host "Creating project: $title"
         Invoke-K3 -Arguments @("new", "--root", $project, "--song", $input, "--title", $title)
     }
 
@@ -226,6 +226,6 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
     }
     Invoke-K3 -Arguments $arguments
 
-    Write-Host "完成：$project"
+    Write-Host "Complete: $project"
     Write-SeparationOutputs -Project $project
 }

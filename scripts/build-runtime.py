@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在目标平台准备可移动的离线 CPU runtime；构建机器需要 uv 和网络。"""
+"""Prepare a portable offline CPU runtime on the target platform; requires uv and network access."""
 
 from __future__ import annotations
 
@@ -18,19 +18,19 @@ PYTHON_VERSION = "3.13.15"
 
 
 def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
-    print("执行：", " ".join(str(arg) for arg in args), flush=True)
+    print("Running: ", " ".join(str(arg) for arg in args), flush=True)
     kwargs.setdefault("env", dict(os.environ, PYTHONUTF8="1"))
     return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
 def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
     if platform.system() == "Darwin" and platform.machine() == "x86_64":
-        raise RuntimeError("Intel macOS 不提供完整 runtime；请构建 CLI 包或使用 Apple Silicon")
+        raise RuntimeError("Full runtime is unavailable on Intel macOS; build a CLI package or use Apple Silicon")
     if output.exists():
-        raise RuntimeError(f"输出目录已存在，请指定新目录：{output}")
+        raise RuntimeError(f"Output directory already exists; choose a new directory: {output}")
     uv = shutil.which("uv")
     if uv is None:
-        raise RuntimeError("构建机器需要 uv：https://docs.astral.sh/uv/")
+        raise RuntimeError("The build machine requires uv: https://docs.astral.sh/uv/")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="k3-runtime-", dir=output.parent) as directory:
         staging = Path(directory)
@@ -39,7 +39,7 @@ def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
             "--no-bin", "--no-registry")
         installations = list(downloads.glob(f"cpython-{PYTHON_VERSION}-*"))
         if len(installations) != 1:
-            raise RuntimeError(f"无法确定独立 Python 目录：{installations}")
+            raise RuntimeError(f"Could not identify the standalone Python directory: {installations}")
         bundle = staging / "bundle"
         bundle.mkdir()
         python_root = bundle / "python"
@@ -80,17 +80,17 @@ def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
         (bundle / "bundle-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         shutil.move(str(bundle), output)
-    print(f"离线 runtime 已生成：{output}")
+    print(f"Offline runtime created: {output}")
 
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True, help="新建 runtime 输出目录")
-    parser.add_argument("--model-cache", type=Path, help="复用已有模型缓存，仍会校验固定摘要")
+    parser.add_argument("--output", type=Path, required=True, help="New runtime output directory")
+    parser.add_argument("--model-cache", type=Path, help="Reuse an existing model cache with pinned checksum verification")
     parser.add_argument("--model", action="append", default=[],
-                        help="额外捆绑的模型 ID，可重复指定；all 表示全部内置模型")
+                        help="Additional model ID; repeat to add models, or use all for every built-in model")
     args = parser.parse_args()
     build(args.output.resolve(), args.model_cache, args.model)
 

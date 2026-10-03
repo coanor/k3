@@ -85,14 +85,14 @@ enum Command {
         #[arg(long, value_enum)]
         preset: EffectArgument,
     },
-    /// 删除指定录音及其干声、混音文件；确认提示默认保留。
+    /// Delete a take and its dry/mix files. Confirmation defaults to keeping it.
     DeleteTake {
         #[arg(long)]
         project: PathBuf,
-        /// 录音 ID；latest 表示最新一条录音。
+        /// Take ID, or "latest" for the newest take.
         #[arg(long, default_value = "latest")]
         take: String,
-        /// 明确确认删除，跳过交互提示。
+        /// Confirm deletion and skip the interactive prompt.
         #[arg(long)]
         yes: bool,
     },

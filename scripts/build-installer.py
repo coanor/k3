@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验已构建的便携包，并在目标平台生成系统安装包。"""
+"""Validate portable packages and build system installers on the target platform."""
 
 from __future__ import annotations
 
@@ -39,11 +39,11 @@ def unpack(archive: Path, destination: Path) -> tuple[Path, str, bool]:
     suffix = ".zip" if archive.name.endswith(".zip") else ".tar.gz"
     name = archive.name.removesuffix(suffix)
     if name not in PACKAGES or suffix != (".zip" if PACKAGES[name][0] == "win32" else ".tar.gz"):
-        raise ValueError(f"不支持的便携包：{archive.name}")
+        raise ValueError(f"Unsupported portable package: {archive.name}")
     with archive.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     if digest != archive.with_name(archive.name + ".sha256").read_text().split()[0]:
-        raise ValueError("便携包 SHA-256 校验失败")
+        raise ValueError("Portable package SHA-256 verification failed")
     if suffix == ".zip":
         with zipfile.ZipFile(archive) as stream:
             for member in stream.infolist():
@@ -51,14 +51,14 @@ def unpack(archive: Path, destination: Path) -> tuple[Path, str, bool]:
                 if (path.is_absolute() or ".." in path.parts or "\\" in member.filename
                         or ":" in member.filename or not path.parts or path.parts[0] != name
                         or (member.external_attr >> 16) & 0o170000 == 0o120000):
-                    raise ValueError(f"ZIP 中存在不安全的路径：{member.filename}")
+                    raise ValueError(f"ZIP contains an unsafe path: {member.filename}")
             stream.extractall(destination)
     else:
         with tarfile.open(archive) as stream:
             stream.extractall(destination, filter="data")
     root = destination / name
     if list(destination.iterdir()) != [root] or not root.is_dir():
-        raise ValueError("便携包必须包含唯一的预期顶级目录")
+        raise ValueError("Portable package must contain exactly one expected top-level directory")
     platform, machine, cli_only = PACKAGES[name]
     extension = ".exe" if platform == "win32" else ""
     required = [f"k3{extension}"]
@@ -66,14 +66,14 @@ def unpack(archive: Path, destination: Path) -> tuple[Path, str, bool]:
         manifest = json.loads((root / "bundle-manifest.json").read_text(encoding="utf-8"))
         actual_machine = {"AMD64": "x86_64", "arm64": "aarch64"}.get(manifest["machine"], manifest["machine"])
         if (manifest["platform"], actual_machine) != (platform, machine):
-            raise ValueError("便携包的 runtime 平台或架构与包名不一致")
+            raise ValueError("Portable runtime platform or architecture does not match the package name")
         required += [f"k3-separator{extension}", "models", "runtime/bin",
                      "runtime/python/python.exe" if platform == "win32" else "runtime/python/bin/python3"]
         if platform in ("linux", "win32"):
             required += [f"k3-gui{extension}"]
     for path in required:
         if not (root / path).exists():
-            raise ValueError(f"便携包缺少：{path}")
+            raise ValueError(f"Portable package is missing: {path}")
     return root, platform, cli_only
 
 
@@ -111,9 +111,6 @@ def deb(root: Path, staging: Path, output: Path, version: str, machine: str) -> 
         target = staging / "usr" / source
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(payload / source, target)
-    desktop = staging / "usr/share/applications/k3.desktop"
-    desktop.write_text(desktop.read_text().replace("Comment=Karaoke project player",
-                                                  "Comment=卡拉 OK 工程播放器"), encoding="utf-8")
     control = staging / "DEBIAN/control"
     control.parent.mkdir()
     size = sum(path.stat().st_size for path in staging.rglob("*") if path.is_file() and not path.is_symlink())
@@ -123,8 +120,8 @@ def deb(root: Path, staging: Path, output: Path, version: str, machine: str) -> 
         f"Installed-Size: {(size + 1023) // 1024}\n"
         "Depends: libc6 (>= 2.39), libgcc-s1, libstdc++6, libasound2t64, libfontconfig1, libxkbcommon-x11-0, libegl1, libgl1\n"
         "Recommends: libgl1-mesa-dri\nHomepage: https://github.com/coanor/k3\n"
-        "Description: K3 卡拉 OK 播放器与离线音源分离工具\n"
-        " 包含 GUI、CLI、独立 Python 环境、FFmpeg 和三个默认分离模型。\n",
+        "Description: K3 karaoke player and offline audio separation tool\n"
+        " Includes GUI, CLI, standalone Python, FFmpeg and three default separation models.\n",
         encoding="utf-8")
     artifact = output / f"k3_{version}_{architecture}.deb"
     run("dpkg-deb", "--build", "--root-owner-group", "-Zzstd", "-z6", "--threads-max=2", staging, artifact)
@@ -156,7 +153,7 @@ def macos(root: Path, staging: Path, output: Path, version: str, cli_only: bool)
   <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
   <volume-check><allowed-os-versions><os-version min="14.0"/></allowed-os-versions></volume-check>
   <choices-outline><line choice="k3"/></choices-outline>
-  <choice id="k3" visible="false" title="K3 命令行工具" description="安装 K3 程序{'与离线分离环境' if not cli_only else '（Intel 仅 CLI）'}">
+  <choice id="k3" visible="false" title="K3 command-line tools" description="Install K3 programs{' with the offline separation runtime' if not cli_only else ' (Intel CLI only)'}">
     <pkg-ref id="{identifier}"/>
   </choice>
   <pkg-ref id="{identifier}" version="{version}">component.pkg</pkg-ref>
@@ -171,7 +168,7 @@ def macos(root: Path, staging: Path, output: Path, version: str, cli_only: bool)
 def build(archive: Path, output: Path, version: str, compiler: str, refresh_worker: bool = False,
           refresh_portable_manuals: bool = False) -> Path:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise ValueError("安装包版本必须是 major.minor.patch 三段数字")
+        raise ValueError("Installer version must use numeric major.minor.patch format")
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="k3-installer-", dir=output) as directory:
@@ -180,11 +177,11 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
         unpacked.mkdir()
         root, platform, cli_only = unpack(archive.resolve(), unpacked)
         if platform != sys.platform:
-            raise ValueError("安装包必须在对应操作系统上构建")
+            raise ValueError("Installers must be built on the matching operating system")
         binary = root / ("k3.exe" if platform == "win32" else "k3")
         actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
         if actual != f"k3 {version}":
-            raise ValueError(f"二进制版本 {actual!r} 与安装包版本 {version!r} 不一致")
+            raise ValueError(f"Binary version {actual!r} does not match installer version {version!r}")
         # 用户手册跟随安装器源码；复用旧包时也清理开发文档。
         copy_manuals(root)
         if refresh_worker and not cli_only:
@@ -199,11 +196,11 @@ def build(archive: Path, output: Path, version: str, compiler: str, refresh_work
         else:
             artifact = macos(root, work / "payload", output, version, cli_only)
     if artifact.stat().st_size >= 2 * 1024**3:
-        raise ValueError("安装包超过 GitHub Release 的 2 GiB 限制")
+        raise ValueError("Installer exceeds the GitHub Release 2 GiB limit")
     with artifact.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     artifact.with_name(artifact.name + ".sha256").write_text(f"{digest}  {artifact.name}\n", encoding="ascii")
-    print(f"已生成安装包：{artifact}（{artifact.stat().st_size / 1024**2:.1f} MiB）", flush=True)
+    print(f"Installer created: {artifact} ({artifact.stat().st_size / 1024**2:.1f} MiB)", flush=True)
     return artifact
 
 
@@ -214,9 +211,9 @@ if __name__ == "__main__":
     parser.add_argument("archive", type=Path)
     parser.add_argument("--output-dir", type=Path, default=REPO / "dist/installers")
     parser.add_argument("--version", default=tomllib.loads((REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"])
-    parser.add_argument("--iscc", default="ISCC.exe", help="Windows Inno Setup 编译器路径")
-    parser.add_argument("--refresh-worker", action="store_true", help="用当前源码重新安装 worker；保留原生程序、其他依赖和模型，需要 uv")
-    parser.add_argument("--refresh-portable-manuals", action="store_true", help="同时更新输入便携包的用户手册、压缩包与校验文件")
+    parser.add_argument("--iscc", default="ISCC.exe", help="Path to the Windows Inno Setup compiler")
+    parser.add_argument("--refresh-worker", action="store_true", help="Reinstall the worker from current sources, preserving native programs, other dependencies and models; requires uv")
+    parser.add_argument("--refresh-portable-manuals", action="store_true", help="Also update the input portable package manuals, archive and checksum files")
     args = parser.parse_args()
     build(args.archive, args.output_dir, args.version, args.iscc, args.refresh_worker,
           args.refresh_portable_manuals)

@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-    echo "用法：verify-linux-gui-package.sh <Linux tar.gz>" >&2
+    echo "Usage: verify-linux-gui-package.sh <Linux tar.gz>" >&2
     exit 2
 fi
 
 archive="$1"
 if [[ ! -f "$archive" ]]; then
-    echo "找不到 Linux 发行包：$archive" >&2
+    echo "Linux package not found: $archive" >&2
     exit 1
 fi
 
@@ -23,9 +23,9 @@ for required in \
     "$package_name/licenses/LicenseRef-Slint-Royalty-free-2.0.md"
 do
     if ! grep -Fxq "$required" <<<"$contents"; then
-        echo "Linux 发行包缺少：$required" >&2
+        echo "Linux package is missing: $required" >&2
         exit 1
     fi
 done
 
-echo "Linux GUI 发行包内容验证通过：$archive"
+echo "Linux GUI package validation passed: $archive"

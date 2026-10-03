@@ -38,10 +38,17 @@ class PackageTests(unittest.TestCase):
         for filename in ("build-runtime.py", "package-dist.py", "check-dist.py", "check-runtime.py"):
             with self.subTest(script=filename):
                 output = subprocess.run(
-                    [sys.executable, str(SCRIPT.parent / filename), "--help"],
+                    [sys.executable, "-c",
+                     "import runpy, sys; from pathlib import Path; sys.argv = sys.argv[1:]; "
+                     "sys.path.insert(0, str(Path(sys.argv[0]).parent))\n"
+                     "try: runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                     "finally: print('Unicode path: \\u6a21\\u578b')",
+                     str(SCRIPT.parent / filename), "--help"],
                     env=environment, capture_output=True, check=True,
                 )
-                self.assertTrue(any(ord(character) > 127 for character in output.stdout.decode("utf-8")))
+                help_text, marker = output.stdout.decode("utf-8").rsplit("Unicode path: ", 1)
+                self.assertTrue(help_text.isascii())
+                self.assertEqual(marker.strip(), "模型")
 
     def fixture(self, root: Path, platform: str, machine: str = "x86_64"):
         suffix = ".exe" if platform == "windows" else ""
@@ -95,7 +102,7 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(manifest["machine"], "aarch64")
                 self.assertIn("k3-linux-aarch64/k3-gui", stream.getnames())
                 self.assertIn("k3-linux-aarch64/models/checkpoint.onnx", stream.getnames())
-            with self.assertRaisesRegex(ValueError, "平台或架构"):
+            with self.assertRaisesRegex(ValueError, "platform or architecture"):
                 packager.package("linux", "k3-linux-x86_64", binary, runtime, False, root / "dist")
             self.assertFalse((root / "dist/k3-linux-x86_64.tar.gz").exists())
 
@@ -139,7 +146,7 @@ class PackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary, runtime = self.fixture(root, "linux")
-            with self.assertRaisesRegex(ValueError, "平台或架构"):
+            with self.assertRaisesRegex(ValueError, "platform or architecture"):
                 packager.package("windows", "k3-windows-x86_64", binary, runtime, False, root / "dist")
             self.assertFalse(list((root / "dist").iterdir()))
 

@@ -49,7 +49,7 @@ class InstallerTests(unittest.TestCase):
                     self.checksum(archive)
                     destination = Path(directory) / "unpacked"
                     destination.mkdir(exist_ok=True)
-                    with self.assertRaisesRegex(ValueError, "不安全"):
+                    with self.assertRaisesRegex(ValueError, "unsafe"):
                         installer.unpack(archive, destination)
                     self.assertFalse((Path(directory) / "outside").exists())
 
