@@ -56,6 +56,11 @@ jobs:
         # runtime 复用回归会在临时环境实际安装新旧 worker。
         run: python3 -m unittest discover -s scripts/tests -v
 
+      - name: Test default model download without Hugging Face
+        env:
+          PYTHONPATH: python/separator/src
+        run: python3 -m unittest discover -s python/separator/tests -p test_model_downloads.py -v
+
       - name: Run tests
         run: cargo test --workspace --locked
 
@@ -114,6 +119,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Test release downloads with a rate-limited GitHub API
+        run: python -m unittest discover -s scripts/tests -p test_release_download.py -v
+
+      - name: Test default model download without Hugging Face
+        env:
+          PYTHONPATH: python/separator/src
+        run: python -m unittest discover -s python/separator/tests -p test_model_downloads.py -v
 
       - name: Select repository Rust toolchain
         shell: pwsh

@@ -94,6 +94,11 @@ BUILTIN_MODELS = (
         profiles=("fast",),
         license="NOASSERTION",
         source_url="https://github.com/Anjok07/ultimatevocalremovergui",
+        download_url=(
+            "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+            "UVR_MDXNET_KARA_2.onnx"
+        ),
+        expected_sha256="bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4",
         runtime_options={"segment_size": 256, "overlap": 0.25, "batch_size": 1},
     ),
     SeparationModel(
@@ -103,6 +108,11 @@ BUILTIN_MODELS = (
         profiles=("balanced",),
         license="NOASSERTION",
         source_url="https://github.com/Anjok07/ultimatevocalremovergui",
+        download_url=(
+            "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+            "UVR-MDX-NET-Inst_HQ_3.onnx"
+        ),
+        expected_sha256="317554b07fe1ea5279a77f2b1520a41ea4b93432560c4ffd08792c30fddf9adc",
         runtime_options={"segment_size": 256, "overlap": 0.25, "batch_size": 1},
     ),
     SeparationModel(
@@ -113,8 +123,8 @@ BUILTIN_MODELS = (
         license="MIT",
         source_url="https://huggingface.co/Politrees/UVR_resources",
         download_url=(
-            "https://huggingface.co/Politrees/UVR_resources/resolve/main/"
-            "models/Roformer/BandSplit/model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+            "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
         ),
         expected_sha256="5b84f37e8d444c8cb30c79d77f613a41c05868ff9c9ac6c7049c00aefae115aa",
         runtime_options={"segment_size": 256, "overlap": 8, "batch_size": 1},

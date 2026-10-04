@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import importlib.util
+import logging
 import os
 import shutil
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -268,6 +272,24 @@ class AudioSeparatorRuntime:
                 "checkpoint_unavailable",
                 f"place the pinned checkpoint at {destination} before running {model.id}",
             )
+        for attempt in range(3):
+            try:
+                self._download_primary_artifact(model, destination)
+                return
+            except WorkerError as error:
+                cause = error.__cause__
+                retryable = isinstance(cause, (urllib.error.URLError, TimeoutError,
+                                              ConnectionError, http.client.IncompleteRead))
+                if isinstance(cause, urllib.error.HTTPError) and cause.code not in {429, 500, 502, 503, 504}:
+                    retryable = False
+                if error.code != "checkpoint_download_failed" or not retryable or attempt == 2:
+                    raise
+                logging.getLogger(__name__).warning(
+                    "Model download interrupted for %s; retrying (%s/3)", model.id, attempt + 2
+                )
+                time.sleep(2 ** attempt)
+
+    def _download_primary_artifact(self, model: SeparationModel, destination: Path) -> None:
         temporary_name = None
         try:
             request = urllib.request.Request(
@@ -278,7 +300,10 @@ class AudioSeparatorRuntime:
                     prefix=f".{model.filename}.", dir=self._model_dir, delete=False
                 ) as temporary:
                     temporary_name = temporary.name
-                    _copy_stream(response, temporary)
+                    received = _copy_stream(response, temporary)
+                    length = response.headers.get("Content-Length") if hasattr(response, "headers") else None
+                    if length is not None and received != int(length):
+                        raise ConnectionError(f"Incomplete model download: received {received} of {length} bytes")
                     temporary.flush()
                     os.fsync(temporary.fileno())
             temporary_path = Path(temporary_name)
@@ -390,6 +415,9 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_stream(source: Any, destination: Any) -> None:
+def _copy_stream(source: Any, destination: Any) -> int:
+    received = 0
     while chunk := source.read(1024 * 1024):
         destination.write(chunk)
+        received += len(chunk)
+    return received
