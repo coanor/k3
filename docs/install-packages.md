@@ -40,6 +40,8 @@ irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.1/get.
 `GITHUB_TOKEN`；只有公开下载地址返回 `404` 时才回退到认证 API，令牌不会发送给公开下载地址或 CDN。
 认证 API 仍受 [GitHub API 限制](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
 约束；勿在命令参数或公开文件中写入令牌。
+三个默认模型从 `TRvlvr/model_repo` 的 GitHub Release 下载；默认安装无需连接 Hugging Face。
+Quality 模型仍校验原来的固定 SHA-256，权重未变。额外的 Kim Vocal 2 模型仍来自 Hugging Face。
 脚本默认安装最新正式发行版；安装已有预发行版 `v0.1.0` 时需用 `--version v0.1.0` / `-Version v0.1.0` 明确指定版本。
 在线安装适用于包含在线组件的发行版；仅含完整离线包的旧发行版不能用于在线安装。
 

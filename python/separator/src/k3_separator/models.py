@@ -113,8 +113,8 @@ BUILTIN_MODELS = (
         license="MIT",
         source_url="https://huggingface.co/Politrees/UVR_resources",
         download_url=(
-            "https://huggingface.co/Politrees/UVR_resources/resolve/main/"
-            "models/Roformer/BandSplit/model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+            "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
         ),
         expected_sha256="5b84f37e8d444c8cb30c79d77f613a41c05868ff9c9ac6c7049c00aefae115aa",
         runtime_options={"segment_size": 256, "overlap": 8, "batch_size": 1},
