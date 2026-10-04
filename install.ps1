@@ -91,9 +91,9 @@ try {
     # PowerShell 5.1 调用原生程序时会丢弃空字符串参数，使用显式哨兵。
     $sourceArgument = '-'
     if ($SourceDir) { $sourceArgument = $SourceDir }
-    # 与 Unix 入口相同：API 下载、隔离认证、校验支持文件后才执行。
+    # Public downloads avoid the API; authenticated private downloads retain isolated credentials.
     $bootstrap = @'
-import hashlib, json, os, re, shutil, sys, urllib.request, zipfile
+import hashlib, json, os, re, shutil, sys, urllib.error, urllib.request, zipfile
 from pathlib import Path, PurePosixPath
 repo, version, directory, source = sys.argv[1:]
 if source == '-': source = ''
@@ -105,21 +105,35 @@ class Redirect(urllib.request.HTTPRedirectHandler):
 def request(url, accept='application/vnd.github+json'):
     req = urllib.request.Request(url, headers={'Accept': accept, 'User-Agent': 'K3-installer'})
     token = os.environ.get('GITHUB_TOKEN')
-    if token:
+    if token and url.startswith('https://api.github.com/repos/'):
         if len(token) > 1024 or not re.fullmatch('[A-Za-z0-9_.-]+', token): raise ValueError('Invalid GITHUB_TOKEN format')
         req.add_unredirected_header('Authorization', 'Bearer ' + token)
     return urllib.request.build_opener(Redirect()).open(req, timeout=60)
-if not source:
-    endpoint = 'latest' if version == 'latest' else 'tags/' + version
-    with request(f'https://api.github.com/repos/{repo}/releases/{endpoint}') as response: release = json.load(response)
-    assets = {item['name']: item for item in release['assets']}
+# Public release downloads do not consume the anonymous GitHub REST API quota.
+route = 'latest/download' if version == 'latest' else 'download/' + version
+base = f'https://github.com/{repo}/releases/{route}'
+release = None
+assets = None
+def asset_response(name):
+    global release, assets
+    if assets is None:
+        try:
+            return request(base + '/' + name, 'application/octet-stream')
+        except urllib.error.HTTPError as error:
+            # Private repositories return 404 on public download URLs.
+            if error.code != 404 or not os.environ.get('GITHUB_TOKEN'): raise
+        endpoint = 'latest' if version == 'latest' else 'tags/' + version
+        with request(f'https://api.github.com/repos/{repo}/releases/{endpoint}') as response: release = json.load(response)
+        if version != 'latest' and release.get('tag_name') != version: raise RuntimeError('Release tag does not match requested version')
+        assets = {item['name']: item for item in release['assets']}
+    url = assets[name]['url']
+    if not url.startswith(f'https://api.github.com/repos/{repo}/releases/assets/'): raise RuntimeError('Invalid release asset URL')
+    return request(url, 'application/octet-stream')
 for name in ('k3-install-support.zip', 'k3-install-support.zip.sha256'):
     target = work / name
     if source: shutil.copyfile(Path(source) / 'support' / name, target)
     else:
-        url = assets[name]['url']
-        if not url.startswith(f'https://api.github.com/repos/{repo}/releases/assets/'): raise RuntimeError('Invalid release asset URL')
-        with request(url, 'application/octet-stream') as response, target.open('wb') as output: shutil.copyfileobj(response, output)
+        with asset_response(name) as response, target.open('wb') as output: shutil.copyfileobj(response, output)
 archive = work / 'k3-install-support.zip'
 fields = archive.with_name(archive.name + '.sha256').read_text(encoding='ascii').split()
 with archive.open('rb') as stream: actual = hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -131,8 +145,9 @@ with zipfile.ZipFile(archive) as z:
     if sum(entry.file_size for entry in z.infolist()) > 20 * 1024**2: raise RuntimeError('Installation support archive exceeds the size limit')
     z.extractall(work / 'support')
 installed = json.loads((work / 'support/online-version.json').read_text())['version']
+if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', installed): raise RuntimeError('Invalid installation support file version')
 if version != 'latest' and version != 'v' + installed: raise RuntimeError('Requested version does not match installation support files')
-if not source and release['tag_name'] != 'v' + installed: raise RuntimeError('Release tag does not match installation support file version')
+if release is not None and release['tag_name'] != 'v' + installed: raise RuntimeError('Release tag does not match installation support file version')
 '@
     & $python -I -c $bootstrap $Repo $Version $work $sourceArgument
     if ($LASTEXITCODE -ne 0) { throw 'Installation support file download or verification failed' }

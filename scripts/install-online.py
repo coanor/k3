@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def request(url: str, accept: str = "application/vnd.github+json"):
     headers = {"User-Agent": "K3-online-installer", "Accept": accept}
     req = urllib.request.Request(url, headers=headers)
     token = os.environ.get("GITHUB_TOKEN")
-    if token:
+    if token and url.startswith("https://api.github.com/repos/"):
         if len(token) > 1024 or not re.fullmatch(r"[A-Za-z0-9_.-]+", token):
             raise ValueError("Invalid GITHUB_TOKEN format")
         req.add_unredirected_header("Authorization", "Bearer " + token)
@@ -71,13 +72,25 @@ def fetch(name: str, destination: Path, base_url: str, assets: Path | None,
             raise ValueError(f"Release asset exceeds the size limit: {name}")
         shutil.copyfile(assets / name, destination)
     else:
-        entry = release_assets(base_url).get(name)
-        if not entry:
-            raise ValueError(f"Release is missing asset: {name}")
-        url = entry["url"]
-        if not url.startswith(base_url.split("/releases/")[0] + "/releases/assets/"):
-            raise ValueError("Invalid release asset URL")
-        with request(url, "application/octet-stream") as response:
+        try:
+            response = request(base_url + "/" + name, "application/octet-stream")
+        except urllib.error.HTTPError as error:
+            # Public downloads need no API. Private repositories can use an existing token.
+            if error.code != 404 or not os.environ.get("GITHUB_TOKEN"):
+                raise
+            location = re.fullmatch(r"https://github.com/([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)/releases/download/(v[0-9]+\.[0-9]+\.[0-9]+)", base_url)
+            if not location:
+                raise ValueError("Invalid release download URL") from error
+            repo, tag = location.groups()
+            api = f"https://api.github.com/repos/{repo}/releases"
+            entry = release_assets(api + "/tags/" + tag).get(name)
+            if not entry:
+                raise ValueError(f"Release is missing asset: {name}")
+            url = entry["url"]
+            if not url.startswith(api + "/assets/"):
+                raise ValueError("Invalid release asset URL")
+            response = request(url, "application/octet-stream")
+        with response:
             with destination.open("wb") as output:
                 written = 0
                 while chunk := response.read(min(1024**2, maximum - written + 1)):
@@ -179,7 +192,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
     version = json.loads((SUPPORT / "online-version.json").read_text())["version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Invalid release version")
-    base = f"https://api.github.com/repos/{repo}/releases/tags/v{version}"
+    base = f"https://github.com/{repo}/releases/download/v{version}"
     with tempfile.TemporaryDirectory(prefix=".k3-install-", dir=prefix.parent) as directory:
         work = Path(directory)
         root = work / "K3"
