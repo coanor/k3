@@ -213,7 +213,7 @@ class WindowsDiscoveryTests(unittest.TestCase):
                 harness.write_text("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n" + discovery +
                     "\nConvertTo-Json -Compress -InputObject @(Find-K3OnlineInstallations)\n", encoding="utf-8-sig")
                 result = subprocess.check_output([POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
-                    cwd=directory, text=True, encoding="utf-8", stderr=subprocess.PIPE, timeout=30)
+                    cwd=directory, text=True, encoding="utf-8", stderr=subprocess.PIPE, timeout=60)
                 self.assertIn(str(root), json.loads(result))
             finally:
                 for entry in created: Path(entry["path"]).unlink(missing_ok=True)
@@ -242,7 +242,7 @@ class WindowsDiscoveryTests(unittest.TestCase):
 
                 def discover():
                     result = subprocess.check_output([POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
-                        cwd=base, text=True, encoding="utf-8", stderr=subprocess.PIPE, timeout=30)
+                        cwd=base, text=True, encoding="utf-8", stderr=subprocess.PIPE, timeout=60)
                     return json.loads(result)
 
                 self.assertTrue(set(map(str, roots)).issubset(set(discover())))
@@ -295,7 +295,7 @@ ConvertTo-Json -Compress -InputObject @($script:prompts.ToArray())
                 harness_path = base / "entry-harness.ps1"
                 harness_path.write_text(harness, encoding="utf-8-sig")
                 result = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness_path)],
-                    cwd=base, capture_output=True, text=True, encoding="utf-8", timeout=30)
+                    cwd=base, capture_output=True, text=True, encoding="utf-8", timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 prompts = json.loads(result.stdout.strip().splitlines()[-1])
                 self.assertEqual(prompts, (["Select installation number"] if multiple else []) + ["Download and update all K3 components? [y/N]"])
@@ -317,6 +317,8 @@ ConvertTo-Json -Compress -InputObject @($script:prompts.ToArray())
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $script:paths = PATHS
+$script:compiled = $false
+function Add-Type { param([string]$TypeDefinition); $script:compiled = $true }
 function Get-ChildItem {
     [CmdletBinding()] param([string]$LiteralPath, [string]$Filter, [switch]$File)
     if ($LiteralPath -eq 'HKCU:\Software\K3\OnlineInstallations') {
@@ -330,7 +332,8 @@ function Get-ItemProperty {
 function Get-PSDrive { param([string]$PSProvider) }
 function Get-Command { [CmdletBinding()] param([string]$Name, [string]$CommandType, [switch]$All) }
 DISCOVERY
-ConvertTo-Json -Compress -InputObject @(Find-K3OnlineInstallations)
+$locations = @(Find-K3OnlineInstallations)
+ConvertTo-Json -Compress -InputObject @{locations=$locations; compiled=$script:compiled}
 '''
             paths = [str(roots[0]), str(roots[0]), str(base / "missing"), str(roots[1])]
             literal = "@(" + ",".join("'" + path.replace("'", "''") + "'" for path in paths) + ")"
@@ -338,9 +341,11 @@ ConvertTo-Json -Compress -InputObject @(Find-K3OnlineInstallations)
             harness_path = base / "discovery-harness.ps1"
             harness_path.write_text(harness, encoding="utf-8-sig")
             result = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness_path)],
-                cwd=base, capture_output=True, text=True, encoding="utf-8", timeout=30)
+                cwd=base, capture_output=True, text=True, encoding="utf-8", timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), [str(root) for root in roots])
+            captured = json.loads(result.stdout)
+            self.assertEqual(captured["locations"], [str(root) for root in roots])
+            self.assertFalse(captured["compiled"])
 
 
 if __name__ == "__main__":

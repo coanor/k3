@@ -63,8 +63,13 @@ function Find-K3OnlineInstallations {
         Add-K3Installation (Split-Path -Parent $command.Source)
     }
     try {
+        $shortcutFiles = @()
+        foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory'))) {
+            if ($folder) { $shortcutFiles += @(Get-ChildItem -LiteralPath $folder -Filter 'K3-*.lnk' -File -ErrorAction SilentlyContinue) }
+        }
         # Read the Unicode shell-link interface; WScript.Shell loses some Unicode paths.
-        if (-not ('K3InstallationShortcut' -as [type])) {
+        # Compile the reader only when K3 shortcuts actually exist.
+        if ($shortcutFiles.Count -gt 0 -and -not ('K3InstallationShortcut' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -89,14 +94,11 @@ public static class K3InstallationShortcut {
 }
 '@
         }
-        foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory'))) {
-            if (-not $folder) { continue }
-            foreach ($shortcut in @(Get-ChildItem -LiteralPath $folder -Filter 'K3-*.lnk' -File -ErrorAction SilentlyContinue)) {
-                try {
-                    $target = [K3InstallationShortcut]::Target($shortcut.FullName)
-                    if ($target -and [IO.Path]::GetFileName($target) -eq 'k3-gui.exe') { Add-K3Installation (Split-Path -Parent $target) }
-                } catch { }
-            }
+        foreach ($shortcut in $shortcutFiles) {
+            try {
+                $target = [K3InstallationShortcut]::Target($shortcut.FullName)
+                if ($target -and [IO.Path]::GetFileName($target) -eq 'k3-gui.exe') { Add-K3Installation (Split-Path -Parent $target) }
+            } catch { }
         }
     } catch { }
     return $found.ToArray()
