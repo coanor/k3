@@ -24,7 +24,7 @@ spec.loader.exec_module(state)
 class InstallationLocationTests(unittest.TestCase):
     def test_records_survive_repeated_registration_and_remove_only_one_installation(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             first, second = base / "first 安装", base / "second"
             first.mkdir()
             second.mkdir()
@@ -57,7 +57,7 @@ class InstallationLocationTests(unittest.TestCase):
         registry = SimpleNamespace(HKEY_CURRENT_USER="HKCU", REG_SZ=1, CreateKey=create,
             SetValueEx=lambda key, name, reserved, kind, value: values.__setitem__(key.name, {name: value}), DeleteKey=delete)
         with tempfile.TemporaryDirectory() as directory, patch.object(state.sys, "platform", "win32"), patch.dict(sys.modules, winreg=registry):
-            first, second = Path(directory) / "first 安装", Path(directory) / "second"
+            first, second = Path(directory).resolve() / "first 安装", Path(directory).resolve() / "second"
             state.remember_installation(first)
             state.remember_installation(second)
             self.assertEqual(len(values), 2)
@@ -118,7 +118,7 @@ class UnixDiscoveryTests(unittest.TestCase):
     def test_installer_and_upgrader_find_a_unique_registered_unicode_installation(self):
         for arguments in ((), ("--update",)):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
-                base = Path(directory)
+                base = Path(directory).resolve()
                 root = base / "custom disk/旧版本"
                 self.installation(root)
                 self.record(base, "first", root)
@@ -134,7 +134,7 @@ class UnixDiscoveryTests(unittest.TestCase):
 
     def test_multiple_installations_require_a_selection(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             first, second = base / "first", base / "second 安装"
             for name, root in (("a", first), ("b", second)):
                 self.installation(root)
@@ -147,7 +147,7 @@ class UnixDiscoveryTests(unittest.TestCase):
     def test_legacy_default_path_symlink_and_shortcut_discovery(self):
         for source in ("default", "path", "shortcut"):
             with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
-                base = Path(directory)
+                base = Path(directory).resolve()
                 root = base / ("home/.local/share/k3" if source == "default" else "custom 安装")
                 self.installation(root)
                 environment = {}
@@ -167,7 +167,7 @@ class UnixDiscoveryTests(unittest.TestCase):
     def test_legacy_current_directory_and_explicit_directory_enter_update_mode(self):
         for explicit in (False, True):
             with self.subTest(explicit=explicit), tempfile.TemporaryDirectory() as directory:
-                base = Path(directory)
+                base = Path(directory).resolve()
                 root = base / "legacy"
                 self.installation(root)
                 arguments = ("--prefix", str(root)) if explicit else ()
@@ -177,7 +177,7 @@ class UnixDiscoveryTests(unittest.TestCase):
 
     def test_stale_and_symlink_records_fall_back_to_manual_selection(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             root = base / "outside"
             self.installation(root)
             link = base / "linked"
@@ -200,7 +200,7 @@ class WindowsDiscoveryTests(unittest.TestCase):
         shortcuts = importlib.util.module_from_spec(shortcut_spec)
         shortcut_spec.loader.exec_module(shortcuts)
         with tempfile.TemporaryDirectory(prefix="K3 discovery ") as directory:
-            root = Path(directory) / "旧版 安装"
+            root = Path(directory).resolve() / "旧版 安装"
             root.mkdir()
             (root / "k3.exe").write_bytes(b"unused fixture")
             shutil.copy2(sys.executable, root / "k3-gui.exe")
@@ -224,7 +224,7 @@ class WindowsDiscoveryTests(unittest.TestCase):
 
         key = r"Software\K3\DiscoveryTests" + "\\" + uuid.uuid4().hex
         with tempfile.TemporaryDirectory() as directory, patch.object(state, "WINDOWS_LOCATIONS_KEY", key):
-            base = Path(directory)
+            base = Path(directory).resolve()
             roots = [base / "first 安装", base / "second"]
             for root in roots:
                 root.mkdir()
@@ -257,7 +257,7 @@ class WindowsDiscoveryTests(unittest.TestCase):
     def test_install_and_upgrade_entries_skip_disk_selection_for_detected_locations(self):
         for multiple, upgrade in ((False, False), (False, True), (True, True)):
             with self.subTest(multiple=multiple, upgrade=upgrade), tempfile.TemporaryDirectory() as directory:
-                base = Path(directory)
+                base = Path(directory).resolve()
                 roots = [base / "first 安装", base / "second"]
                 for root in roots:
                     root.mkdir()
@@ -305,7 +305,7 @@ ConvertTo-Json -Compress -InputObject @($script:prompts.ToArray())
 
     def test_registry_discovery_skips_stale_records_and_preserves_unicode_paths(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             roots = [base / "first 安装", base / "second"]
             for root in roots:
                 root.mkdir()
