@@ -133,11 +133,14 @@ jobs:
           PYTHONPATH: python/separator/src
         run: python -m unittest discover -s python/separator/tests -p test_model_downloads.py -v
 
-      - name: Test online maintenance and shortcuts
-        run: |
-          python -m unittest discover -s scripts/tests -p test_installation_state.py -v
-          python -m unittest discover -s scripts/tests -p test_install_shortcuts.py -v
-          python -m unittest discover -s scripts/tests -p test_online_install.py -v
+      - name: Test installation ownership and rollback
+        run: python -m unittest discover -s scripts/tests -p test_installation_state.py -v
+
+      - name: Test native Windows shortcuts
+        run: python -m unittest discover -s scripts/tests -p test_install_shortcuts.py -v
+
+      - name: Test online installer
+        run: python -m unittest discover -s scripts/tests -p test_online_install.py -v
 
       - name: Select repository Rust toolchain
         shell: pwsh
