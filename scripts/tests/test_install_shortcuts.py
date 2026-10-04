@@ -59,7 +59,7 @@ class ShortcutTests(unittest.TestCase):
                          "$folder.ParseName((Split-Path -Leaf $env:K3_TEST_LINK)).GetLink.Path"],
                         capture_output=True, check=True, text=True, encoding='utf-8', timeout=30,
                         env=dict(os.environ, K3_TEST_LINK=str(link)))
-                    self.assertEqual(Path(result.stdout.strip()), prefix / 'k3-gui.exe')
+                    self.assertTrue(Path(result.stdout.strip()).samefile(prefix / 'k3-gui.exe'))
                     self.assertEqual(shortcuts.create_shortcuts(prefix, 'windows', True), [])
             finally:
                 for entry in created:
