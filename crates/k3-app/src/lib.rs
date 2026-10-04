@@ -20,6 +20,7 @@ mod recording;
 mod rodio_backend;
 mod rodio_player;
 mod session_playback;
+pub mod updates;
 
 pub use lyrics_download::{
     LyricsChoice, LyricsProgress, LyricsSaved, LyricsSearch, default_lyrics_query,

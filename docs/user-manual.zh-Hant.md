@@ -1,5 +1,7 @@
 # K3 使用者指南
 
+安裝捷徑、GUI/TUI 新版本提示及更新/解除安裝命令請參閱[安裝說明](install-packages.md#update-or-uninstall-an-online-installation)。
+
 [English](user-manual.md) | [简体中文](user-manual.zh-Hans.md) | **繁體中文**
 
 準備歌曲、跟著伴奏唱歌，再儲存你的錄音。本指南以桌面 GUI 為主，括號內保留英文按鈕名稱，
@@ -11,18 +13,18 @@ GUI 支援 **Windows x64** 和 **Linux x64/ARM64**。
 macOS 和 Windows ARM64 目前僅提供 CLI/TUI，這些平台請參閱
 [專案 README](https://github.com/coanor/k3)。
 
-安裝 [v0.1.2 正式版](https://github.com/coanor/k3/releases/tag/v0.1.2)：
+安裝 [v0.1.3 正式版](https://github.com/coanor/k3/releases/tag/v0.1.3)：
 
 Windows：開啟 PowerShell，貼上並執行：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.2/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.3/get.ps1 | iex
 ```
 
 Linux：開啟終端機，貼上並執行：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.2/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.3/install.sh | bash -s -- --version v0.1.3
 ```
 
 選擇**至少有 8 GiB 可用空間**的磁碟，輸入新的或空的安裝目錄，再輸入 `y` 確認。

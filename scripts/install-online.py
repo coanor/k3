@@ -21,6 +21,10 @@ import urllib.request
 from pathlib import Path
 
 SUPPORT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from install_shortcuts import create_shortcuts
+from installation_state import ensure_installation_idle, installation_lock, load_state, migrate_legacy_installation, replace_installation, signature, write_state
+
 CAPABILITIES = {
     ("linux", "x86_64"): (True, True), ("linux", "aarch64"): (True, True),
     ("windows", "x86_64"): (True, True), ("windows", "aarch64"): (False, False),
@@ -165,11 +169,47 @@ def check(root: Path, version: str, runtime: bool) -> None:
     run(python, "-I", SUPPORT / "scripts/check-runtime.py", root, env=environment)
 
 
+def validate_legacy_installation(root: Path) -> str:
+    if root.is_symlink() or not root.is_dir() or (root / "install-manifest.json").is_symlink():
+        raise ValueError("Legacy update requires a real online installation directory")
+    manifest = json.loads((root / "install-manifest.json").read_text(encoding="utf-8"))
+    system = {"Linux": "linux", "Windows": "windows", "Darwin": "macos"}[platform.system()]
+    native = platform.machine().lower()
+    machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(native, native)
+    if not isinstance(manifest.get("version"), str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", manifest["version"]):
+        raise ValueError("Invalid legacy installation version")
+    validate_manifest(manifest, manifest["version"], system, machine)
+    for entry in manifest["files"]:
+        path = root / entry["path"]
+        if path.is_symlink() or signature(path) != {"sha256": entry["sha256"]}:
+            raise ValueError("Legacy program files were changed; reinstall in a new directory")
+    return manifest["version"]
+
+
+def copy_maintenance_files(root: Path, system: str) -> None:
+    extension = "ps1" if system == "windows" else "sh"
+    for name in ("install", "update", "uninstall"):
+        shutil.copy2(SUPPORT / f"{name}.{extension}", root)
+        (root / f"{name}.{extension}").chmod(0o755)
+    scripts = root / "scripts"
+    scripts.mkdir()
+    for name in ("installation_state.py", "uninstall-online.py"):
+        shutil.copy2(SUPPORT / "scripts" / name, scripts / name)
+
+
 def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
-            cache: Path | None = None) -> None:
+            cache: Path | None = None, desktop_shortcut: bool = False,
+            update: bool = False, management_python: Path | None = None) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
         raise ValueError("Release repository must use owner/repo format")
-    if prefix.is_symlink() or (prefix.exists() and (not prefix.is_dir() or any(prefix.iterdir()))):
+    legacy = update and not (prefix / "installation-state.json").exists()
+    if update:
+        ensure_installation_idle(prefix)
+        if legacy:
+            previous_version = validate_legacy_installation(prefix)
+        else:
+            previous_version = load_state(prefix)["version"]
+    elif prefix.is_symlink() or (prefix.exists() and (not prefix.is_dir() or any(prefix.iterdir()))):
         raise ValueError("Installation directory must be absent or empty; existing files cannot be overwritten")
     prefix = prefix.absolute()
     prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +232,8 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
     version = json.loads((SUPPORT / "online-version.json").read_text())["version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Invalid release version")
+    if update and tuple(map(int, version.split("."))) < tuple(map(int, previous_version.split("."))):
+        raise ValueError("Requested release is older than the installed version; refusing to downgrade")
     base = f"https://github.com/{repo}/releases/download/v{version}"
     with tempfile.TemporaryDirectory(prefix=".k3-install-", dir=prefix.parent) as directory:
         work = Path(directory)
@@ -233,14 +275,41 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             if system != "macos":
                 shutil.copy2(SUPPORT / batch, root / batch)
                 (root / batch).chmod(0o755)
+        if not runtime and management_python:
+            shutil.copytree(management_python, root / "runtime/python", symlinks=True)
+        copy_maintenance_files(root, system)
         print("Checking program startup, separation runtime and offline model loading", flush=True)
         check(root, version, runtime)
+        manifest["repo"] = repo
         (root / "install-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                                     encoding="utf-8")
-        # 检查全部通过后才提交安装目录；失败不会覆盖旧安装和用户文件。
-        if prefix.exists():
-            prefix.rmdir()
-        root.rename(prefix)
+        if update:
+            shortcuts = prefix / "shortcuts.json"
+            if shortcuts.exists():
+                shutil.copy2(shortcuts, root / shortcuts.name)
+            write_state(root, repo, version)
+            with installation_lock(prefix):
+                ensure_installation_idle(prefix)
+                if legacy:
+                    validate_legacy_installation(prefix)
+                    backup = migrate_legacy_installation(prefix, root)
+                    print(f"Previous installation preserved in: {backup}", flush=True)
+                else:
+                    replace_installation(prefix, root)
+        else:
+            write_state(root, repo, version)
+            if prefix.exists():
+                prefix.rmdir()
+            root.rename(prefix)
+    if gui and (not update or not (prefix / "shortcuts.json").exists()):
+        try:
+            shortcuts = create_shortcuts(prefix, system, desktop_shortcut)
+            (prefix / "shortcuts.json").write_text(json.dumps(shortcuts, indent=2), encoding="utf-8")
+            state = load_state(prefix)
+            state["files"]["shortcuts.json"] = signature(prefix / "shortcuts.json")
+            (prefix / "installation-state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f"Installation succeeded, but shortcuts could not be created: {error}", file=sys.stderr)
     print(f"Installation complete: {prefix}", flush=True)
     command = str(prefix / ('k3.exe' if system == 'windows' else 'k3'))
     command = "& '" + command.replace("'", "''") + "'" if system == "windows" else shlex.quote(command)
@@ -258,9 +327,13 @@ if __name__ == "__main__":
     parser.add_argument("--uv", type=Path, required=True)
     parser.add_argument("--assets-dir", type=Path, help="Use local platform release assets with checksum verification")
     parser.add_argument("--model-cache", type=Path, help="Reuse downloaded models with integrity checks")
+    parser.add_argument("--desktop-shortcut", action="store_true", help="Create a desktop shortcut on GUI platforms")
+    parser.add_argument("--update", action="store_true", help="Replace a registered online installation after verification")
+    parser.add_argument("--management-python", type=Path, help="Standalone bootstrap Python to retain for CLI maintenance")
     args = parser.parse_args()
     try:
-        install(args.prefix, args.repo, args.uv, args.assets_dir, args.model_cache)
+        install(args.prefix, args.repo, args.uv, args.assets_dir, args.model_cache, args.desktop_shortcut,
+                args.update, args.management_python)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Installation failed: {error}", file=sys.stderr)
         sys.exit(1)

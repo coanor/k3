@@ -1,5 +1,7 @@
 # K3 user guide
 
+For installation shortcuts, new-version detection, and update/uninstall commands, see the [installation guide](install-packages.md#update-or-uninstall-an-online-installation).
+
 **English** | [简体中文](user-manual.zh-Hans.md) | [繁體中文](user-manual.zh-Hant.md)
 
 Prepare a song, sing along, and save your recording. This guide uses the desktop GUI;
@@ -11,18 +13,18 @@ The GUI is available on **Windows x64** and **Linux x64/ARM64**.
 macOS and Windows ARM64 currently provide CLI/TUI only; see the
 [project README](https://github.com/coanor/k3) for those platforms.
 
-Install [v0.1.2](https://github.com/coanor/k3/releases/tag/v0.1.2):
+Install [v0.1.3](https://github.com/coanor/k3/releases/tag/v0.1.3):
 
 Windows — open PowerShell and paste:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.2/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.3/get.ps1 | iex
 ```
 
 Linux — open a terminal and paste:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.2/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.3/install.sh | bash -s -- --version v0.1.3
 ```
 
 Choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,

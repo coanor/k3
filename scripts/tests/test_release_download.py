@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import shutil
 import os
 from pathlib import Path
 import sys
@@ -82,6 +83,7 @@ class PublicReleaseDownloadTests(unittest.TestCase):
                 urllib.request, "build_opener", return_value=self.limited_opener(payloads, requests)):
             support = Path(directory) / "support"
             support.mkdir()
+            installer.copy_maintenance_files(support, "macos")
             (support / "online-version.json").write_text(json.dumps({"version": "0.1.1"}))
             (support / "docs").mkdir()
             (support / "LICENSE").write_text("License fixture")

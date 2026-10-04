@@ -33,6 +33,7 @@ use slint::{ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel};
 use uuid::Uuid;
 
 mod netease_gui;
+mod updates_gui;
 
 slint::include_modules!();
 
@@ -341,6 +342,7 @@ fn install_preference_callbacks(
         let language = GuiLanguage::from_index(index).unwrap_or_default();
         i18n::message(source.as_str(), language).into()
     });
+    updates_gui::install(ui);
     {
         let weak = ui.as_weak();
         let data = Arc::clone(data);

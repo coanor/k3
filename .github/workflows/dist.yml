@@ -120,6 +120,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Select maintenance test Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       - name: Test release downloads with a rate-limited GitHub API
         run: python -m unittest discover -s scripts/tests -p test_release_download.py -v
 
@@ -127,6 +132,15 @@ jobs:
         env:
           PYTHONPATH: python/separator/src
         run: python -m unittest discover -s python/separator/tests -p test_model_downloads.py -v
+
+      - name: Test installation ownership and rollback
+        run: python -m unittest discover -s scripts/tests -p test_installation_state.py -v
+
+      - name: Test native Windows shortcuts
+        run: python -m unittest discover -s scripts/tests -p test_install_shortcuts.py -v
+
+      - name: Test online installer
+        run: python -m unittest discover -s scripts/tests -p test_online_install.py -v
 
       - name: Select repository Rust toolchain
         shell: pwsh
@@ -145,7 +159,7 @@ jobs:
       - name: Parse Windows separation scripts
         shell: pwsh
         run: |
-          foreach ($script in @('separate.ps1', 'install-separator.ps1', 'install.ps1')) {
+          foreach ($script in @('separate.ps1', 'install-separator.ps1', 'install.ps1', 'update.ps1', 'uninstall.ps1', 'scripts/install-shortcuts.ps1')) {
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $script), [ref]$null, [ref]$errors
@@ -276,6 +290,12 @@ jobs:
           MKL_NUM_THREADS: "2"
         run: |
           bash install.sh --prefix "$RUNNER_TEMP/K3 online 安装" --source-dir "$PWD/dist/online" --yes
+          printf 'personal recording' > "$RUNNER_TEMP/K3 online 安装/personal.wav"
+          bash "$RUNNER_TEMP/K3 online 安装/uninstall.sh" --yes
+          test "$(cat "$RUNNER_TEMP/K3 online 安装/personal.wav")" = 'personal recording'
+          test ! -e "$RUNNER_TEMP/K3 online 安装/k3"
+          rm "$RUNNER_TEMP/K3 online 安装/personal.wav"
+          rmdir "$RUNNER_TEMP/K3 online 安装"
 
       - name: Validate Windows online installation
         if: runner.os == 'Windows'
@@ -287,6 +307,15 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 `
             -InstallDir "$env:RUNNER_TEMP\K3 online 安装" -SourceDir "$PWD\dist\online" -Yes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installed = Join-Path $env:RUNNER_TEMP 'K3 online 安装'
+          Set-Content -LiteralPath (Join-Path $installed 'personal.wav') -Value 'personal recording'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File (Join-Path $installed 'uninstall.ps1') -Yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path -LiteralPath (Join-Path $installed 'k3.exe')) { throw 'Uninstall retained registered programs' }
+          if ((Get-Content -LiteralPath (Join-Path $installed 'personal.wav')).Trim() -ne 'personal recording') { throw 'Uninstall modified personal data' }
+          Remove-Item -LiteralPath (Join-Path $installed 'personal.wav')
+          Remove-Item -LiteralPath $installed
 
       - name: Upload independent native assets
         uses: actions/upload-artifact@v7
@@ -738,11 +767,12 @@ jobs:
             exit 1
           fi
           cat > "$RUNNER_TEMP/k3-public-release-notes.md" <<EOF
-          K3 $RELEASE_TAG 在线安装：Linux/macOS 下载 install.sh，Windows 下载 install.ps1。
-          运行时用 --repo 或 -Repo 指定 $PUBLIC_RELEASE_REPO；安装器会让你选择磁盘，再下载平台程序、Python 依赖与模型。
-          macOS 当前无 GUI，Intel macOS 与 Windows ARM64 仅提供 CLI/TUI。可使用 SHA256SUMS 核对发行文件。
+          Install K3 $RELEASE_TAG online: use install.sh on Linux/macOS or install.ps1 on Windows.
+          Select $PUBLIC_RELEASE_REPO with --repo or -Repo. The installer asks for a disk, then downloads native programs, Python dependencies and models.
+          GUI installations include an application menu entry and offer a desktop shortcut. Online installations ship update.sh/update.ps1 and uninstall.sh/uninstall.ps1.
+          macOS currently has no GUI. Intel macOS and Windows ARM64 provide CLI/TUI only. Verify release files with SHA256SUMS.
 
-          此仓库仅用于公开发行；K3 源代码仓库仍为私有。
+          This repository distributes public release assets.
           EOF
           gh release create "$RELEASE_TAG" dist/* \
             --repo "$PUBLIC_RELEASE_REPO" \

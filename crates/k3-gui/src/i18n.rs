@@ -13,6 +13,9 @@ static HANT_CATALOG: OnceLock<HashMap<String, String>> = OnceLock::new();
 // These messages contain app-owned variables. Paths, file names, device names, and
 // external errors remain verbatim; only the surrounding K3 text is translated.
 const TEMPLATES: &[&str] = &[
+    "K3 {version} is available",
+    "Update check failed: {error}",
+    "Cannot open release page: {error}",
     "Searching {source}: {artist} - {title}...",
     "Searching {source}: {title}...",
     "No {source} artist match; retrying by title only: {title}...",

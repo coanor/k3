@@ -143,6 +143,13 @@ export component K3Window inherits Window {
     property <bool> recording-active: root.recording-state != RecordingState.idle;
     in property <bool> current-project-separating: false;
 
+    in property <string> app-version;
+    in property <string> update-status;
+    in property <string> release-url;
+    in property <bool> update-checking;
+    callback check-updates;
+    callback open-release;
+
     callback choose-projects-root;
     callback save-projects-root(string);
     callback search(string);
@@ -450,8 +457,12 @@ export component K3Window inherits Window {
                     }
                     ActionButton {
                         width: 42px;
-                        accessible-name: Strings.about-k3;
+                        accessible-name: root.release-url != "" ? Strings.update-available : Strings.about-k3;
                         icon: @image-url("../assets/info.svg");
+                        if root.release-url != "": Rectangle {
+                            width: 8px; height: 8px; border-radius: 4px;
+                            background: Tokens.cue; x: parent.width - 10px; y: 2px;
+                        }
                         clicked => { root.overlay = Overlay.about; }
                     }
                     Rectangle { horizontal-stretch: 1; }
@@ -511,8 +522,12 @@ export component K3Window inherits Window {
                         }
                         ActionButton {
                             width: 36px;
-                            accessible-name: Strings.about-k3;
+                            accessible-name: root.release-url != "" ? Strings.update-available : Strings.about-k3;
                             icon: @image-url("../assets/info.svg");
+                        if root.release-url != "": Rectangle {
+                            width: 8px; height: 8px; border-radius: 4px;
+                            background: Tokens.cue; x: parent.width - 10px; y: 2px;
+                        }
                             clicked => { root.overlay = Overlay.about; }
                         }
                     }
@@ -1595,7 +1610,7 @@ export component K3Window inherits Window {
         TouchArea { clicked => { root.overlay = Overlay.none; } }
         Rectangle {
             width: 430px;
-            height: 310px;
+            height: min(500px, parent.height - 48px);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: 8px;
@@ -1607,13 +1622,37 @@ export component K3Window inherits Window {
                 padding: 24px;
                 spacing: 12px;
                 Text {
-                    text: Strings.about-title;
+                    text: Strings.about-title + " " + root.app-version;
                     color: Tokens.ink;
                     font-size: 22px;
                     font-weight: 650;
                     horizontal-alignment: center;
                 }
                 AboutSlint { vertical-stretch: 1; }
+                Text {
+                    text: root.localize-message(root.update-status, root.language-index);
+                    color: Tokens.ink;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    ActionButton {
+                        label: Strings.check-updates;
+                        enabled: !root.update-checking;
+                        clicked => { root.check-updates(); }
+                    }
+                    if root.release-url != "": ActionButton {
+                        label: Strings.open-release;
+                        clicked => { root.open-release(); }
+                    }
+                }
+                if root.release-url != "": Text {
+                    text: Strings.update-instructions;
+                    color: Tokens.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
                 Text {
                     text: Strings.diagnostics-prefix + root.log-path;
                     color: Tokens.muted;

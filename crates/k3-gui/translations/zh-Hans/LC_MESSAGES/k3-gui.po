@@ -771,3 +771,31 @@ msgstr "正在写入音轨…"
 
 msgid "Saving project…"
 msgstr "正在保存工程…"
+
+msgid "Check for updates"
+msgstr "检查更新"
+
+msgid "Open release page"
+msgstr "打开发行页面"
+
+msgid "Save your recording and close K3, then run update.sh or update.ps1 from your installation folder. System packages use their package manager."
+msgstr "保存录音并关闭 K3，然后运行安装目录中的 update.sh 或 update.ps1。系统安装包通过包管理器更新。"
+
+msgid "Checking for updates…"
+msgstr "正在检查更新…"
+
+msgid "K3 is up to date"
+msgstr "K3 已是最新版本"
+
+msgid "K3 {version} is available"
+msgstr "K3 {version} 已可下载"
+
+msgid "Update check failed: {error}"
+msgstr "检查更新失败：{error}"
+
+msgid "Cannot open release page: {error}"
+msgstr "无法打开发行页面：{error}"
+
+
+msgid "Update available — open About"
+msgstr "有更新可用 — 打开关于"
