@@ -18,7 +18,7 @@ standalone Python, separation dependencies, and models, then checks startup and 
 A full installation needs **8 GiB** of free space at its peak and uses about **2–4 GiB** afterward.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
-**Current release: [v0.1.5](https://github.com/coanor/k3/releases/tag/v0.1.5).
+**Current release: [v0.1.6](https://github.com/coanor/k3/releases/tag/v0.1.6).
 Online installation has been verified on all six platforms. Use the one-line command for your system below.**
 
 System requirements: Linux needs glibc ≥ 2.39 (for example, Ubuntu 24.04); macOS needs version
@@ -29,22 +29,22 @@ On Ubuntu 24.04, install the runtime libraries first:
 sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
 ```
 
-### One-line installation: v0.1.5
+### One-line installation: v0.1.6
 
 Copy the one-line command for your system to start installation. You do not need to sign in
 to GitHub or download platform components manually. These commands select the stable
-`v0.1.5` release explicitly.
+`v0.1.6` release explicitly.
 
 Linux/macOS:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.5/install.sh | bash -s -- --version v0.1.5
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.5/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.6/get.ps1 | iex
 ```
 
 The script reads disk selection and confirmation from the terminal. The Windows bootstrap
@@ -60,7 +60,7 @@ steps below to inspect and verify the entry script before running it.
 Linux/macOS:
 
 ```bash
-release_url='https://github.com/coanor/k3/releases/download/v0.1.5'
+release_url='https://github.com/coanor/k3/releases/download/v0.1.6'
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
 if command -v sha256sum >/dev/null; then
@@ -68,7 +68,7 @@ if command -v sha256sum >/dev/null; then
 else
     shasum -a 256 --check install.sh.sha256
 fi &&
-bash ./install.sh --version v0.1.5
+bash ./install.sh --version v0.1.6
 ```
 
 Windows PowerShell:
@@ -76,14 +76,14 @@ Windows PowerShell:
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.5'
+    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.6'
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
     $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
     if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
         throw 'Installer script SHA-256 verification failed'
     }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.5
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.6
 }
 ```
 
@@ -107,7 +107,7 @@ On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
 <details>
 <summary>Optional: install from Actions components</summary>
 
-1. Sign in to GitHub and open the [v0.1.5 release build](https://github.com/coanor/k3/actions/workflows/dist.yml?query=branch%3Av0.1.5).
+1. Sign in to GitHub and open the [v0.1.6 release build](https://github.com/coanor/k3/actions/workflows/dist.yml?query=branch%3Av0.1.6).
    Under Artifacts at the bottom of the page, download **`online-support`** and the component
    group for your system from the table above. Artifacts are retained for 14 days. If they have
    expired, find a newer successful six-platform build in
@@ -145,6 +145,8 @@ options, updating, uninstalling, application shortcuts, and optional offline pac
 Online installs include `update.sh` / `update.ps1` and `uninstall.sh` / `uninstall.ps1`;
 to upgrade an older online installation that has no maintenance scripts, use the
 [one-line upgrade commands](docs/user-manual.md#upgrade-an-existing-installation).
+Updates verify existing model weights against the new release's SHA-256 and reuse
+matching checkpoints, downloading only missing or changed weights.
 GUI/TUI check for new stable releases in the background. See the [user manual](docs/user-manual.md)
 for the GUI workflow, playback, and recording. The user guide is available in English,
 Simplified Chinese and Traditional Chinese. The installation guide is in English with a

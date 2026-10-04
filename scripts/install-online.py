@@ -23,7 +23,7 @@ from pathlib import Path
 SUPPORT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from install_shortcuts import create_shortcuts
-from installation_state import ensure_installation_idle, installation_lock, load_state, migrate_legacy_installation, replace_installation, signature, write_state
+from installation_state import directory_link, ensure_installation_idle, installation_lock, load_state, migrate_legacy_installation, replace_installation, signature, write_state
 
 CAPABILITIES = {
     ("linux", "x86_64"): (True, True), ("linux", "aarch64"): (True, True),
@@ -266,6 +266,10 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
                 environment.pop(credential, None)
             (work / "tmp").mkdir()
             args = [sys.executable, "-I", SUPPORT / "scripts/build-runtime.py", "--output", root / "runtime"]
+            if update and cache is None:
+                installed_models = prefix / "models"
+                if installed_models.is_dir() and not directory_link(installed_models):
+                    cache = installed_models
             if cache:
                 args += ["--model-cache", cache]
             run(*args, env=environment)

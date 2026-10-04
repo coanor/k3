@@ -13,18 +13,18 @@ The GUI is available on **Windows x64** and **Linux x64/ARM64**.
 macOS and Windows ARM64 currently provide CLI/TUI only; see the
 [project README](https://github.com/coanor/k3) for those platforms.
 
-Install [v0.1.5](https://github.com/coanor/k3/releases/tag/v0.1.5):
+Install [v0.1.6](https://github.com/coanor/k3/releases/tag/v0.1.6):
 
 Windows — open PowerShell and paste:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.5/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.6/get.ps1 | iex
 ```
 
 Linux — open a terminal and paste:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.5/install.sh | bash -s -- --version v0.1.5
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
 Choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,
@@ -61,7 +61,9 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 
 Enter the **existing K3 installation folder**, then confirm with `y`. The upgrade
 entry verifies the downloaded installer and updates K3 in place. Keep at least
-8 GiB free for a full installation. Your projects and recordings are retained;
+8 GiB free for a full installation. Existing model weights are reused when their
+SHA-256 matches the new release; only missing or changed weights are downloaded.
+Your projects and recordings are retained;
 upgrades from legacy releases also keep the old installation in a sibling
 `.k3-previous-*` backup folder. Keep that backup until you have checked the upgrade.
 Installations made with `.exe`, `.deb` or `.pkg` use their system installer or package manager.
