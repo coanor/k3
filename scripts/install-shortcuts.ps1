@@ -13,7 +13,7 @@ foreach ($target in $targets) {
     if (Test-Path -LiteralPath $target) { continue }
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
     $shortcut = $shell.CreateShortcut($target)
-    $shortcut.TargetPath = Join-Path $root 'k3-gui.exe'
+    $shortcut.TargetPath = [string](Join-Path $root 'k3-gui.exe')
     $shortcut.WorkingDirectory = [Environment]::GetFolderPath('MyDocuments')
     $shortcut.IconLocation = (Join-Path $root 'k3-gui.exe') + ',0'
     $shortcut.Description = 'K3 karaoke player and recorder'
