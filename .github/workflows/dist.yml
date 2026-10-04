@@ -142,6 +142,9 @@ jobs:
       - name: Test online installer
         run: python -m unittest discover -s scripts/tests -p test_online_install.py -v
 
+      - name: Test installed Windows maintenance entry points
+        run: python -m unittest discover -s scripts/tests -p test_windows_maintenance.py -v
+
       - name: Select repository Rust toolchain
         shell: pwsh
         run: rustup show active-toolchain
@@ -176,6 +179,17 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
             -File scripts/test-windows-separator-utf8.ps1 -WorkRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-maintenance:
+    name: Test Windows ARM64 maintenance
+    if: github.event_name == 'pull_request'
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m unittest discover -s scripts/tests -p test_windows_maintenance.py -v
 
   build:
     if: (github.event_name == 'workflow_dispatch' && inputs.installer_source_run == '') || startsWith(github.ref, 'refs/tags/')

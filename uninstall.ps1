@@ -1,6 +1,7 @@
 [CmdletBinding()]
-param([string]$InstallDir = $PSScriptRoot, [switch]$Yes)
+param([string]$InstallDir, [switch]$Yes)
 $ErrorActionPreference = 'Stop'
+if (-not $InstallDir) { $InstallDir = $PSScriptRoot }
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 if (-not $Yes) {
     $answer = Read-Host "Remove K3 installation files from $InstallDir? [y/N]"
