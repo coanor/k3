@@ -115,6 +115,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Test release downloads with a rate-limited GitHub API
+        run: python -m unittest discover -s scripts/tests -p test_release_download.py -v
+
       - name: Select repository Rust toolchain
         shell: pwsh
         run: rustup show active-toolchain
