@@ -11,18 +11,18 @@ GUI 支持 **Windows x64** 和 **Linux x64/ARM64**。
 macOS 和 Windows ARM64 目前仅提供 CLI/TUI，这些平台请参阅
 [项目 README](https://github.com/coanor/k3)。
 
-安装 [v0.1.1 正式版](https://github.com/coanor/k3/releases/tag/v0.1.1)：
+安装 [v0.1.2 正式版](https://github.com/coanor/k3/releases/tag/v0.1.2)：
 
 Windows：打开 PowerShell，粘贴并运行：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.1/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.2/get.ps1 | iex
 ```
 
 Linux：打开终端，粘贴并运行：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.1/install.sh | bash -s -- --version v0.1.1
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.2/install.sh | bash -s -- --version v0.1.2
 ```
 
 选择**至少有 8 GiB 剩余空间**的磁盘，输入一个新目录或空目录，再输入 `y` 确认。
