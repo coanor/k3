@@ -57,6 +57,23 @@ Windows uses `-SourceDir` with the same layout. `--model-cache` / `-ModelCache` 
 
 ## Update or uninstall an online installation
 
+To upgrade any existing online installation to the latest stable release, including
+v0.1.1 without maintenance scripts, close K3 and run one command:
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/latest/download/upgrade.sh | bash
+```
+
+```powershell
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/latest/download/upgrade.ps1 | iex
+```
+
+Enter the existing installation directory and confirm the update. These standalone
+entries verify the downloaded installer's SHA-256 and select update mode explicitly.
+Each entry pins its installer and support files to the release that supplied it.
+The user manuals also include these commands. This applies to online installations;
+system packages use their installer or package manager.
+
 Online installs ship maintenance scripts and their own Python interpreter, including CLI-only platforms. No system Python is required. Save recordings and close all K3 windows, TUI sessions and separation jobs before maintenance. The scripts check for processes running from the installation and use a lock to prevent concurrent changes.
 
 Linux/macOS, from the installation directory:
