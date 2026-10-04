@@ -11,6 +11,7 @@ source_dir=
 model_cache=
 confirmed=false
 desktop_shortcut=ask
+update=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix|--repo|--version|--source-dir|--model-cache)
@@ -21,10 +22,12 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2 ;;
         --yes) confirmed=true; shift ;;
+        --update) update=true; shift ;;
         --desktop-shortcut) desktop_shortcut=yes; shift ;;
         --no-desktop-shortcut) desktop_shortcut=no; shift ;;
         --help|-h)
             echo 'Usage: bash install.sh [--prefix INSTALL_DIR] [--repo owner/repo] [--version vX.Y.Z] [--yes]'
+            echo '--update: verify and replace an existing online installation; close K3 first.'
             echo '--desktop-shortcut / --no-desktop-shortcut: choose whether to create a desktop icon; GUI platforms also get an application menu entry.'
             echo '--source-dir: local release directory; --model-cache: downloaded models. Integrity checks still apply.'
             exit 0 ;;
@@ -82,7 +85,12 @@ if [[ -z "$prefix" ]]; then
     prefix=${prefix:-$default_prefix}
 fi
 [[ "$prefix" == /* ]] || prefix="$PWD/$prefix"
-[[ ! -L "$prefix" && ( ! -e "$prefix" || ( -d "$prefix" && -z $(ls -A "$prefix") ) ) ]] || { echo 'Installation directory must be absent or empty; existing files cannot be overwritten' >&2; exit 1; }
+if [[ "$update" == true ]]; then
+    [[ -d "$prefix" && ! -L "$prefix" && ( -f "$prefix/installation-state.json" || -f "$prefix/install-manifest.json" ) ]] || { echo 'Update requires a registered online installation directory' >&2; exit 1; }
+    echo 'Close all K3 windows, TUI sessions and separation jobs before updating.'
+else
+    [[ ! -L "$prefix" && ( ! -e "$prefix" || ( -d "$prefix" && -z $(ls -A "$prefix") ) ) ]] || { echo 'Installation directory must be absent or empty; existing files cannot be overwritten' >&2; exit 1; }
+fi
 ancestor=$prefix
 while [[ ! -e "$ancestor" ]]; do ancestor=$(dirname "$ancestor"); done
 [[ -d "$ancestor" ]] || { echo 'The parent installation path is not a directory' >&2; exit 1; }
@@ -93,10 +101,12 @@ echo "Free disk space: $((available / 1024)) MiB; reserved space for peak instal
 echo 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. CLI-only installations are smaller. Sizes vary by platform and dependencies.'
 if [[ "$confirmed" != true ]]; then
     [[ -t 3 ]] || { echo 'Non-interactive installation requires --yes' >&2; exit 1; }
-    read -r -u 3 -p 'Start downloading and installing? [y/N]: ' answer
+    prompt='Start downloading and installing? [y/N]: '
+    if [[ "$update" == true ]]; then prompt='Download and update all K3 components? [y/N]: '; fi
+    read -r -u 3 -p "$prompt" answer
     case "$answer" in y|Y|yes|YES) ;; *) echo 'Cancelled. No components were downloaded.'; exit 0 ;; esac
 fi
-if [[ "$system" == linux && "$desktop_shortcut" == ask && "$confirmed" != true ]]; then
+if [[ "$update" != true && "$system" == linux && "$desktop_shortcut" == ask && "$confirmed" != true ]]; then
     read -r -u 3 -p 'Create a desktop shortcut? [y/N]: ' answer
     case "$answer" in y|Y|yes|YES) desktop_shortcut=yes ;; *) desktop_shortcut=no ;; esac
 fi
@@ -177,7 +187,8 @@ if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', installed): raise RuntimeError('I
 if version != 'latest' and version != 'v' + installed: raise RuntimeError('Requested version does not match installation support files')
 if release is not None and release['tag_name'] != 'v' + installed: raise RuntimeError('Release tag does not match installation support file version')
 PY
-args=(--prefix "$prefix" --repo "$repo" --uv "$uv")
+args=(--prefix "$prefix" --repo "$repo" --uv "$uv" --management-python "$(dirname "$(dirname "$python")")")
+if [[ "$update" == true ]]; then args+=(--update); fi
 if [[ "$desktop_shortcut" == yes ]]; then args+=(--desktop-shortcut); fi
 if [[ -n "$source_dir" ]]; then args+=(--assets-dir "$source_dir/platform"); fi
 if [[ -n "$model_cache" ]]; then args+=(--model-cache "$model_cache"); fi

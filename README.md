@@ -141,10 +141,12 @@ If anonymous downloads hit GitHub API rate limits (`403` / `429`), wait for the 
 reset. The installer currently supports authentication through a personal `GITHUB_TOKEN` set
 in the process environment; do not put the token in command arguments or public files.
 See the [installation guide](docs/install-packages.md) for disk selection, directory/version
-options, uninstalling, and optional offline packages. See the [user manual](docs/user-manual.md)
+options, updating, uninstalling, application shortcuts, and optional offline packages.
+Online installs include `update.sh` / `update.ps1` and `uninstall.sh` / `uninstall.ps1`;
+GUI/TUI check for new stable releases in the background. See the [user manual](docs/user-manual.md)
 for the GUI workflow, playback, and recording. The user guide is available in English,
-Simplified Chinese and Traditional Chinese. Other installation and technical documents
-remain in Simplified Chinese.
+Simplified Chinese and Traditional Chinese. The installation guide is in English with a
+Simplified Chinese translation; older technical documents may still be in Simplified Chinese.
 
 ## Building from source
 

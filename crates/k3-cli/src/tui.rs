@@ -18,6 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use k3_app::updates::{ReleaseStatus, start_release_check};
 use k3_app::{
     AudioRecorder, LyricsChoice, LyricsProgress, LyricsSearch, PlaybackCommand, PlaybackStatus,
     RecordingTimelineAnchor, SessionPlayback, SessionTrackKind, TrackKind as ProjectTrackKind,
@@ -1171,12 +1172,17 @@ pub fn open(
         netease_fallback,
         &mut |progress| eprintln!("{progress}"),
     )?;
+    let updates = start_release_check(env!("CARGO_PKG_VERSION").into());
+    let mut update_notice = format!("K3 {} · Checking for updates…", env!("CARGO_PKG_VERSION"));
     let mut guard = TerminalGuard::enter()?;
 
     loop {
+        poll_release_check(&updates, &mut update_notice);
         app.poll_lyrics_search();
         app.playback.refresh_stream_error();
-        guard.terminal.draw(|frame| draw(frame, &app))?;
+        guard
+            .terminal
+            .draw(|frame| draw(frame, &app, &update_notice))?;
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
             && should_handle_key(&key)
@@ -1191,9 +1197,12 @@ pub fn open(
 pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
     let mut library = MediaLibrary::new(config)?;
     let mut current: Option<App> = None;
+    let updates = start_release_check(env!("CARGO_PKG_VERSION").into());
+    let mut update_notice = format!("K3 {} · Checking for updates…", env!("CARGO_PKG_VERSION"));
     let mut guard = TerminalGuard::enter()?;
 
     loop {
+        poll_release_check(&updates, &mut update_notice);
         if let Some(app) = &mut current {
             app.poll_lyrics_search();
             app.playback.refresh_stream_error();
@@ -1202,7 +1211,7 @@ pub fn open_library(config: LibraryConfig) -> Result<(), Box<dyn Error>> {
         poll_import_job(&mut library)?;
         guard
             .terminal
-            .draw(|frame| draw_library(frame, &library, current.as_ref()))?;
+            .draw(|frame| draw_library(frame, &library, current.as_ref(), &update_notice))?;
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
             && should_handle_key(&key)
@@ -1547,8 +1556,34 @@ fn should_handle_key(key: &KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
 }
 
-fn draw(frame: &mut Frame, app: &App) {
-    draw_project(frame, frame.area(), app, None);
+fn poll_release_check(receiver: &Receiver<Result<ReleaseStatus, String>>, notice: &mut String) {
+    if let Ok(result) = receiver.try_recv() {
+        let current = env!("CARGO_PKG_VERSION");
+        *notice = match result {
+            Ok(ReleaseStatus::Current) => format!("K3 {current} · Up to date"),
+            Ok(ReleaseStatus::Available { version, url }) => format!(
+                "K3 {current} · K3 {version} is available · {url}\nClose K3, then run update.sh/update.ps1; system installs use the package manager."
+            ),
+            Err(error) => format!("K3 {current} · Update check unavailable: {error}"),
+        };
+    }
+}
+
+fn draw_update_header(frame: &mut Frame, notice: &str) -> Rect {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(frame.area());
+    frame.render_widget(
+        Paragraph::new(notice).style(Style::default().fg(Color::Yellow)),
+        rows[0],
+    );
+    rows[1]
+}
+
+fn draw(frame: &mut Frame, app: &App, update_notice: &str) {
+    let area = draw_update_header(frame, update_notice);
+    draw_project(frame, area, app, None);
     if let Some(editor) = &app.lyrics_query_editor {
         draw_lyrics_query_editor(frame, frame.area(), editor);
     } else if let Some(picker) = &app.lyrics_picker {
@@ -1949,7 +1984,13 @@ fn panel_title(label: &str, library_focused: Option<bool>) -> String {
     }
 }
 
-fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>) {
+fn draw_library(
+    frame: &mut Frame,
+    library: &MediaLibrary,
+    current: Option<&App>,
+    update_notice: &str,
+) {
+    let area = draw_update_header(frame, update_notice);
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -1957,7 +1998,7 @@ fn draw_library(frame: &mut Frame, library: &MediaLibrary, current: Option<&App>
             Constraint::Percentage(56),
             Constraint::Percentage(22),
         ])
-        .split(frame.area());
+        .split(area);
     draw_library_projects(frame, columns[0], library);
     if let Some(app) = current {
         draw_project(

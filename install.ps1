@@ -6,6 +6,7 @@ param(
     [string]$Version = 'latest',
     [string]$SourceDir,
     [string]$ModelCache,
+    [switch]$Update,
     [switch]$DesktopShortcut,
     [switch]$NoDesktopShortcut,
     [switch]$Yes
@@ -46,7 +47,13 @@ if (-not $InstallDir) {
 }
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 if ($InstallDir.StartsWith('\\')) { throw 'Install on a local disk; network shares are unsupported' }
-if (Test-Path -LiteralPath $InstallDir) {
+if ($Update) {
+    Write-Host 'Close all K3 windows, TUI sessions and separation jobs before updating.'
+    $existing = Get-Item -LiteralPath $InstallDir -Force
+    if (-not $existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'installation-state.json')) -and
+         -not (Test-Path -LiteralPath (Join-Path $InstallDir 'install-manifest.json')))) { throw 'Update requires a registered online installation directory' }
+} elseif (Test-Path -LiteralPath $InstallDir) {
     $existing = Get-Item -LiteralPath $InstallDir -Force
     if (-not $existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @(Get-ChildItem -LiteralPath $InstallDir -Force).Count -gt 0) { throw 'Installation directory must be absent or empty; existing files cannot be overwritten' }
 }
@@ -57,10 +64,12 @@ Write-Host "Installation directory: $InstallDir"
 Write-Host ("Free disk space: {0:N1} GiB; reserved space for peak installation usage: {1:N1} GiB" -f ($driveInfo.AvailableFreeSpace / 1GB), ($required / 1GB))
 Write-Host 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. CLI-only installations are smaller. Sizes vary by platform and dependencies.'
 if (-not $Yes) {
-    $answer = Read-Host 'Start downloading and installing? [y/N]'
+    $prompt = 'Start downloading and installing? [y/N]'
+    if ($Update) { $prompt = 'Download and update all K3 components? [y/N]' }
+    $answer = Read-Host $prompt
     if ($answer -notin @('y', 'Y', 'yes', 'YES')) { Write-Host 'Cancelled. No components were downloaded.'; return }
 }
-if ($machine -eq 'x86_64' -and -not $Yes -and -not $DesktopShortcut -and -not $NoDesktopShortcut) {
+if (-not $Update -and $machine -eq 'x86_64' -and -not $Yes -and -not $DesktopShortcut -and -not $NoDesktopShortcut) {
     $answer = Read-Host 'Create a desktop shortcut? [y/N]'
     $DesktopShortcut = $answer -in @('y', 'Y', 'yes', 'YES')
 }
@@ -158,7 +167,8 @@ if release is not None and release['tag_name'] != 'v' + installed: raise Runtime
 '@
     & $python -I -c $bootstrap $Repo $Version $work $sourceArgument
     if ($LASTEXITCODE -ne 0) { throw 'Installation support file download or verification failed' }
-    $arguments = @('-I', (Join-Path $work 'support\scripts\install-online.py'), '--prefix', $InstallDir, '--repo', $Repo, '--uv', $uv)
+    $arguments = @('-I', (Join-Path $work 'support\scripts\install-online.py'), '--prefix', $InstallDir, '--repo', $Repo, '--uv', $uv, '--management-python', $installations[0].FullName)
+    if ($Update) { $arguments += '--update' }
     if ($SourceDir) { $arguments += @('--assets-dir', (Join-Path $SourceDir 'platform')) }
     if ($DesktopShortcut) { $arguments += '--desktop-shortcut' }
     if ($ModelCache) { $arguments += @('--model-cache', $ModelCache) }

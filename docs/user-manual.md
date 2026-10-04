@@ -1,5 +1,7 @@
 # K3 user guide
 
+For installation shortcuts, new-version detection, and update/uninstall commands, see the [installation guide](install-packages.md#update-or-uninstall-an-online-installation).
+
 **English** | [简体中文](user-manual.zh-Hans.md) | [繁體中文](user-manual.zh-Hant.md)
 
 Prepare a song, sing along, and save your recording. This guide uses the desktop GUI;

@@ -38,7 +38,7 @@ def support(output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     archive = output / "k3-install-support.zip"
     paths = [REPO / "scripts" / name for name in
-             ("install-online.py", "install_shortcuts.py", "install-shortcuts.ps1", "build-runtime.py", "check-runtime.py")]
+             ("install-online.py", "install_shortcuts.py", "install-shortcuts.ps1", "installation_state.py", "uninstall-online.py", "build-runtime.py", "check-runtime.py")]
     paths += [REPO / "docs" / name for name in MANUALS]
     paths += [REPO / "python/separator" / name for name in
               ("pyproject.toml", "README.md", "requirements-runtime.txt")]
@@ -46,12 +46,14 @@ def support(output: Path) -> Path:
     paths += [REPO / "crates/k3-gui/assets" / name for name in
               ("fonts/OFL.txt", "licenses/LicenseRef-Slint-Royalty-free-2.0.md", "k3.svg")]
     paths += [REPO / "separate.sh", REPO / "separate.ps1", REPO / "LICENSE"]
+    paths += [REPO / f"{name}.{extension}" for name in ("install", "update", "uninstall")
+              for extension in ("sh", "ps1")]
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as stream:
         for path in paths:
             stream.write(path, path.relative_to(REPO).as_posix())
         stream.writestr("online-version.json", json.dumps({"format": 1, "version": VERSION}))
     checksum(archive)
-    for name in ("install.sh", "install.ps1"):
+    for name in ("install.sh", "install.ps1", "update.sh", "update.ps1", "uninstall.sh", "uninstall.ps1"):
         target = output / name
         shutil.copy2(REPO / name, target)
         checksum(target)

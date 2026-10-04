@@ -1,5 +1,7 @@
 # K3 用户指南
 
+安装快捷方式、GUI/TUI 新版本提示及更新/卸载命令见[安装说明](install-packages.zh-Hans.md)。
+
 [English](user-manual.md) | **简体中文** | [繁體中文](user-manual.zh-Hant.md)
 
 准备歌曲、跟着伴奏唱歌，再保存你的录音。本指南以桌面 GUI 为主，括号内保留英文按钮名，

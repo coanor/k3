@@ -8,9 +8,9 @@ Use the release `install.sh` on Linux/macOS or `install.ps1` on Windows. The onl
 | --- | --- |
 | Linux x86_64 / ARM64 | GUI, CLI/TUI and CPU runtime; glibc 2.39 or later |
 | Windows x64 | GUI, CLI/TUI and CPU runtime; Windows 10/11 |
-| Windows ARM64 | Native CLI/TUI only; Windows 11 |
+| Windows ARM64 | Native CLI/TUI and maintenance Python; Windows 11 |
 | macOS Apple Silicon | CLI/TUI and CPU runtime; macOS 14 or later |
-| macOS Intel | Native CLI/TUI only; macOS 14 or later |
+| macOS Intel | Native CLI/TUI and maintenance Python; macOS 14 or later |
 
 ## Online installation
 
@@ -54,6 +54,54 @@ bash install.sh --source-dir "$PWD/dist/online" --prefix /mnt/data/K3-check --ye
 ```
 
 Windows uses `-SourceDir` with the same layout. `--model-cache` / `-ModelCache` reuses downloaded models with integrity checks. These options replace only K3 release assets and model downloads; uv, Python and other dependencies still use their official sources.
+
+## Update or uninstall an online installation
+
+Online installs ship maintenance scripts and their own Python interpreter, including CLI-only platforms. No system Python is required. Save recordings and close all K3 windows, TUI sessions and separation jobs before maintenance. The scripts check for processes running from the installation and use a lock to prevent concurrent changes.
+
+Linux/macOS, from the installation directory:
+
+```bash
+bash update.sh
+# Pin a version or use a local release directory:
+bash update.sh --version vX.Y.Z --source-dir /path/to/dist/online
+bash uninstall.sh
+```
+
+Windows PowerShell, from the installation directory:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\update.ps1
+# Pin a version or use local release assets:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Version vX.Y.Z -SourceDir 'D:\release\online'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+Both actions ask for confirmation; `--yes` / `-Yes` skips it for automation. Update defaults to the installed release repository; override it with `--repo` / `-Repo` or `K3_RELEASE_REPO`. It stages a complete new release on the selected disk: CLI, GUI where supported, separator launcher and worker, standalone Python, CPU dependencies, FFmpeg, default models, scripts, licenses and manuals. Each new release supplies its own dependency/model definitions, so these can change together. Additional user models and personal files are retained. Models may be downloaded again; `--model-cache` / `-ModelCache` reuses a directory of known models after checksum verification.
+
+The old installation remains active until all downloads and startup/runtime/model checks pass. The updater refuses releases older than the installed version. File replacement rejects edited managed files and conflicts with unregistered files, and rolls back ordinary move failures. If rollback itself fails, a recovery directory retains the original files. Do not interrupt maintenance while files are being replaced. The updater needs enough disk space for the complete new installation and temporary dependency preparation (at least the installer's 8 GiB reserve for full platforms).
+
+Uninstall removes unchanged files listed in `installation-state.json` and unchanged generated shortcuts. It keeps user projects, recordings, settings, extra models and edited files, even when placed inside the installation. It does not delete old upgrade backup/recovery directories. Keep personal data outside the installation as a normal practice.
+
+### Existing online installs from older releases
+
+Older releases do not ship these maintenance scripts or a complete file inventory. Download the **new** install entry and matching checksum, verify it, then run:
+
+```bash
+bash install.sh --update --prefix /path/to/existing/K3
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Update -InstallDir 'D:\Apps\K3'
+```
+
+The new release must include maintenance support. The installer verifies the old programs against their release manifest, retains the entire old directory in a sibling `.k3-previous-*` backup, and carries personal files and additional models into the upgraded directory. Old custom Python dependencies stay in the backup to keep the new runtime consistent. Files that collide with new managed files remain recoverable in that backup. Review the backup before manually removing it. Installations from `.exe`, `.deb` or `.pkg` use their system installer or package manager, as described below.
+
+### New-version detection
+
+GUI and TUI start a background check of the latest stable GitHub release. GUI shows an indicator on About when a newer version is available; About displays the installed version, offers **Check for updates** and opens the release page. TUI shows the result above its normal panels. GUI messages support English, Simplified Chinese and Traditional Chinese. TUI and installer messages are English.
+
+Checks compare numeric major/minor/patch versions, ignore draft/prerelease metadata, and have a bounded network timeout. An API failure falls back to the public latest-release redirect. Offline operation or failures of both routes produce a status message without blocking playback, recording or separation. The check does not install anything. System packages update through their normal package manager/installer. `K3_RELEASE_REPO=owner/repo` overrides the repository used for checks; private repositories without public release metadata may not be detectable.
 
 ## Optional offline system packages
 

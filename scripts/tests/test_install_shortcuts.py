@@ -39,6 +39,28 @@ class ShortcutTests(unittest.TestCase):
                 self.assertEqual(len(created), 1)
                 self.assertEqual(list(home.glob('*.desktop')), [])
 
+    @unittest.skipUnless(os.name == 'nt', 'Native shortcut creation requires Windows')
+    def test_windows_links_target_the_selected_unicode_installation(self):
+        with tempfile.TemporaryDirectory(prefix='K3 安装 ') as directory:
+            prefix = Path(directory)
+            created = shortcuts.create_shortcuts(prefix, 'windows', True)
+            try:
+                self.assertEqual(len(created), 2)
+                for entry in created:
+                    link = Path(entry['path'])
+                    result = shortcuts.subprocess.run(
+                        ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                         "[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); "
+                         "$shell = New-Object -ComObject WScript.Shell; "
+                         "$shell.CreateShortcut($env:K3_TEST_LINK).TargetPath"],
+                        capture_output=True, check=True, text=True, encoding='utf-8', timeout=30,
+                        env=dict(os.environ, K3_TEST_LINK=str(link)))
+                    self.assertEqual(Path(result.stdout.strip()), prefix / 'k3-gui.exe')
+                    self.assertEqual(shortcuts.create_shortcuts(prefix, 'windows', True), [])
+            finally:
+                for entry in created:
+                    Path(entry['path']).unlink(missing_ok=True)
+
 
 if __name__ == '__main__':
     unittest.main()

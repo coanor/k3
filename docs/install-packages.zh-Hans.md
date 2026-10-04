@@ -75,7 +75,13 @@ Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录
 模型、独立 Python、下载缓存及临时文件均写在所选磁盘；完成或失败后清理安装器临时目录。
 每个程序均校验平台清单中的大小与 SHA-256；uv 固定为 0.12.13 并使用脚本内置摘要。
 完整安装检查 CLI 启动、worker 健康、FFmpeg/模型文件摘要，并禁止联网加载全部默认模型。
-只有检查成功才启用最终目录；已有非空目录会被拒绝，避免覆盖用户文件。更新时请选择新的空目录。
+只有检查成功才启用最终目录；首次安装拒绝已有非空目录，避免覆盖用户文件。
+在线安装目录中的 `update.sh` / `update.ps1` 可校验并更新全部平台组件；
+`uninstall.sh` / `uninstall.ps1` 仅删除清单中未修改的文件，保留个人数据。
+运行前先保存录音并关闭 K3，默认要求确认。旧版安装使用新版安装入口的
+`--update --prefix` / `-Update -InstallDir`，升级后保留完整旧目录备份。
+GUI 的 About 与 TUI 顶部会提示最新正式发行版，GUI 可手动检查。
+完整用法见[英文维护说明](install-packages.md#update-or-uninstall-an-online-installation)。
 
 安装后在所选目录运行 `k3` / `k3.exe`，GUI 平台运行 `k3-gui` / `k3-gui.exe`。
 安装器不修改全局 PATH。Windows x64 会添加开始菜单入口，Linux 会添加用户应用菜单入口；

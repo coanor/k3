@@ -1,5 +1,7 @@
 # K3 使用者指南
 
+安裝捷徑、GUI/TUI 新版本提示及更新/解除安裝命令請參閱[安裝說明](install-packages.md#update-or-uninstall-an-online-installation)。
+
 [English](user-manual.md) | [简体中文](user-manual.zh-Hans.md) | **繁體中文**
 
 準備歌曲、跟著伴奏唱歌，再儲存你的錄音。本指南以桌面 GUI 為主，括號內保留英文按鈕名稱，

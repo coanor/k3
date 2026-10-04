@@ -18,10 +18,15 @@ def desktop_exec(path: Path) -> str:
 
 def create_shortcuts(prefix: Path, system: str, desktop: bool) -> list[dict]:
     """Return paths and digests of created shortcuts; preserve existing files."""
+    if any(ord(character) < 32 for character in str(prefix)):
+        raise OSError("Shortcut paths cannot contain control characters")
     identity = hashlib.sha256(str(prefix.resolve()).encode()).hexdigest()[:12]
     created = []
     if system == "linux":
-        applications = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "applications"
+        data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+        if not data.is_absolute():
+            data = Path.home() / ".local/share"
+        applications = data / "applications"
         contents = ("[Desktop Entry]\nType=Application\nName=K3\n"
                     "Comment=Karaoke player and recorder\n"
                     f"Exec={desktop_exec(prefix / 'k3-gui')}\n"

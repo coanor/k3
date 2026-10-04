@@ -4,6 +4,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import shutil
 import os
 from pathlib import Path
 import shutil
@@ -205,6 +206,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             assets, manifest = self.fixture(base)
             support = base / "support"
             support.mkdir()
+            installer.copy_maintenance_files(support, "macos")
             (support / "online-version.json").write_text(json.dumps({"version": producer.VERSION}))
             (support / "docs").mkdir()
             (support / "docs/user-manual.md").write_text("用户手册")
@@ -213,7 +215,8 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             with patch.object(installer, "SUPPORT", support), patch.object(installer.platform, "system", return_value="Darwin"), patch.object(installer.platform, "machine", return_value="x86_64"):
                 installer.install(prefix, "org/repo", Path("uv"), assets)
             self.assertEqual((prefix / "k3").read_bytes(), (assets / manifest["files"][0]["asset"]).read_bytes())
-            self.assertEqual({path.name for path in prefix.iterdir()}, {"k3", "docs", "LICENSE", "install-manifest.json"})
+            self.assertEqual({path.name for path in prefix.iterdir()}, {"k3", "docs", "LICENSE", "install-manifest.json", "installation-state.json",
+                                "scripts", "install.sh", "update.sh", "uninstall.sh"})
             self.assertEqual((prefix / "LICENSE").read_text(), "许可声明")
             self.assertEqual(list(prefix.parent.glob(".k3-install-*")), [])
 
@@ -224,6 +227,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
             assets, _ = self.fixture(base)
             support = base / "support"
             support.mkdir()
+            installer.copy_maintenance_files(support, "macos")
             (support / "online-version.json").write_text(json.dumps({"version": producer.VERSION}))
             (support / "docs").mkdir()
             (support / "LICENSE").write_text("许可声明")
