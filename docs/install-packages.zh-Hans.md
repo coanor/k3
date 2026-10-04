@@ -16,23 +16,23 @@ CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安
 | macOS Intel | 原生 CLI/TUI；macOS ≥ 14；目前无 GUI 和完整分离依赖 |
 
 `coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
-当前正式版为 [v0.1.2](https://github.com/coanor/k3/releases/tag/v0.1.2)，使用下面对应系统的
+当前正式版为 [v0.1.3](https://github.com/coanor/k3/releases/tag/v0.1.3)，使用下面对应系统的
 一行命令即可开始选盘和安装，无需登录 GitHub 或手动下载平台组件。下面的入口明确选择正式版
-`v0.1.2`。脚本从终端读取选盘和确认输入，Windows 启动脚本自动校验安装入口的 SHA-256
+`v0.1.3`。脚本从终端读取选盘和确认输入，Windows 启动脚本自动校验安装入口的 SHA-256
 并处理 UTF-8 编码。Bash 脚本内部已有 `pipefail`，但不能改变外层 `curl | bash` 的退出状态；
 若需自动化捕获 curl 下载失败，请在运行前执行 `set -o pipefail`。安装器仍校验程序、工具、支持文件和模型；
-手动校验入口脚本的可选步骤见 [发行版安装说明](https://github.com/coanor/k3/releases/tag/v0.1.2)。
+手动校验入口脚本的可选步骤见 [发行版安装说明](https://github.com/coanor/k3/releases/tag/v0.1.3)。
 
 Linux/macOS：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.2/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.3/install.sh | bash -s -- --version v0.1.3
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.2/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.3/get.ps1 | iex
 ```
 
 公开发行版使用 Release 文件下载地址，不查询 GitHub API，因此不消耗匿名 API 请求额度。
@@ -52,9 +52,9 @@ Linux/macOS：
 ```bash
 # Linux 使用 sha256sum；macOS 使用 shasum -a 256
 sha256sum --check install.sh.sha256
-bash install.sh --repo coanor/k3 --version v0.1.2
+bash install.sh --repo coanor/k3 --version v0.1.3
 # 可直接指定挂载盘上的目录，仍然会要求确认
-bash install.sh --repo coanor/k3 --version v0.1.2 --prefix /mnt/data/K3
+bash install.sh --repo coanor/k3 --version v0.1.3 --prefix /mnt/data/K3
 ```
 
 Windows PowerShell：
@@ -62,9 +62,9 @@ Windows PowerShell：
 ```powershell
 # 将输出与 install.ps1.sha256 中的摘要比较
 Get-FileHash .\install.ps1 -Algorithm SHA256
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.3
 # 可直接指定磁盘，仍然会要求确认
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.2 -InstallDir 'D:\Apps\K3'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k3 -Version v0.1.3 -InstallDir 'D:\Apps\K3'
 ```
 
 Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录。Linux/macOS 会列出挂载点，
@@ -169,8 +169,8 @@ torchaudio 2.11.0 在官方发布源中缺少与 Python 3.13 匹配的原生 Win
 以下示例用于 x86_64，ARM64 将文件名中的 `amd64` 替换为 `arm64`。
 
 ```bash
-sha256sum --check k3_0.1.2_amd64.deb.sha256
-sudo apt install ./k3_0.1.2_amd64.deb
+sha256sum --check k3_0.1.3_amd64.deb.sha256
+sudo apt install ./k3_0.1.3_amd64.deb
 k3 --help
 k3-gui
 ```
@@ -195,7 +195,7 @@ CI 在 Apple Silicon runner 验证，不代表逐代芯片都经过实机测试�
 双击对应架构的 `.pkg`，或在终端安装：
 
 ```bash
-sudo installer -pkg k3-0.1.2-macos-aarch64.pkg -target /
+sudo installer -pkg k3-0.1.3-macos-aarch64.pkg -target /
 /usr/local/bin/k3 --help
 ```
 

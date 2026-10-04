@@ -18,7 +18,7 @@ standalone Python, separation dependencies, and models, then checks startup and 
 A full installation needs **8 GiB** of free space at its peak and uses about **2–4 GiB** afterward.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
-**Current release: [v0.1.2](https://github.com/coanor/k3/releases/tag/v0.1.2).
+**Current release: [v0.1.3](https://github.com/coanor/k3/releases/tag/v0.1.3).
 Online installation has been verified on all six platforms. Use the one-line command for your system below.**
 
 System requirements: Linux needs glibc ≥ 2.39 (for example, Ubuntu 24.04); macOS needs version
@@ -29,22 +29,22 @@ On Ubuntu 24.04, install the runtime libraries first:
 sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
 ```
 
-### One-line installation: v0.1.2
+### One-line installation: v0.1.3
 
 Copy the one-line command for your system to start installation. You do not need to sign in
 to GitHub or download platform components manually. These commands select the stable
-`v0.1.2` release explicitly.
+`v0.1.3` release explicitly.
 
 Linux/macOS:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.2/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.3/install.sh | bash -s -- --version v0.1.3
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.2/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.3/get.ps1 | iex
 ```
 
 The script reads disk selection and confirmation from the terminal. The Windows bootstrap
@@ -60,7 +60,7 @@ steps below to inspect and verify the entry script before running it.
 Linux/macOS:
 
 ```bash
-release_url='https://github.com/coanor/k3/releases/download/v0.1.2'
+release_url='https://github.com/coanor/k3/releases/download/v0.1.3'
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh" -o install.sh &&
 curl --proto '=https' --proto-redir '=https' -fL "$release_url/install.sh.sha256" -o install.sh.sha256 &&
 if command -v sha256sum >/dev/null; then
@@ -68,7 +68,7 @@ if command -v sha256sum >/dev/null; then
 else
     shasum -a 256 --check install.sh.sha256
 fi &&
-bash ./install.sh --version v0.1.2
+bash ./install.sh --version v0.1.3
 ```
 
 Windows PowerShell:
@@ -76,14 +76,14 @@ Windows PowerShell:
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.2'
+    $releaseUrl = 'https://github.com/coanor/k3/releases/download/v0.1.3'
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1" -OutFile .\install.ps1
     Invoke-WebRequest -UseBasicParsing "$releaseUrl/install.ps1.sha256" -OutFile .\install.ps1.sha256
     $expected = ((Get-Content .\install.ps1.sha256 -Raw).Trim() -split '\s+')[0]
     if ((Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
         throw 'Installer script SHA-256 verification failed'
     }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.2
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.3
 }
 ```
 
@@ -107,7 +107,7 @@ On Linux and Windows x64, launch `k3-gui` / `k3-gui.exe`. On all platforms, use
 <details>
 <summary>Optional: install from Actions components</summary>
 
-1. Sign in to GitHub and open the [v0.1.2 release build](https://github.com/coanor/k3/actions/workflows/dist.yml?query=branch%3Av0.1.2).
+1. Sign in to GitHub and open the [v0.1.3 release build](https://github.com/coanor/k3/actions/workflows/dist.yml?query=branch%3Av0.1.3).
    Under Artifacts at the bottom of the page, download **`online-support`** and the component
    group for your system from the table above. Artifacts are retained for 14 days. If they have
    expired, find a newer successful six-platform build in
