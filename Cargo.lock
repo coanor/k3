@@ -3506,7 +3506,7 @@ dependencies = [
 
 [[package]]
 name = "k3"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -3537,7 +3537,7 @@ dependencies = [
 
 [[package]]
 name = "k3-app"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "hound",
  "k3-audio",
@@ -3555,7 +3555,7 @@ dependencies = [
 
 [[package]]
 name = "k3-audio"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "rodio",
  "rodio-wsola",
@@ -3563,7 +3563,7 @@ dependencies = [
 
 [[package]]
 name = "k3-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -3574,7 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "k3-gui"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "directories",
  "fontique",

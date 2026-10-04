@@ -30,10 +30,20 @@ def prepare(output: Path, cache: Path | None, extra_models: list[str]) -> None:
     model_dir = output / "models"
     model_dir.mkdir(parents=True)
     if cache:
-        filenames = {model.filename for model in models}
-        for path in cache.iterdir():
-            if path.is_file() and (path.name in filenames or path.suffix in {".json", ".yaml"}):
-                shutil.copy2(path, model_dir / path.name)
+        if not cache.is_dir():
+            raise ValueError("Model cache must be an existing directory")
+        for model in models:
+            source = cache / model.filename
+            if model.expected_sha256 is None or source.is_symlink() or not source.is_file():
+                continue
+            destination = model_dir / model.filename
+            # Verify the staged copy against the new registry, without changing the source.
+            shutil.copyfile(source, destination)
+            if _hash_file(destination) == model.expected_sha256:
+                print(f"Reusing verified model: {model.id}", flush=True)
+            else:
+                destination.unlink()
+                print(f"Cached model checksum differs; downloading model: {model.id}", flush=True)
     bin_dir = output / "bin"
     bin_dir.mkdir()
     source = Path(imageio_ffmpeg.get_ffmpeg_exe())

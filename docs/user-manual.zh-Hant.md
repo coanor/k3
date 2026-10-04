@@ -13,18 +13,18 @@ GUI 支援 **Windows x64** 和 **Linux x64/ARM64**。
 macOS 和 Windows ARM64 目前僅提供 CLI/TUI，這些平台請參閱
 [專案 README](https://github.com/coanor/k3)。
 
-安裝 [v0.1.5 正式版](https://github.com/coanor/k3/releases/tag/v0.1.5)：
+安裝 [v0.1.6 正式版](https://github.com/coanor/k3/releases/tag/v0.1.6)：
 
 Windows：開啟 PowerShell，貼上並執行：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.5/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.6/get.ps1 | iex
 ```
 
 Linux：開啟終端機，貼上並執行：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.5/install.sh | bash -s -- --version v0.1.5
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
 選擇**至少有 8 GiB 可用空間**的磁碟，輸入新的或空的安裝目錄，再輸入 `y` 確認。
@@ -59,7 +59,8 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 ```
 
 輸入**原來的 K3 安裝目錄**，再輸入 `y` 確認。升級入口會驗證下載的安裝程式，並在原目錄更新。
-完整安裝需至少 8 GiB 可用空間。工程與錄音會保留；從舊版升級還會在旁邊保留
+完整安裝需至少 8 GiB 可用空間。既有模型權重的 SHA-256 符合新版要求時會直接重用，
+只下載缺少或摘要變更的模型。工程與錄音會保留；從舊版升級還會在旁邊保留
 `.k3-previous-*` 舊安裝備份目錄，確認升級正常後再考慮清理備份。
 透過 `.exe`、`.deb` 或 `.pkg` 安裝的版本，請使用系統安裝程式或套件管理器升級。
 
