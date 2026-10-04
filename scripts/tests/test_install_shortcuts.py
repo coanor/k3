@@ -3,6 +3,8 @@
 import importlib.util
 import os
 from pathlib import Path
+import shutil
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -43,6 +45,7 @@ class ShortcutTests(unittest.TestCase):
     def test_windows_links_target_the_selected_unicode_installation(self):
         with tempfile.TemporaryDirectory(prefix='K3 安装 ') as directory:
             prefix = Path(directory)
+            shutil.copy2(sys.executable, prefix / 'k3-gui.exe')
             created = shortcuts.create_shortcuts(prefix, 'windows', True)
             try:
                 self.assertEqual(len(created), 2)
