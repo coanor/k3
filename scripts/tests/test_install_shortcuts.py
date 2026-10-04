@@ -1,7 +1,6 @@
 """Verify shortcut creation in isolated user directories."""
 
 import importlib.util
-import base64
 import os
 from pathlib import Path
 import shutil
@@ -17,38 +16,6 @@ spec.loader.exec_module(shortcuts)
 
 
 class ShortcutTests(unittest.TestCase):
-    @unittest.skipUnless(os.name == 'nt', 'Native COM probe requires Windows')
-    def test_windows_com_path_probe(self):
-        with tempfile.TemporaryDirectory(prefix='K3 安装 ') as unicode_dir, tempfile.TemporaryDirectory(prefix='K3-ascii-') as ascii_dir:
-            for directory in (unicode_dir, ascii_dir):
-                shutil.copy2(sys.executable, Path(directory) / 'k3-gui.exe')
-            script = r"""
-[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
-$shell = New-Object -ComObject WScript.Shell
-$paths = @($env:K3_PROBE_PYTHON, (Join-Path $env:K3_PROBE_ASCII 'k3-gui.exe'), (Join-Path $env:K3_PROBE_UNICODE 'k3-gui.exe'))
-foreach ($location in @($env:K3_PROBE_ASCII, [Environment]::GetFolderPath('Programs'))) {
-    foreach ($path in $paths) {
-        $link = Join-Path $location 'k3-probe.lnk'
-        $stage = 'create'
-        try {
-            $shortcut = $shell.CreateShortcut($link)
-            $stage = 'target'
-            $shortcut.TargetPath = [string]$path
-            $stage = 'save'
-            $shortcut.Save()
-            Write-Output "[DEBUG-k3-shortcut] OK target=$path link=$link"
-        } catch { Write-Output "[DEBUG-k3-shortcut] FAIL stage=$stage target=$path link=$link error=$_" }
-        finally { Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue }
-    }
-}
-"""
-            encoded = base64.b64encode(script.encode('utf-16le')).decode('ascii')
-            result = shortcuts.subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
-                env=dict(os.environ, K3_PROBE_PYTHON=sys.executable, K3_PROBE_ASCII=ascii_dir, K3_PROBE_UNICODE=unicode_dir))
-            print(result.stdout, flush=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_menu_and_optional_desktop_entries_preserve_existing_files(self):
         with tempfile.TemporaryDirectory(prefix='K3 空格 ') as directory:
             home = Path(directory)
@@ -87,8 +54,9 @@ foreach ($location in @($env:K3_PROBE_ASCII, [Environment]::GetFolderPath('Progr
                     result = shortcuts.subprocess.run(
                         ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
                          "[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); "
-                         "$shell = New-Object -ComObject WScript.Shell; "
-                         "$shell.CreateShortcut($env:K3_TEST_LINK).TargetPath"],
+                         "$shell = New-Object -ComObject Shell.Application; "
+                         "$folder = $shell.NameSpace((Split-Path -Parent $env:K3_TEST_LINK)); "
+                         "$folder.ParseName((Split-Path -Leaf $env:K3_TEST_LINK)).GetLink.Path"],
                         capture_output=True, check=True, text=True, encoding='utf-8', timeout=30,
                         env=dict(os.environ, K3_TEST_LINK=str(link)))
                     self.assertEqual(Path(result.stdout.strip()), prefix / 'k3-gui.exe')
