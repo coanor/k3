@@ -11,8 +11,6 @@ jobs:
         include:
           - os: windows-11-arm
             machine: aarch64
-          - os: windows-latest
-            machine: x86_64
     runs-on: ${{ matrix.os }}
     env:
       PYTHONUTF8: "1"
@@ -44,4 +42,6 @@ jobs:
           $metadata.files.PSObject.Properties.Name | Where-Object { $_ -match '^runtime/python/[^/]+$' }
           & powershell.exe -NoProfile -NonInteractive -Command "`$root = '$root'; `$file=Join-Path `$root 'runtime/python/python.exe'; Write-Output ('[DEBUG-k3-maintenance] Python exists: ' + (Test-Path -LiteralPath `$file)); Get-Item -LiteralPath `$file -Force | Format-List FullName,LinkType,Target,Length"
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$root/uninstall.ps1" -Yes
+          Write-Output "[DEBUG-k3-maintenance] default uninstall exit=$LASTEXITCODE"
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$root/uninstall.ps1" -InstallDir $root -Yes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
