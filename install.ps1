@@ -6,9 +6,12 @@ param(
     [string]$Version = 'latest',
     [string]$SourceDir,
     [string]$ModelCache,
+    [switch]$DesktopShortcut,
+    [switch]$NoDesktopShortcut,
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
+if ($DesktopShortcut -and $NoDesktopShortcut) { throw 'Choose only one desktop shortcut option' }
 if ($Repo -notmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$') { throw 'Repository must use owner/repo format' }
 if ($Version -ne 'latest' -and $Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Version must be latest or vX.Y.Z' }
 $architecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine')
@@ -56,6 +59,10 @@ Write-Host 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. 
 if (-not $Yes) {
     $answer = Read-Host 'Start downloading and installing? [y/N]'
     if ($answer -notin @('y', 'Y', 'yes', 'YES')) { Write-Host 'Cancelled. No components were downloaded.'; return }
+}
+if ($machine -eq 'x86_64' -and -not $Yes -and -not $DesktopShortcut -and -not $NoDesktopShortcut) {
+    $answer = Read-Host 'Create a desktop shortcut? [y/N]'
+    $DesktopShortcut = $answer -in @('y', 'Y', 'yes', 'YES')
 }
 $parent = Split-Path -Parent $InstallDir
 [void][IO.Directory]::CreateDirectory($parent)
@@ -153,6 +160,7 @@ if release is not None and release['tag_name'] != 'v' + installed: raise Runtime
     if ($LASTEXITCODE -ne 0) { throw 'Installation support file download or verification failed' }
     $arguments = @('-I', (Join-Path $work 'support\scripts\install-online.py'), '--prefix', $InstallDir, '--repo', $Repo, '--uv', $uv)
     if ($SourceDir) { $arguments += @('--assets-dir', (Join-Path $SourceDir 'platform')) }
+    if ($DesktopShortcut) { $arguments += '--desktop-shortcut' }
     if ($ModelCache) { $arguments += @('--model-cache', $ModelCache) }
     & $python @arguments
     if ($LASTEXITCODE -ne 0) { throw 'K3 installation or startup check failed' }

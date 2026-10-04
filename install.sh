@@ -10,6 +10,7 @@ prefix=
 source_dir=
 model_cache=
 confirmed=false
+desktop_shortcut=ask
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix|--repo|--version|--source-dir|--model-cache)
@@ -20,8 +21,11 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2 ;;
         --yes) confirmed=true; shift ;;
+        --desktop-shortcut) desktop_shortcut=yes; shift ;;
+        --no-desktop-shortcut) desktop_shortcut=no; shift ;;
         --help|-h)
             echo 'Usage: bash install.sh [--prefix INSTALL_DIR] [--repo owner/repo] [--version vX.Y.Z] [--yes]'
+            echo '--desktop-shortcut / --no-desktop-shortcut: choose whether to create a desktop icon; GUI platforms also get an application menu entry.'
             echo '--source-dir: local release directory; --model-cache: downloaded models. Integrity checks still apply.'
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -91,6 +95,10 @@ if [[ "$confirmed" != true ]]; then
     [[ -t 3 ]] || { echo 'Non-interactive installation requires --yes' >&2; exit 1; }
     read -r -u 3 -p 'Start downloading and installing? [y/N]: ' answer
     case "$answer" in y|Y|yes|YES) ;; *) echo 'Cancelled. No components were downloaded.'; exit 0 ;; esac
+fi
+if [[ "$system" == linux && "$desktop_shortcut" == ask && "$confirmed" != true ]]; then
+    read -r -u 3 -p 'Create a desktop shortcut? [y/N]: ' answer
+    case "$answer" in y|Y|yes|YES) desktop_shortcut=yes ;; *) desktop_shortcut=no ;; esac
 fi
 mkdir -p "$(dirname "$prefix")"
 work=$(mktemp -d "$(dirname "$prefix")/.k3-bootstrap.XXXXXX")
@@ -170,6 +178,7 @@ if version != 'latest' and version != 'v' + installed: raise RuntimeError('Reque
 if release is not None and release['tag_name'] != 'v' + installed: raise RuntimeError('Release tag does not match installation support file version')
 PY
 args=(--prefix "$prefix" --repo "$repo" --uv "$uv")
+if [[ "$desktop_shortcut" == yes ]]; then args+=(--desktop-shortcut); fi
 if [[ -n "$source_dir" ]]; then args+=(--assets-dir "$source_dir/platform"); fi
 if [[ -n "$model_cache" ]]; then args+=(--model-cache "$model_cache"); fi
 "$python" -I "$work/support/scripts/install-online.py" "${args[@]}"

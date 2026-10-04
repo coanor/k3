@@ -124,7 +124,7 @@ class PackageTests(unittest.TestCase):
                 self.assertFalse(any("__pycache__" in name for name in names))
                 self.assertEqual({name.split("/docs/", 1)[1] for name in names if "/docs/" in name},
                                  {"user-manual.md", "user-manual.zh-Hans.md", "user-manual.zh-Hant.md",
-                                  "offline-package.md", "install-packages.md"})
+                                  "offline-package.md", "install-packages.md", "install-packages.zh-Hans.md"})
                 self.assertNotIn("k3-windows-x86_64/README.md", names)
                 self.assertNotIn("k3-windows-x86_64/INSTALL.md", names)
 
@@ -141,7 +141,7 @@ class PackageTests(unittest.TestCase):
                 self.assertNotIn("k3-windows-aarch64-cli/k3-separator.exe", names)
                 self.assertEqual({name.split("/docs/", 1)[1] for name in names if "/docs/" in name},
                                  {"user-manual.md", "user-manual.zh-Hans.md", "user-manual.zh-Hant.md",
-                                  "offline-package.md", "install-packages.md"})
+                                  "offline-package.md", "install-packages.md", "install-packages.zh-Hans.md"})
                 self.assertNotIn("k3-windows-aarch64-cli/README.md", names)
 
     def test_foreign_runtime_is_rejected_before_creating_archive(self):

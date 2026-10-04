@@ -21,6 +21,9 @@ import urllib.request
 from pathlib import Path
 
 SUPPORT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from install_shortcuts import create_shortcuts
+
 CAPABILITIES = {
     ("linux", "x86_64"): (True, True), ("linux", "aarch64"): (True, True),
     ("windows", "x86_64"): (True, True), ("windows", "aarch64"): (False, False),
@@ -166,7 +169,7 @@ def check(root: Path, version: str, runtime: bool) -> None:
 
 
 def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
-            cache: Path | None = None) -> None:
+            cache: Path | None = None, desktop_shortcut: bool = False) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
         raise ValueError("Release repository must use owner/repo format")
     if prefix.is_symlink() or (prefix.exists() and (not prefix.is_dir() or any(prefix.iterdir()))):
@@ -241,6 +244,12 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
         if prefix.exists():
             prefix.rmdir()
         root.rename(prefix)
+    if gui:
+        try:
+            shortcuts = create_shortcuts(prefix, system, desktop_shortcut)
+            (prefix / "shortcuts.json").write_text(json.dumps(shortcuts, indent=2), encoding="utf-8")
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f"Installation succeeded, but shortcuts could not be created: {error}", file=sys.stderr)
     print(f"Installation complete: {prefix}", flush=True)
     command = str(prefix / ('k3.exe' if system == 'windows' else 'k3'))
     command = "& '" + command.replace("'", "''") + "'" if system == "windows" else shlex.quote(command)
@@ -258,9 +267,10 @@ if __name__ == "__main__":
     parser.add_argument("--uv", type=Path, required=True)
     parser.add_argument("--assets-dir", type=Path, help="Use local platform release assets with checksum verification")
     parser.add_argument("--model-cache", type=Path, help="Reuse downloaded models with integrity checks")
+    parser.add_argument("--desktop-shortcut", action="store_true", help="Create a desktop shortcut on GUI platforms")
     args = parser.parse_args()
     try:
-        install(args.prefix, args.repo, args.uv, args.assets_dir, args.model_cache)
+        install(args.prefix, args.repo, args.uv, args.assets_dir, args.model_cache, args.desktop_shortcut)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Installation failed: {error}", file=sys.stderr)
         sys.exit(1)

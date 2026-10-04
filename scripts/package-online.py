@@ -38,7 +38,7 @@ def support(output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     archive = output / "k3-install-support.zip"
     paths = [REPO / "scripts" / name for name in
-             ("install-online.py", "build-runtime.py", "check-runtime.py")]
+             ("install-online.py", "install_shortcuts.py", "install-shortcuts.ps1", "build-runtime.py", "check-runtime.py")]
     paths += [REPO / "docs" / name for name in MANUALS]
     paths += [REPO / "python/separator" / name for name in
               ("pyproject.toml", "README.md", "requirements-runtime.txt")]
