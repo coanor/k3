@@ -58,10 +58,13 @@ def create_shortcuts(prefix: Path, system: str, desktop: bool) -> list[dict]:
         environment = dict(os.environ, K3_SHORTCUT_ROOT=str(prefix),
                            K3_SHORTCUT_ID=identity, K3_SHORTCUT_DESKTOP=str(int(desktop)))
         script = Path(__file__).with_name("install-shortcuts.ps1")
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
-                                 "-ExecutionPolicy", "Bypass", "-File", str(script)],
-                                check=True, capture_output=True, text=True, encoding="utf-8",
-                                timeout=30, env=environment)
+        try:
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
+                                     "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                                    check=True, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=30, env=environment)
+        except subprocess.CalledProcessError as error:
+            raise OSError(f"Windows shortcut creation failed: {error.stderr.strip()}") from error
         created = [Path(line) for line in result.stdout.splitlines() if line]
     return [{"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
             for path in created]
