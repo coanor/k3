@@ -158,8 +158,10 @@ class InstallationStateTests(unittest.TestCase):
             root = home / 'K3'
             self.installation(root, b'old')
             identity = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
-            unchanged = home / f'k3-{identity}.desktop'
-            edited = home / f'K3-{identity}.desktop'
+            (home / 'applications').mkdir()
+            (home / 'Desktop').mkdir()
+            unchanged = home / 'applications' / f'k3-{identity}.desktop'
+            edited = home / 'Desktop' / f'K3-{identity}.desktop'
             for path in [unchanged, edited]:
                 path.write_bytes(b'original shortcut')
             entries = [{'path': str(path), 'sha256': state.signature(path)['sha256']} for path in [unchanged, edited]]
