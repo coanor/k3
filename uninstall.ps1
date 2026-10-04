@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param([string]$InstallDir = $PSScriptRoot, [switch]$Yes)
 $ErrorActionPreference = 'Stop'
-Write-Output "[DEBUG-k3-maintenance] default InstallDir=$InstallDir script=$PSScriptRoot"
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 if (-not $Yes) {
     $answer = Read-Host "Remove K3 installation files from $InstallDir? [y/N]"
@@ -11,7 +10,6 @@ $lock = Join-Path (Split-Path -Parent $InstallDir) ('.' + (Split-Path -Leaf $Ins
 [void](New-Item -ItemType Directory -Path $lock -ErrorAction Stop)
 try {
     $python = Join-Path $InstallDir 'runtime\python\python.exe'
-    Write-Output "[DEBUG-k3-maintenance] resolved InstallDir=$InstallDir python=$python exists=$(Test-Path -LiteralPath $python)"
     if (-not (Test-Path -LiteralPath $python)) { throw 'No maintenance Python found; use uninstall.ps1 from your online installation' }
     $json = & $python -I -B (Join-Path $InstallDir 'scripts\uninstall-online.py') --prefix $InstallDir --plan
     if ($LASTEXITCODE -ne 0) { throw 'Installation file validation failed; nothing was removed' }
