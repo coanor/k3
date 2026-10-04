@@ -13,18 +13,18 @@ GUI 支援 **Windows x64** 和 **Linux x64/ARM64**。
 macOS 和 Windows ARM64 目前僅提供 CLI/TUI，這些平台請參閱
 [專案 README](https://github.com/coanor/k3)。
 
-安裝 [v0.1.4 正式版](https://github.com/coanor/k3/releases/tag/v0.1.4)：
+安裝 [v0.1.5 正式版](https://github.com/coanor/k3/releases/tag/v0.1.5)：
 
 Windows：開啟 PowerShell，貼上並執行：
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.4/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.5/get.ps1 | iex
 ```
 
 Linux：開啟終端機，貼上並執行：
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.4/install.sh | bash -s -- --version v0.1.4
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.5/install.sh | bash -s -- --version v0.1.5
 ```
 
 選擇**至少有 8 GiB 可用空間**的磁碟，輸入新的或空的安裝目錄，再輸入 `y` 確認。
@@ -40,6 +40,28 @@ sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x1
 
 安裝完成後，在所選安裝目錄開啟 Windows 的 **`k3-gui.exe`** 或 Linux 的 **`k3-gui`**。
 請保留整個安裝目錄，不要只移動其中的程式。
+
+### 升級既有安裝
+
+關閉 K3，再貼上下面的一行命令，將**線上安裝版**升級至最新正式版。
+即使是沒有 `update` 腳本的 v0.1.1 等舊版本，也可以使用。
+
+Windows PowerShell：
+
+```powershell
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/latest/download/upgrade.ps1 | iex
+```
+
+Linux/macOS：
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/latest/download/upgrade.sh | bash
+```
+
+輸入**原來的 K3 安裝目錄**，再輸入 `y` 確認。升級入口會驗證下載的安裝程式，並在原目錄更新。
+完整安裝需至少 8 GiB 可用空間。工程與錄音會保留；從舊版升級還會在旁邊保留
+`.k3-previous-*` 舊安裝備份目錄，確認升級正常後再考慮清理備份。
+透過 `.exe`、`.deb` 或 `.pkg` 安裝的版本，請使用系統安裝程式或套件管理器升級。
 
 ## 2. 選擇歌曲儲存位置
 

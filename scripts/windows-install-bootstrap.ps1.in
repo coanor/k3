@@ -21,5 +21,5 @@
     } finally {
         $reader.Dispose()
     }
-    & $installer -Version $version
+    & $installer @K3_INSTALL_ARGUMENTS@
 }

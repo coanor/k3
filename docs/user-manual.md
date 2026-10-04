@@ -13,18 +13,18 @@ The GUI is available on **Windows x64** and **Linux x64/ARM64**.
 macOS and Windows ARM64 currently provide CLI/TUI only; see the
 [project README](https://github.com/coanor/k3) for those platforms.
 
-Install [v0.1.4](https://github.com/coanor/k3/releases/tag/v0.1.4):
+Install [v0.1.5](https://github.com/coanor/k3/releases/tag/v0.1.5):
 
 Windows — open PowerShell and paste:
 
 ```powershell
-irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.4/get.ps1 | iex
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/download/v0.1.5/get.ps1 | iex
 ```
 
 Linux — open a terminal and paste:
 
 ```bash
-curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.4/install.sh | bash -s -- --version v0.1.4
+curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.5/install.sh | bash -s -- --version v0.1.5
 ```
 
 Choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,
@@ -41,6 +41,30 @@ sudo apt update && sudo apt install libasound2t64 libfontconfig1 libxkbcommon-x1
 
 When installation finishes, open **`k3-gui.exe`** on Windows or **`k3-gui`** on Linux
 from your chosen installation folder. Keep the whole folder together.
+
+### Upgrade an existing installation
+
+Close K3, then paste one command to upgrade an **online installation** to the latest
+stable release, including older versions such as v0.1.1 that have no `update` script.
+
+Windows PowerShell:
+
+```powershell
+irm -ErrorAction Stop https://github.com/coanor/k3/releases/latest/download/upgrade.ps1 | iex
+```
+
+Linux/macOS:
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/latest/download/upgrade.sh | bash
+```
+
+Enter the **existing K3 installation folder**, then confirm with `y`. The upgrade
+entry verifies the downloaded installer and updates K3 in place. Keep at least
+8 GiB free for a full installation. Your projects and recordings are retained;
+upgrades from legacy releases also keep the old installation in a sibling
+`.k3-previous-*` backup folder. Keep that backup until you have checked the upgrade.
+Installations made with `.exe`, `.deb` or `.pkg` use their system installer or package manager.
 
 ## 2. Choose where to save your songs
 

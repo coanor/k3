@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import importlib.util
+import itertools
 import json
 import shutil
 import os
@@ -39,17 +40,19 @@ class OnlineInstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             producer.support(output)
-            bootstrap = (output / "get.ps1").read_bytes()
-            self.assertTrue(bootstrap.isascii())
-            for mode in ("valid", "wrong_digest", "wrong_filename", "invalid_checksum", "download_failed"):
-                with self.subTest(mode=mode):
+            for name, mode in itertools.product(("get.ps1", "upgrade.ps1"),
+                    ("valid", "wrong_digest", "wrong_filename", "invalid_checksum", "download_failed", "oversized")):
+                with self.subTest(name=name, mode=mode):
+                    bootstrap = (output / name).read_bytes()
+                    self.assertTrue(bootstrap.isascii())
                     harness = """
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Continue'
 $global:fixtureState = @{started=$false; version=$null}
-$fixture = [char]0xFEFF + '[CmdletBinding()] param([string]$Version); $global:fixtureState.started=$true; $global:fixtureState.version=$Version; $global:fixtureState.message="安装检查"'
+$fixture = [char]0xFEFF + '[CmdletBinding()] param([string]$Version, [switch]$Update); $global:fixtureState.started=$true; $global:fixtureState.version=$Version; $global:fixtureState.update=[bool]$Update; $global:fixtureState.message="安装检查"'
 $script:payload = [Text.Encoding]::UTF8.GetBytes($fixture)
+if ($script:mode -eq 'oversized') { $script:payload += [byte[]]::new(262144) }
 $hash = [Security.Cryptography.SHA256]::Create()
 try { $digest = ([BitConverter]::ToString($hash.ComputeHash($script:payload))).Replace('-', '').ToLowerInvariant() }
 finally { $hash.Dispose() }
@@ -87,6 +90,7 @@ ConvertTo-Json -Compress -InputObject @{state=$global:fixtureState; failed=$fail
                     if mode == "valid":
                         self.assertEqual(state["state"]["version"], "v" + producer.VERSION)
                         self.assertEqual(state["state"]["message"], "安装检查")
+                        self.assertEqual(state["state"]["update"], name == "upgrade.ps1")
 
     @unittest.skipUnless(shutil.which("powershell.exe") or shutil.which("powershell"),
                          "验证原生 Python 请求需要 Windows PowerShell")

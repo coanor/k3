@@ -57,9 +57,16 @@ def support(output: Path) -> Path:
         target = output / name
         shutil.copy2(REPO / name, target)
         checksum(target)
-    # ASCII 启动入口可被 PowerShell 5.1 的 irm 正确读取。
+    # ASCII bootstraps preserve PowerShell 5.1 compatibility when piped from irm.
     template = (REPO / "scripts/windows-install-bootstrap.ps1.in").read_text(encoding="ascii")
-    bootstrap = output / "get.ps1"
+    for name, arguments in (("get.ps1", "-Version $version"),
+                            ("upgrade.ps1", "-Version $version -Update")):
+        bootstrap = output / name
+        bootstrap.write_text(template.replace("@K3_VERSION@", VERSION).replace(
+            "@K3_INSTALL_ARGUMENTS@", arguments), encoding="ascii")
+        checksum(bootstrap)
+    template = (REPO / "scripts/unix-upgrade-bootstrap.sh.in").read_text(encoding="ascii")
+    bootstrap = output / "upgrade.sh"
     bootstrap.write_text(template.replace("@K3_VERSION@", VERSION), encoding="ascii")
     checksum(bootstrap)
     return archive
