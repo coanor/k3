@@ -145,6 +145,9 @@ options, updating, uninstalling, application shortcuts, and optional offline pac
 Online installs include `update.sh` / `update.ps1` and `uninstall.sh` / `uninstall.ps1`;
 to upgrade an older online installation that has no maintenance scripts, use the
 [one-line upgrade commands](docs/user-manual.md#upgrade-an-existing-installation).
+Both install and upgrade entries discover existing online installations and select a
+unique match automatically. Successful installs remember their location per user;
+Windows uses `HKCU\Software\K3\OnlineInstallations`. Multiple matches require a choice.
 Updates verify existing model weights against the new release's SHA-256 and reuse
 matching checkpoints, downloading only missing or changed weights.
 GUI/TUI check for new stable releases in the background. See the [user manual](docs/user-manual.md)

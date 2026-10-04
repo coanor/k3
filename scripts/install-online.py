@@ -23,7 +23,7 @@ from pathlib import Path
 SUPPORT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from install_shortcuts import create_shortcuts
-from installation_state import directory_link, ensure_installation_idle, installation_lock, load_state, migrate_legacy_installation, replace_installation, signature, write_state
+from installation_state import directory_link, ensure_installation_idle, installation_lock, load_state, migrate_legacy_installation, remember_installation, replace_installation, signature, write_state
 
 CAPABILITIES = {
     ("linux", "x86_64"): (True, True), ("linux", "aarch64"): (True, True),
@@ -314,6 +314,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             (prefix / "installation-state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
         except (OSError, subprocess.SubprocessError) as error:
             print(f"Installation succeeded, but shortcuts could not be created: {error}", file=sys.stderr)
+    remember_installation(prefix)
     print(f"Installation complete: {prefix}", flush=True)
     command = str(prefix / ('k3.exe' if system == 'windows' else 'k3'))
     command = "& '" + command.replace("'", "''") + "'" if system == "windows" else shlex.quote(command)

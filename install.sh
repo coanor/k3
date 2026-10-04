@@ -78,6 +78,70 @@ if [[ -z "$prefix" || "$confirmed" != true ]]; then
     fi
 fi
 if [[ -z "$prefix" ]]; then
+    installations=()
+    add_installation() {
+        local candidate=$1 existing
+        [[ -d "$candidate" && ! -L "$candidate" && -f "$candidate/k3" && ! -L "$candidate/k3" ]] || return 0
+        [[ ( -f "$candidate/installation-state.json" && ! -L "$candidate/installation-state.json" ) ||
+           ( -f "$candidate/install-manifest.json" && ! -L "$candidate/install-manifest.json" ) ]] || return 0
+        candidate=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 0
+        for existing in ${installations[@]+"${installations[@]}"}; do
+            [[ "$existing" != "$candidate" ]] || return 0
+        done
+        installations+=("$candidate")
+    }
+    add_installation "$PWD"
+    if [[ -n ${BASH_SOURCE[0]:-} ]]; then add_installation "$(dirname -- "${BASH_SOURCE[0]}")"; fi
+    add_installation "$default_prefix"
+    data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+    [[ "$data_home" == /* ]] || data_home="$HOME/.local/share"
+    state_home=${XDG_STATE_HOME:-$HOME/.local/state}
+    [[ "$state_home" == /* ]] || state_home="$HOME/.local/state"
+    locations="$state_home/k3/online-installations"
+    if [[ "$system" == macos ]]; then locations="$HOME/Library/Application Support/K3/online-installations"; fi
+    for record in "$locations"/*.path; do
+        [[ -f "$record" && ! -L "$record" && $(wc -c < "$record") -le 32768 ]] || continue
+        IFS= read -r candidate < "$record" || continue
+        [[ "$candidate" == /* ]] && add_installation "$candidate"
+    done
+    IFS=: read -r -a path_directories <<< "${PATH:-}"
+    for directory in ${path_directories[@]+"${path_directories[@]}"}; do
+        executable="$directory/k3"
+        for ((link_count=0; link_count<16; link_count++)); do
+            [[ -L "$executable" ]] || break
+            target=$(readlink "$executable") || break
+            if [[ "$target" == /* ]]; then executable=$target; else executable="$(dirname -- "$executable")/$target"; fi
+        done
+        [[ ! -L "$executable" ]] && add_installation "$(dirname -- "$executable")"
+    done
+    if [[ "$system" == linux ]]; then
+        for shortcut in "$data_home/applications"/k3-*.desktop; do
+            [[ -f "$shortcut" && ! -L "$shortcut" && $(wc -c < "$shortcut") -le 32768 ]] || continue
+            while IFS= read -r line; do
+                if [[ "$line" == Icon=*/k3.svg ]]; then
+                    candidate=${line#Icon=}; candidate=${candidate%/k3.svg}
+                    candidate=${candidate//\\\\/\\}
+                    add_installation "$candidate"
+                fi
+            done < "$shortcut"
+        done
+    fi
+    if [[ ${#installations[@]} -eq 1 ]]; then
+        prefix=${installations[0]}
+        update=true
+        echo "Found existing K3 installation: $prefix"
+    elif [[ ${#installations[@]} -gt 1 ]]; then
+        echo 'Multiple K3 installations were found:'
+        for ((index=0; index<${#installations[@]}; index++)); do printf '[%s] %s\n' "$((index + 1))" "${installations[index]}"; done
+        echo '[0] Enter another installation directory'
+        read -r -u 3 -p 'Select installation number: ' choice
+        [[ "$choice" =~ ^[0-9]+$ && ${#choice} -le 6 ]] || { echo 'Invalid installation number' >&2; exit 1; }
+        number=$((10#$choice))
+        [[ "$number" -le ${#installations[@]} ]] || { echo 'Invalid installation number' >&2; exit 1; }
+        if [[ "$number" -gt 0 ]]; then prefix=${installations[number - 1]}; update=true; fi
+    fi
+fi
+if [[ -z "$prefix" ]]; then
     [[ -t 3 ]] || { echo 'Non-interactive installation requires --prefix and --yes' >&2; exit 1; }
     echo 'Available disks/mount points (programs, models, download cache and temporary files will use the selected disk):'
     df -h
@@ -85,6 +149,8 @@ if [[ -z "$prefix" ]]; then
     prefix=${prefix:-$default_prefix}
 fi
 [[ "$prefix" == /* ]] || prefix="$PWD/$prefix"
+# An explicitly selected online installation also follows the verified update flow.
+if [[ -d "$prefix" && ! -L "$prefix" && ( -f "$prefix/installation-state.json" || -f "$prefix/install-manifest.json" ) ]]; then update=true; fi
 if [[ "$update" == true ]]; then
     [[ -d "$prefix" && ! -L "$prefix" && ( -f "$prefix/installation-state.json" || -f "$prefix/install-manifest.json" ) ]] || { echo 'Update requires a registered online installation directory' >&2; exit 1; }
     echo 'Close all K3 windows, TUI sessions and separation jobs before updating.'

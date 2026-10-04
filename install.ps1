@@ -30,7 +30,94 @@ if ($machine -eq 'aarch64') {
     Write-Host 'Windows ARM64 currently installs native CLI/TUI only, without a GUI, Python separation runtime or models.'
     $required = 512MB
 }
+function Find-K3OnlineInstallations {
+    $found = New-Object 'System.Collections.Generic.List[string]'
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    function Add-K3Installation([string]$Candidate) {
+        if (-not $Candidate) { return }
+        try {
+            $item = Get-Item -LiteralPath $Candidate -Force -ErrorAction Stop
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+            $binary = Get-Item -LiteralPath (Join-Path $item.FullName 'k3.exe') -Force -ErrorAction Stop
+            if ($binary.PSIsContainer -or ($binary.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+            $metadata = $false
+            foreach ($name in @('installation-state.json', 'install-manifest.json')) {
+                $file = Get-Item -LiteralPath (Join-Path $item.FullName $name) -Force -ErrorAction SilentlyContinue
+                if ($file -and -not $file.PSIsContainer -and -not ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $metadata = $true }
+            }
+            if ($metadata -and $seen.Add($item.FullName)) { $found.Add($item.FullName) }
+        } catch { }
+    }
+    Add-K3Installation $PWD.Path
+    Add-K3Installation $PSScriptRoot
+    foreach ($key in @(Get-ChildItem -LiteralPath 'HKCU:\Software\K3\OnlineInstallations' -ErrorAction SilentlyContinue)) {
+        $record = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+        if ($record.InstallDir -is [string]) { Add-K3Installation $record.InstallDir }
+    }
+    foreach ($parent in @($env:LOCALAPPDATA, $env:ProgramFiles, $env:USERPROFILE)) {
+        if ($parent) { Add-K3Installation (Join-Path $parent 'K3') }
+    }
+    if ($env:LOCALAPPDATA) { Add-K3Installation (Join-Path $env:LOCALAPPDATA 'Programs\K3') }
+    foreach ($drive in @(Get-PSDrive -PSProvider FileSystem)) { Add-K3Installation (Join-Path $drive.Root 'K3') }
+    foreach ($command in @(Get-Command k3.exe -CommandType Application -All -ErrorAction SilentlyContinue)) {
+        Add-K3Installation (Split-Path -Parent $command.Source)
+    }
+    try {
+        # Read the Unicode shell-link interface; WScript.Shell loses some Unicode paths.
+        if (-not ('K3InstallationShortcut' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+internal class K3DiscoveryLink { }
+[ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IK3DiscoveryLinkW {
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+}
+public static class K3InstallationShortcut {
+    public static string Target(string path) {
+        object instance = new K3DiscoveryLink();
+        try {
+            ((IPersistFile)instance).Load(path, 0);
+            StringBuilder target = new StringBuilder(32768);
+            ((IK3DiscoveryLinkW)instance).GetPath(target, target.Capacity, IntPtr.Zero, 4);
+            return target.ToString();
+        } finally { Marshal.FinalReleaseComObject(instance); }
+    }
+}
+'@
+        }
+        foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory'))) {
+            if (-not $folder) { continue }
+            foreach ($shortcut in @(Get-ChildItem -LiteralPath $folder -Filter 'K3-*.lnk' -File -ErrorAction SilentlyContinue)) {
+                try {
+                    $target = [K3InstallationShortcut]::Target($shortcut.FullName)
+                    if ($target -and [IO.Path]::GetFileName($target) -eq 'k3-gui.exe') { Add-K3Installation (Split-Path -Parent $target) }
+                } catch { }
+            }
+        }
+    } catch { }
+    return $found.ToArray()
+}
 if ($Yes -and -not $InstallDir) { throw '-Yes requires -InstallDir' }
+if (-not $InstallDir) {
+    $installations = @(Find-K3OnlineInstallations)
+    if ($installations.Count -eq 1) {
+        $InstallDir = $installations[0]
+        $Update = $true
+        Write-Host "Found existing K3 installation: $InstallDir"
+    } elseif ($installations.Count -gt 1) {
+        Write-Host 'Multiple K3 installations were found:'
+        for ($index = 0; $index -lt $installations.Count; $index++) { Write-Host ("[{0}] {1}" -f ($index + 1), $installations[$index]) }
+        Write-Host '[0] Enter another installation directory'
+        $choice = Read-Host 'Select installation number'
+        $number = 0
+        if (-not [int]::TryParse($choice, [ref]$number) -or $number -lt 0 -or $number -gt $installations.Count) { throw 'Invalid installation number' }
+        if ($number -gt 0) { $InstallDir = $installations[$number - 1]; $Update = $true }
+    }
+}
 if (-not $InstallDir) {
     $drives = @(Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Free -and $_.Free -gt 0 })
     if ($drives.Count -eq 0) { throw 'No disks are available; use -InstallDir to select a local installation directory' }
@@ -47,6 +134,8 @@ if (-not $InstallDir) {
 }
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 if ($InstallDir.StartsWith('\\')) { throw 'Install on a local disk; network shares are unsupported' }
+if ((Test-Path -LiteralPath (Join-Path $InstallDir 'installation-state.json') -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $InstallDir 'install-manifest.json') -PathType Leaf)) { $Update = $true }
 if ($Update) {
     Write-Host 'Close all K3 windows, TUI sessions and separation jobs before updating.'
     $existing = Get-Item -LiteralPath $InstallDir -Force

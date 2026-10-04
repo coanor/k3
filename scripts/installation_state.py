@@ -9,9 +9,66 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 import shutil
+import sys
 import tempfile
 
 STATE = "installation-state.json"
+WINDOWS_LOCATIONS_KEY = r"Software\K3\OnlineInstallations"
+
+
+def installation_locations_directory() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/K3/online-installations"
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    if not state_home.is_absolute():
+        state_home = Path.home() / ".local/state"
+    return state_home / "k3/online-installations"
+
+
+def location_identity(root: Path) -> str:
+    return hashlib.sha256(os.path.normcase(str(root.resolve())).encode("utf-8")).hexdigest()
+
+
+def remember_installation(root: Path) -> None:
+    """Register a completed online install for later native bootstrap discovery."""
+    try:
+        path = str(root.resolve())
+        if any(ord(character) < 32 for character in path):
+            raise ValueError("Installation location records cannot contain control characters")
+        identity = location_identity(root)
+        if sys.platform == "win32":
+            import winreg
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINDOWS_LOCATIONS_KEY + "\\" + identity) as key:
+                winreg.SetValueEx(key, "InstallDir", 0, winreg.REG_SZ, path)
+        else:
+            directory = installation_locations_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(path + "\n")
+                temporary.replace(directory / (identity + ".path"))
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+    except (OSError, ValueError) as error:
+        print(f"Installation succeeded, but its location could not be remembered: {error}", file=sys.stderr)
+
+
+def forget_installation(root: Path) -> None:
+    """Remove only this installation's discovery record after a successful uninstall."""
+    try:
+        identity = location_identity(root)
+        if sys.platform == "win32":
+            import winreg
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, WINDOWS_LOCATIONS_KEY + "\\" + identity)
+        else:
+            (installation_locations_directory() / (identity + ".path")).unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        print(f"Could not remove the installation location record: {error}", file=sys.stderr)
 
 
 def directory_link(path: Path) -> bool:
@@ -159,6 +216,7 @@ def uninstall(root: Path) -> None:
         for path in removable:
             path.unlink()
         (root / STATE).unlink()
+        forget_installation(root)
         remove_empty_directories(root)
     try:
         root.rmdir()
@@ -199,7 +257,8 @@ def uninstall_plan(root: Path) -> dict:
             files.append(str(path))
     files += [str(path) for path in shortcut_paths(root)]
     directories = [str(path) for path in root.rglob("*") if path.is_dir() and not directory_link(path)]
-    return {"files": files, "kept": kept, "directories": sorted(directories, key=len, reverse=True)}
+    return {"files": files, "kept": kept, "directories": sorted(directories, key=len, reverse=True),
+            "location_identity": location_identity(root)}
 
 
 def migrate_legacy_installation(root: Path, staged: Path) -> Path:

@@ -33,6 +33,11 @@ installer = load("online_installer", "install-online.py")
 
 
 class OnlineInstallerTests(unittest.TestCase):
+    def setUp(self):
+        remember = patch.object(installer, "remember_installation")
+        remember.start()
+        self.addCleanup(remember.stop)
+
     @unittest.skipUnless(shutil.which("powershell.exe") or shutil.which("powershell"),
                          "启动入口回归需要 Windows PowerShell")
     def test_windows_bootstrap_checks_download_before_running_utf8_installer(self):

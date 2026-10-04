@@ -26,6 +26,9 @@ try {
     }
     foreach ($path in $plan.files) { Remove-Item -LiteralPath $path -Force }
     Remove-Item -LiteralPath (Join-Path $InstallDir 'installation-state.json') -Force
+    if ($plan.location_identity -cmatch '^[0-9a-f]{64}$') {
+        Remove-Item -LiteralPath ('HKCU:\Software\K3\OnlineInstallations\' + $plan.location_identity) -ErrorAction SilentlyContinue
+    }
     foreach ($path in $plan.directories) {
         if (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) { Remove-Item -LiteralPath $path -Force }
     }

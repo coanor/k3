@@ -27,10 +27,12 @@ Linux — open a terminal and paste:
 curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
-Choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,
+For a new installation, choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,
 and confirm with `y`. Installation needs internet access. It downloads the programs,
 Python and default separation models; you do not need to install them yourself.
 A full installation usually uses 2–4 GiB afterward. Installer messages are in English.
+If an existing online installation is found, the installer instead selects it for
+an update and asks you to confirm; see the upgrade instructions below.
 
 Windows requires Windows 10/11. Linux requires glibc 2.39 or later and a graphical desktop.
 On Ubuntu 24.04, install the required system libraries first:
@@ -59,14 +61,24 @@ Linux/macOS:
 curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/releases/latest/download/upgrade.sh | bash
 ```
 
-Enter the **existing K3 installation folder**, then confirm with `y`. The upgrade
-entry verifies the downloaded installer and updates K3 in place. Keep at least
+The installer and upgrade entry look for an existing online installation. If exactly
+one is found, its folder is selected automatically; confirm the displayed folder with
+`y`. If several are found, select one from the list. If none is found, enter the
+**existing K3 installation folder** manually. The upgrade entry verifies the downloaded
+installer and updates K3 in place. Keep at least
 8 GiB free for a full installation. Existing model weights are reused when their
 SHA-256 matches the new release; only missing or changed weights are downloaded.
 Your projects and recordings are retained;
 upgrades from legacy releases also keep the old installation in a sibling
 `.k3-previous-*` backup folder. Keep that backup until you have checked the upgrade.
 Installations made with `.exe`, `.deb` or `.pkg` use their system installer or package manager.
+
+Successful online installs remember their location for later updates. Windows uses
+the current user's `HKCU\Software\K3\OnlineInstallations` registry key; no administrator
+permission is required. Linux/macOS keep a per-user location record. Older releases
+can be found through default folders, the current folder, PATH or application
+shortcuts. An old installation in an arbitrary custom folder may require manual
+selection once. An explicit `--prefix` / `-InstallDir` always selects that folder.
 
 ## 2. Choose where to save your songs
 

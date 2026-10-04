@@ -28,7 +28,7 @@ Get-FileHash .\install.ps1 -Algorithm SHA256
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir 'D:\Apps\K3'
 ```
 
-The installer asks for a disk/directory and confirmation. All downloads, models, temporary files and programs use the selected disk. Full installs reserve 8 GiB of peak disk space; CLI-only installs reserve 512 MiB. Existing nonempty directories are rejected. Checks include release version, file sizes, SHA-256, program startup and offline model loading. Failed verification does not enable the destination.
+For a new installation, the installer asks for a disk/directory and confirmation. Existing online installations are discovered and offered for a verified update. All downloads, models, temporary files and programs use the selected disk. Full installs reserve 8 GiB of peak disk space; CLI-only installs reserve 512 MiB. Other nonempty directories are rejected. Checks include release version, file sizes, SHA-256, program startup and offline model loading. Failed verification does not enable the destination.
 
 Use `--repo owner/repo` / `-Repo owner/repo` to select a release repository, and `--version vX.Y.Z` / `-Version vX.Y.Z` to pin a release. The default repository is `coanor/k3`; the default version is the latest stable release. Public downloads use release URLs. Private releases may use `GITHUB_TOKEN`; credentials are restricted to the GitHub API and removed on redirects.
 
@@ -68,13 +68,26 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 irm -ErrorAction Stop https://github.com/coanor/k3/releases/latest/download/upgrade.ps1 | iex
 ```
 
-Enter the existing installation directory and confirm the update. These standalone
+The installer and upgrade entry discover online installations before asking for a disk.
+One match is selected automatically; several matches require a selection. If no match
+is found, enter the existing installation directory and confirm the update. These standalone
 entries verify the downloaded installer's SHA-256 and select update mode explicitly.
 Each entry pins its installer and support files to the release that supplied it.
 The user manuals also include these commands. This applies to online installations;
 system packages use their installer or package manager.
 
 Online installs ship maintenance scripts and their own Python interpreter, including CLI-only platforms. No system Python is required. Save recordings and close all K3 windows, TUI sessions and separation jobs before maintenance. The scripts check for processes running from the installation and use a lock to prevent concurrent changes.
+
+Successful online installs register their location per user: Windows stores `InstallDir`
+under `HKCU\Software\K3\OnlineInstallations\<installation-id>`; Linux uses
+`${XDG_STATE_HOME:-~/.local/state}/k3/online-installations`; macOS uses
+`~/Library/Application Support/K3/online-installations`. Each installation has its own
+record, and uninstall removes only that record. Discovery ignores missing folders and
+directory links and deduplicates candidates. It also checks the current/default folders,
+PATH and K3 application shortcuts, without executing old binaries or scanning whole disks.
+Legacy custom locations with no discoverable record still need one manual selection.
+Explicit `--prefix` / `-InstallDir` bypasses discovery; selecting an existing online
+installation switches to the verified update flow and asks for update confirmation.
 
 Linux/macOS, from the installation directory:
 
