@@ -40,6 +40,8 @@ ConvertTo-Json -Compress @{InstallDir=$InstallDir; Repo=$Repo; Update=$Update.Is
             self.assertTrue(forwarded['Yes'])
 
     def test_uninstall_defaults_to_its_installed_directory_and_keeps_recordings(self):
+        import winreg
+
         with tempfile.TemporaryDirectory(prefix='K3 卸载 ') as directory:
             root = Path(directory) / 'installed'
             root.mkdir()
@@ -52,12 +54,19 @@ ConvertTo-Json -Compress @{InstallDir=$InstallDir; Repo=$Repo; Update=$Update.Is
             shutil.copy2(REPO / 'uninstall.ps1', root / 'uninstall.ps1')
             (root / 'k3.exe').write_bytes(b'owned program fixture')
             state.write_state(root, 'org/repo', '0.1.3')
+            state.remember_installation(root)
+            self.addCleanup(state.forget_installation, root)
+            key = state.WINDOWS_LOCATIONS_KEY + '\\' + state.location_identity(root)
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
+                self.assertEqual(winreg.QueryValueEx(handle, 'InstallDir')[0], str(root.resolve()))
             recording = root / 'personal.wav'
             recording.write_bytes(b'personal recording')
             result = self.run_script(root / 'uninstall.ps1', '-Yes')
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertEqual(recording.read_bytes(), b'personal recording')
             self.assertEqual(list(root.iterdir()), [recording])
+            with self.assertRaises(FileNotFoundError):
+                winreg.OpenKey(winreg.HKEY_CURRENT_USER, key)
 
 
 if __name__ == '__main__':

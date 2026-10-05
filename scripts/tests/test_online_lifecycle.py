@@ -20,6 +20,14 @@ spec.loader.exec_module(installer)
 
 @unittest.skipIf(os.name == 'nt', 'Native fixture programs require POSIX shell')
 class OnlineLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        locations = tempfile.TemporaryDirectory()
+        self.addCleanup(locations.cleanup)
+        self.locations = Path(locations.name)
+        environment = patch.dict(os.environ, XDG_STATE_HOME=locations.name, HOME=locations.name)
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def release(self, base, version):
         support = base / ('support-' + version)
         support.mkdir()
@@ -56,12 +64,16 @@ class OnlineLifecycleTests(unittest.TestCase):
             self.install(prefix, *first, management)
             (prefix / 'recording.wav').write_bytes(b'personal recording')
             self.install(prefix, *second, management, update=True)
+            records = list(self.locations.rglob("*.path"))
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].read_text(encoding="utf-8").strip(), str(prefix.resolve()))
             self.assertEqual(subprocess.check_output([str(prefix / 'k3'), '--version'], text=True).strip(), 'k3 0.1.2')
             self.assertEqual((prefix / 'docs/guide.md').read_text(), 'New release guide: 0.1.2')
             self.assertEqual((prefix / 'recording.wav').read_bytes(), b'personal recording')
             result = subprocess.run(['bash', str(prefix / 'uninstall.sh'), '--yes'], capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(list(prefix.iterdir()), [prefix / 'recording.wav'])
+            self.assertEqual(list(self.locations.rglob("*.path")), [])
             self.assertEqual((prefix / 'recording.wav').read_bytes(), b'personal recording')
 
     def test_tampered_update_does_not_modify_previous_installation(self):

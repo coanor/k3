@@ -27,6 +27,13 @@ from k3_separator.models import ModelRegistry
 
 @unittest.skipIf(os.name == "nt", "Fixture programs use POSIX shell")
 class OnlineModelReuseTests(unittest.TestCase):
+    def setUp(self):
+        locations = tempfile.TemporaryDirectory()
+        self.addCleanup(locations.cleanup)
+        environment = patch.dict(os.environ, XDG_STATE_HOME=locations.name, HOME=locations.name)
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def release(self, base, version):
         support = base / ("support-" + version)
         (support / "docs").mkdir(parents=True)

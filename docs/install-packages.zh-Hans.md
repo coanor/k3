@@ -88,11 +88,20 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 irm -ErrorAction Stop https://github.com/coanor/k3/releases/latest/download/upgrade.ps1 | iex
 ```
 
-输入原安装目录并确认即可。独立升级入口会校验安装器的 SHA-256，并明确选择升级模式；
+安装和升级入口会先查找已有在线安装：一个匹配目录会自动选中，多个目录会列出供选择，
+没有找到时才需要选盘并手动输入原目录。确认升级即可。独立升级入口会校验安装器的 SHA-256，并明确选择升级模式；
 安装器和支持文件固定为启动脚本所属的发行版。三种语言的用户手册也包含这些命令。
 升级自动校验并复用原安装目录中的模型权重，摘要符合新版要求的模型不会重复下载；
 只下载缺失或摘要变化的模型。小型模型配置与元数据按新版依赖重新准备。
 `--model-cache` / `-ModelCache` 可显式选择其他缓存目录，仍会校验新版要求的摘要。
+
+在线安装成功后会保存每份安装独立的用户位置记录：Windows 使用
+`HKCU\Software\K3\OnlineInstallations\<installation-id>` 下的 `InstallDir`；Linux 使用
+`${XDG_STATE_HOME:-~/.local/state}/k3/online-installations`；macOS 使用
+`~/Library/Application Support/K3/online-installations`。卸载只移除对应记录。
+查找会忽略失效目录和目录链接、合并重复结果，还检查默认目录、当前目录、PATH 和 K3 应用快捷方式，
+不会执行旧程序或扫描整块磁盘。没有这些线索的旧版自定义目录仍需手动选择一次。
+显式传入 `--prefix` / `-InstallDir` 时跳过自动查找；选中已有在线安装后会进入升级确认。
 
 运行前先保存录音并关闭 K3，默认要求确认。旧版安装使用新版安装入口的
 `--update --prefix` / `-Update -InstallDir`，升级后保留完整旧目录备份。
