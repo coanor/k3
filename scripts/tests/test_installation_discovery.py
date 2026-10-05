@@ -111,7 +111,8 @@ class UnixDiscoveryTests(unittest.TestCase):
         (root / "install-manifest.json").write_text('{"version":"0.1.1"}')
 
     def record(self, base, name, root):
-        directory = base / "home/.local/state/k3/online-installations"
+        directory = base / ("home/Library/Application Support/K3/online-installations"
+                            if sys.platform == "darwin" else "home/.local/state/k3/online-installations")
         directory.mkdir(parents=True, exist_ok=True)
         (directory / (name + ".path")).write_text(str(root) + "\n")
 
@@ -144,11 +145,12 @@ class UnixDiscoveryTests(unittest.TestCase):
             self.assertIn(f"Installation directory: {second}", output)
             self.assertNotIn("Enter installation directory", output)
 
-    def test_legacy_default_path_symlink_and_shortcut_discovery(self):
-        for source in ("default", "path", "shortcut"):
+    def test_legacy_default_path_and_symlink_discovery(self):
+        for source in ("default", "path"):
             with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
                 base = Path(directory).resolve()
-                root = base / ("home/.local/share/k3" if source == "default" else "custom 安装")
+                default = "home/Applications/K3" if sys.platform == "darwin" else "home/.local/share/k3"
+                root = base / (default if source == "default" else "custom 安装")
                 self.installation(root)
                 environment = {}
                 if source == "path":
@@ -156,13 +158,22 @@ class UnixDiscoveryTests(unittest.TestCase):
                     tools.mkdir()
                     (tools / "k3").symlink_to(root / "k3")
                     environment["PATH"] = str(tools) + os.pathsep + os.environ["PATH"]
-                elif source == "shortcut":
-                    applications = base / "home/.local/share/applications"
-                    applications.mkdir(parents=True)
-                    (applications / "k3-fixture.desktop").write_text(f"[Desktop Entry]\nIcon={root}/k3.svg\n")
                 output = self.run_entry(base, "n\n", "--update", extra_environment=environment)
                 self.assertIn(f"Found existing K3 installation: {root}", output)
                 self.assertNotIn("Enter installation directory", output)
+
+    @unittest.skipUnless(sys.platform == "linux", "Desktop entry discovery requires Linux")
+    def test_legacy_linux_shortcut_discovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            root = base / "custom 安装"
+            self.installation(root)
+            applications = base / "home/.local/share/applications"
+            applications.mkdir(parents=True)
+            (applications / "k3-fixture.desktop").write_text(f"[Desktop Entry]\nIcon={root}/k3.svg\n")
+            output = self.run_entry(base, "n\n", "--update")
+            self.assertIn(f"Found existing K3 installation: {root}", output)
+            self.assertNotIn("Enter installation directory", output)
 
     def test_legacy_current_directory_and_explicit_directory_enter_update_mode(self):
         for explicit in (False, True):
