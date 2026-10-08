@@ -91,6 +91,8 @@ class OnlineModelReuseTests(unittest.TestCase):
 
         def build_runtime(*arguments, **kwargs):
             self.assertEqual(Path(arguments[2]).name, "build-runtime.py")
+            self.assertEqual("auto", arguments[arguments.index("--backend") + 1])
+            self.assertEqual(prefix.parent / ".k3-download-cache", Path(kwargs["env"]["UV_CACHE_DIR"]))
             output = Path(arguments[arguments.index("--output") + 1])
             model_cache = Path(arguments[arguments.index("--model-cache") + 1]) if "--model-cache" in arguments else None
             bundle.prepare(output, model_cache, [])

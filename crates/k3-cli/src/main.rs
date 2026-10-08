@@ -17,8 +17,8 @@ use k3_core::{
 };
 
 use crate::python_separator::{
-    PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
-    separation_output_paths,
+    DeviceSelection, PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs,
+    separation_log_path, separation_output_paths,
 };
 use k3_app::render_and_save_take;
 
@@ -51,6 +51,9 @@ enum Command {
     Separate {
         #[arg(long)]
         project: PathBuf,
+        /// Select CPU, require GPU without CPU fallback, or choose automatically.
+        #[arg(long, value_enum)]
+        device: Option<DeviceSelection>,
         #[arg(long, value_enum, default_value = "balanced")]
         profile: ProfileArgument,
         /// Explicit worker model ID; otherwise the profile default is used.
@@ -189,6 +192,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         }
         Command::Separate {
             project,
+            device,
             profile,
             model,
             worker,
@@ -201,6 +205,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let mut project = repository.open(&project)?;
             let previous_outputs = separation_output_paths(&project);
             let separator = PythonStemSeparator::new(PythonSeparatorConfig {
+                device: match device {
+                    Some(device) => device,
+                    None => DeviceSelection::from_environment(DeviceSelection::Auto)?,
+                },
                 worker,
                 model_dir,
                 project_root: project.root().to_path_buf(),

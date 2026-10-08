@@ -24,7 +24,7 @@ switch ($architecture) {
 }
 $os = [Version](Get-CimInstance Win32_OperatingSystem).Version
 if ($os.Major -lt 10 -or ($machine -eq 'aarch64' -and $os.Build -lt 22000)) { throw 'Windows 10/11 is required; ARM64 requires Windows 11' }
-$required = 8GB
+$required = 12GB
 Write-Host "Target platform: Windows $machine"
 if ($machine -eq 'aarch64') {
     Write-Host 'Windows ARM64 currently installs native CLI/TUI only, without a GUI, Python separation runtime or models.'
@@ -153,7 +153,7 @@ if ($driveInfo.DriveType -eq [IO.DriveType]::Network) { throw 'Install on a loca
 if (-not $driveInfo.IsReady -or $driveInfo.AvailableFreeSpace -lt $required) { throw 'Insufficient space on the selected disk; choose another directory or disk' }
 Write-Host "Installation directory: $InstallDir"
 Write-Host ("Free disk space: {0:N1} GiB; reserved space for peak installation usage: {1:N1} GiB" -f ($driveInfo.AvailableFreeSpace / 1GB), ($required / 1GB))
-Write-Host 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. CLI-only installations are smaller. Sizes vary by platform and dependencies.'
+Write-Host 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB, depending on GPU support. CLI-only installations are smaller.'
 if (-not $Yes) {
     $prompt = 'Start downloading and installing? [y/N]'
     if ($Update) { $prompt = 'Download and update all K3 components? [y/N]' }

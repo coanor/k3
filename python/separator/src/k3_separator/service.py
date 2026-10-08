@@ -34,10 +34,14 @@ class SeparationService:
         registry: ModelRegistry,
         runtime: SeparationRuntime,
         progress: ProgressReporter | None = None,
+        defaults: dict[str, Any] | None = None,
+        accelerator: bool = False,
     ) -> None:
         self._registry = registry
         self._runtime = runtime
         self._progress = progress or ProgressReporter()
+        self._defaults = defaults or {}
+        self._accelerator = accelerator
 
     def handle(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
@@ -60,7 +64,7 @@ class SeparationService:
         if not input_path.is_file():
             raise WorkerError("input_not_found", f"input is not a file: {input_path}")
         output_dir = _required_path(params, "output_dir")
-        profile = params.get("profile", "balanced")
+        profile = params.get("profile", self._defaults.get("profile", "balanced"))
         model_id = params.get("model_id")
         if not isinstance(profile, str) or (model_id is not None and not isinstance(model_id, str)):
             raise WorkerError("invalid_request", "profile and model_id must be strings")
@@ -68,13 +72,24 @@ class SeparationService:
         overwrite = params.get("overwrite", False)
         if not isinstance(overwrite, bool):
             raise WorkerError("invalid_request", "overwrite must be a boolean")
-        preserve_backing_vocals = params.get("preserve_backing_vocals", True)
+        if profile == self._defaults.get("profile") and model_id is None:
+            model_id = self._defaults.get("model")
+        recommended_model = model_id == self._defaults.get("model") and profile == self._defaults.get("profile")
+        if recommended_model:
+            options = {**{key: self._defaults[key] for key in ("segment_size", "autocast")
+                          if key in self._defaults}, **options}
+        preserve_backing_vocals = params.get(
+            "preserve_backing_vocals", self._defaults.get("preserve_backing_vocals", True) if recommended_model else True
+        )
         if not isinstance(preserve_backing_vocals, bool):
             raise WorkerError(
                 "invalid_request", "preserve_backing_vocals must be a boolean"
             )
 
         model = self._registry.select(profile, model_id)
+        if self._accelerator and model.architecture == "mdx-net":
+            # A non-native segment uses audio-separator's ONNX-to-Torch path.
+            options.setdefault("segment_size", 128)
         backing_vocals_model = (
             self._registry.select("fast", BACKING_VOCALS_MODEL_ID)
             if preserve_backing_vocals
@@ -156,7 +171,7 @@ class SeparationService:
                 "checkpoint_sha256": result.backing_vocals_checkpoint_sha256,
                 "license": backing_vocals_model.license,
                 "source_url": backing_vocals_model.source_url,
-                "runtime_options": {
+                "runtime_options": result.backing_vocals_runtime_options or {
                     **backing_vocals_model.runtime_options,
                     **options,
                 },

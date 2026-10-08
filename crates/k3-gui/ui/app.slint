@@ -116,6 +116,7 @@ export component K3Window inherits Window {
     in-out property <int> separation-selected-count: 0;
     in-out property <string> separation-selection-message;
     in-out property <int> separation-profile: 2;
+    in-out property <int> separation-device-index: 0;
     in-out property <int> quality-model-index: 0;
     in-out property <bool> separation-existing: false;
     in-out property <SeparationState> separation-state: SeparationState.idle;
@@ -139,7 +140,7 @@ export component K3Window inherits Window {
     in-out property <bool> netease-qr-visible: false;
     in property <[NeteaseSongItem]> netease-songs;
     property <bool> separation-running: root.separation-state == SeparationState.running;
-    property <length> separation-card-height: (root.netease-logged-in ? 1010px : root.netease-qr-visible ? 860px : root.netease-accepted ? 700px : 650px) + (root.separation-profile == 2 ? 104px : 0px) + (root.separation-selection-message != "" ? 44px : 0px) + (root.separation-running ? 132px : root.separation-queued-count > 0 ? 18px : 0px);
+    property <length> separation-card-height: (root.netease-logged-in ? 1010px : root.netease-qr-visible ? 860px : root.netease-accepted ? 700px : 650px) + 128px + (root.separation-profile == 2 ? 104px : 0px) + (root.separation-selection-message != "" ? 44px : 0px) + (root.separation-running ? 132px : root.separation-queued-count > 0 ? 18px : 0px);
     property <bool> recording-active: root.recording-state != RecordingState.idle;
     in property <bool> current-project-separating: false;
 
@@ -161,6 +162,7 @@ export component K3Window inherits Window {
     callback save-volume(float);
     callback select-language(int);
     callback select-separation-profile(int);
+    callback select-separation-device(int);
     callback select-quality-model(int);
     pure callback localize-message(string, int) -> string;
     localize-message(source, _language) => { return source; }
@@ -948,6 +950,20 @@ export component K3Window inherits Window {
                                     message-font-size: 11px;
                                     copy-requested(message) => { root.copy-message(message); }
                                 }
+                                SectionLabel { text: Strings.separation-device; }
+                                separation-device := ComboBox {
+                                    height: 36px;
+                                    model: [Strings.device-auto, Strings.device-cpu, Strings.device-gpu];
+                                    current-index <=> root.separation-device-index;
+                                    accessible-label: Strings.separation-device;
+                                    selected => { root.select-separation-device(separation-device.current-index); }
+                                }
+                                Text {
+                                    text: Strings.separation-device-hint;
+                                    color: Tokens.faint;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
                                 SectionLabel { text: Strings.separation-profile; }
                                 HorizontalLayout {
                                     height: 36px;
@@ -1511,7 +1527,7 @@ export component K3Window inherits Window {
         background: #15162bee;
         Rectangle {
             width: min(560px, parent.width - 80px);
-            height: 490px;
+            height: min(590px, parent.height - 48px);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: 10px;
@@ -1585,6 +1601,14 @@ export component K3Window inherits Window {
                     current-index <=> root.separation-profile;
                     accessible-label: Strings.settings-default-profile;
                     selected => { root.select-separation-profile(settings-profile.current-index); }
+                }
+                SectionLabel { text: Strings.separation-device; }
+                settings-device := ComboBox {
+                    height: 36px;
+                    model: [Strings.device-auto, Strings.device-cpu, Strings.device-gpu];
+                    current-index <=> root.separation-device-index;
+                    accessible-label: Strings.separation-device;
+                    selected => { root.select-separation-device(settings-device.current-index); }
                 }
                 SectionLabel { text: Strings.settings-language; }
                 settings-language := ComboBox {

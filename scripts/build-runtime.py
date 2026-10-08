@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a portable offline CPU runtime on the target platform; requires uv and network access."""
+"""Prepare a portable runtime; offline builds default to CPU, online installs detect hardware."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PYTHON_VERSION = "3.13.15"
+sys.path.insert(0, str(REPO / "python/separator/src"))
+from k3_separator.setup_runtime import install_torch
 
 
 def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
@@ -23,7 +25,7 @@ def run(*args: str | Path, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
-def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
+def build(output: Path, model_cache: Path | None, models: list[str], backend: str = "cpu") -> None:
     if platform.system() == "Darwin" and platform.machine() == "x86_64":
         raise RuntimeError("Full runtime is unavailable on Intel macOS; build a CLI package or use Apple Silicon")
     if output.exists():
@@ -47,15 +49,11 @@ def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
         python = python_root / ("python.exe" if os.name == "nt" else "bin/python3")
         pip = (uv, "pip", "install", "--python", python, "--no-config", "--break-system-packages",
                "--link-mode", "copy")
-        torch_args = ["torch==2.11.0", "torchvision==0.26.0", "torchaudio==2.11.0"]
-        if sys.platform != "darwin":
-            torch_args += ["--index-url", "https://download.pytorch.org/whl/cpu"]
-        run(*pip, *torch_args)
+        plan = install_torch(python, uv, backend)
         # 上游额外依赖包含不使用的 diffq；沿用项目已有的受控安装方式。
         run(*pip, "audio-separator==0.44.5", "--no-deps")
         constraints = staging / "constraints.txt"
-        constraints.write_text("torch==2.11.0\ntorchvision==0.26.0\ntorchaudio==2.11.0\n",
-                               encoding="utf-8")
+        constraints.write_text("\n".join(plan.torch_packages) + "\n", encoding="utf-8")
         run(*pip, "-r", REPO / "python/separator/requirements-runtime.txt",
             "onnxruntime==1.24.4", "-c", constraints)
         run(*pip, REPO / "python/separator", "--no-deps")
@@ -77,6 +75,8 @@ def build(output: Path, model_cache: Path | None, models: list[str]) -> None:
         manifest["platform"] = sys.platform
         manifest["machine"] = platform.machine()
         manifest["python"] = PYTHON_VERSION
+        manifest["backend"] = plan.backend
+        manifest["torch_build"] = plan.torch_build
         (bundle / "bundle-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         shutil.move(str(bundle), output)
@@ -91,8 +91,10 @@ def main() -> None:
     parser.add_argument("--model-cache", type=Path, help="Reuse an existing model cache with pinned checksum verification")
     parser.add_argument("--model", action="append", default=[],
                         help="Additional model ID; repeat to add models, or use all for every built-in model")
+    parser.add_argument("--backend", choices=("auto", "cpu", "gpu"), default="cpu",
+                        help="Use auto for hardware detection; CPU keeps offline packages portable")
     args = parser.parse_args()
-    build(args.output.resolve(), args.model_cache, args.model)
+    build(args.output.resolve(), args.model_cache, args.model, args.backend)
 
 
 if __name__ == "__main__":

@@ -1,15 +1,15 @@
 # Install K3
 
-Use the release `install.sh` on Linux/macOS or `install.ps1` on Windows. The online installer downloads native programs, prepares standalone Python, CPU separation dependencies and FFmpeg, and verifies the Fast, Balanced and Quality models. Rust, Python and uv do not need to be installed beforehand.
+Use the release `install.sh` on Linux/macOS or `install.ps1` on Windows. The online installer downloads native programs, prepares standalone Python, hardware-compatible separation dependencies and FFmpeg, and verifies the Fast, Balanced and Quality models. Rust, Python and uv do not need to be installed beforehand.
 
 [简体中文](install-packages.zh-Hans.md)
 
 | Platform | Programs and separation support |
 | --- | --- |
-| Linux x86_64 / ARM64 | GUI, CLI/TUI and CPU runtime; glibc 2.39 or later |
-| Windows x64 | GUI, CLI/TUI and CPU runtime; Windows 10/11 |
+| Linux x86_64 / ARM64 | GUI, CLI/TUI and CPU/CUDA runtime (CUDA on x86_64); glibc 2.39 or later |
+| Windows x64 | GUI, CLI/TUI and CPU/CUDA runtime; Windows 10/11 |
 | Windows ARM64 | Native CLI/TUI and maintenance Python; Windows 11 |
-| macOS Apple Silicon | CLI/TUI and CPU runtime; macOS 14 or later |
+| macOS Apple Silicon | CLI/TUI and CPU/MPS runtime; macOS 14 or later |
 | macOS Intel | Native CLI/TUI and maintenance Python; macOS 14 or later |
 
 ## Online installation
@@ -28,9 +28,45 @@ Get-FileHash .\install.ps1 -Algorithm SHA256
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir 'D:\Apps\K3'
 ```
 
-For a new installation, the installer asks for a disk/directory and confirmation. Existing online installations are discovered and offered for a verified update. All downloads, models, temporary files and programs use the selected disk. Full installs reserve 8 GiB of peak disk space; CLI-only installs reserve 512 MiB. Other nonempty directories are rejected. Checks include release version, file sizes, SHA-256, program startup and offline model loading. Failed verification does not enable the destination.
+For a new installation, the installer asks for a disk/directory and confirmation. Existing online installations are discovered and offered for a verified update. All downloads, models, temporary files and programs use the selected disk. Full installs reserve 12 GiB of peak disk space; CLI-only installs reserve 512 MiB. Other nonempty directories are rejected. Checks include release version, file sizes, SHA-256, program startup and offline model loading. Failed verification does not enable the destination.
 
 Use `--repo owner/repo` / `-Repo owner/repo` to select a release repository, and `--version vX.Y.Z` / `-Version vX.Y.Z` to pin a release. The default repository is `coanor/k3`; the default version is the latest stable release. Public downloads use release URLs. Private releases may use `GITHUB_TOKEN`; credentials are restricted to the GitHub API and removed on redirects.
+
+### Hardware selection
+
+Online installation and upgrades detect NVIDIA compute capability, driver version and VRAM before installing PyTorch 2.11.0. Downloads happen during setup, not at application startup. Offline packages continue to default to a portable CPU runtime; `scripts/build-runtime.py --backend auto` opts into hardware detection when building a runtime locally.
+
+| Hardware | Runtime | First-use recommendation |
+| --- | --- | --- |
+| NVIDIA Maxwell/Pascal/Volta, including GTX 750 Ti | CUDA 12.6 | Fast MDX, segment 128, autocast off |
+| NVIDIA Turing through Hopper | CUDA 12.6 | Fast below 6 GiB; Balanced at 6–8 GiB; Quality at 8 GiB or more |
+| NVIDIA Blackwell, with a compatible 570+ driver | CUDA 12.8 | Same VRAM policy |
+| Apple Silicon | Native PyTorch MPS | Fast MDX, segment 128, autocast off |
+| AMD/Intel GPUs, older unsupported NVIDIA GPUs, missing/old drivers | CPU | Fast MDX, native segment 256 |
+
+CUDA installation is supported on Windows x64 and Linux x86_64. CUDA 12 requires at least Windows driver 528.33 or Linux driver 525.60.13; some GPUs and kernels need newer drivers. Setup executes convolution and CUDA FFT kernels to validate the selected wheel. If validation fails, it installs the CPU runtime and records CPU recommendations. Download failures stop setup so an existing installation stays intact. The selection follows the [PyTorch 2.11 architecture matrix](https://dev-discuss.pytorch.org/t/dropping-volta-support-from-cuda-12-8-binaries-for-release-2-11/3290) and [NVIDIA driver compatibility guidance](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+
+Recommendations are stored in `runtime/python/k3-hardware.json`. The GUI applies the profile only when no saved GUI settings exist. The worker and batch scripts use recommended model/options when preferences are absent; explicit profile, model and options take precedence. Fast/Balanced defaults disable the additional backing-vocal pass; Quality retains it. CPU ONNX Runtime is used everywhere; MDX uses the ONNX-to-Torch conversion with segment 128 for accelerator inference. Explicitly selecting the native MDX segment 256 uses CPU ONNX inference. Available VRAM during other workloads can still affect the model you can run.
+
+With multiple GPUs, setup selects the compatible GPU with the most VRAM and records its UUID. `CUDA_VISIBLE_DEVICES` overrides selection and preserves the first visible device. After changing cards, run an upgrade to select the new runtime. Dependency downloads remain cached in `.k3-download-cache` next to the installation directory, on the selected disk, so upgrades can reuse large PyTorch packages. You may delete that cache after setup; it is not required to run K3.
+
+For a source checkout, `bash python/separator/scripts/install-gpu.sh` or `powershell -NoProfile -ExecutionPolicy Bypass -File .\install-separator.ps1` uses the same automatic selection. `install-cpu.sh` or `install-separator.ps1 -Backend cpu` forces CPU.
+
+### Choosing a separation device
+
+The GUI provides **Auto (GPU preferred)**, **CPU only**, and **GPU only** in song preparation and Settings, and saves the choice. Changes apply to future jobs; a running job keeps its device. Auto validates available acceleration and may use CPU if it fails. CPU prevents GPU inference even when CUDA dependencies are installed. GPU requires working CUDA/MPS kernels and never falls back to CPU; an unavailable or incompatible accelerator produces `gpu_unavailable`. This controls model inference; audio decoding and file writing still run on the CPU.
+
+```sh
+k3 separate --project /path/to/project --device cpu
+bash separate.sh -f song.flac -d projects --device gpu
+```
+
+```powershell
+.\k3.exe separate --project 'H:\music\project' --device gpu
+.\separate.ps1 -f 'H:\music\song.flac' -d 'H:\music\projects' -Device cpu
+```
+
+`K3_DEVICE=auto|cpu|gpu` selects a device through the environment. For the Windows batch script and the library TUI, `config.json` may contain `"separation": {"device": "cpu", ...}`. Explicit command options take precedence over the environment, followed by configuration/defaults. The Bash wrapper uses the environment or command option. The worker also accepts `k3-separator --device cpu`. No dependencies are downloaded when switching; GPU must already have been installed and validated. GPU-only MDX uses a non-native segment (128 for built-in models); the native ONNX segment is rejected because the bundled ONNX provider uses CPU. Backing-vocal MDX passes also use Torch acceleration in GPU mode.
 
 ### Shortcuts
 
@@ -107,11 +143,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Version vX.Y.Z
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-Both actions ask for confirmation; `--yes` / `-Yes` skips it for automation. Update defaults to the installed release repository; override it with `--repo` / `-Repo` or `K3_RELEASE_REPO`. It stages a complete new release on the selected disk: CLI, GUI where supported, separator launcher and worker, standalone Python, CPU dependencies, FFmpeg, default models, scripts, licenses and manuals. Each new release supplies its own dependency/model definitions, so these can change together. Additional user models and personal files are retained.
+Both actions ask for confirmation; `--yes` / `-Yes` skips it for automation. Update defaults to the installed release repository; override it with `--repo` / `-Repo` or `K3_RELEASE_REPO`. It stages a complete new release on the selected disk: CLI, GUI where supported, separator launcher and worker, standalone Python, hardware-compatible dependencies, FFmpeg, default models, scripts, licenses and manuals. Each new release supplies its own dependency/model definitions, so these can change together. Additional user models and personal files are retained.
 
 Updates automatically use the existing `models` directory as a cache, including legacy online installations. Checkpoints whose staged SHA-256 matches the new release's model registry are reused without downloading their weights. Only missing checkpoints or checkpoints with a different required hash are downloaded. Copies in the staging directory are verified; the old installation is not modified while preparing the update. Small model configuration/metadata files are prepared again for the new dependencies. `--model-cache` / `-ModelCache` selects a different cache explicitly, with the same checksum checks. Unverified cached weights are discarded from staging before the required model is downloaded.
 
-The old installation remains active until all downloads and startup/runtime/model checks pass. The updater refuses releases older than the installed version. File replacement rejects edited managed files and conflicts with unregistered files, and rolls back ordinary move failures. If rollback itself fails, a recovery directory retains the original files. Do not interrupt maintenance while files are being replaced. The updater needs enough disk space for the complete new installation and temporary dependency preparation (at least the installer's 8 GiB reserve for full platforms).
+The old installation remains active until all downloads and startup/runtime/model checks pass. The updater refuses releases older than the installed version. File replacement rejects edited managed files and conflicts with unregistered files, and rolls back ordinary move failures. If rollback itself fails, a recovery directory retains the original files. Do not interrupt maintenance while files are being replaced. The updater needs enough disk space for the complete new installation and temporary dependency preparation (at least the installer's 12 GiB reserve for full platforms).
 
 Uninstall removes unchanged files listed in `installation-state.json` and unchanged generated shortcuts. It keeps user projects, recordings, settings, extra models and edited files, even when placed inside the installation. It does not delete old upgrade backup/recovery directories. Keep personal data outside the installation as a normal practice.
 

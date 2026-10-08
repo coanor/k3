@@ -799,3 +799,18 @@ msgstr "无法打开发行页面：{error}"
 
 msgid "Update available — open About"
 msgstr "有更新可用 — 打开关于"
+
+msgid "SEPARATION DEVICE"
+msgstr "分离设备"
+
+msgid "Auto (GPU preferred)"
+msgstr "自动（优先 GPU）"
+
+msgid "CPU only"
+msgstr "仅 CPU"
+
+msgid "GPU only"
+msgstr "仅 GPU"
+
+msgid "CPU disables GPU acceleration. GPU requires a compatible device and never falls back to CPU. Changes apply to new jobs."
+msgstr "CPU 模式关闭 GPU 加速；GPU 模式要求兼容设备，不会回退到 CPU。更改对新任务生效。"

@@ -59,7 +59,7 @@ case "$system-$machine" in
     macos-x86_64) uv_digest=5e287ef61cb6a9b61b3a83fef124fd143e400468a7dac794230147a810e17119 ;;
     macos-aarch64) uv_digest=7e6ddb9316acc00f2296c82ff4d99977870ee34b2f0ddcae9444d714db9364ed ;;
 esac
-required=$((8 * 1024 * 1024))
+required=$((12 * 1024 * 1024))
 echo "Target platform: $system $machine"
 if [[ "$system" == macos ]]; then
     echo 'macOS currently provides CLI/TUI only, without a GUI.'
@@ -164,7 +164,7 @@ available=$(df -Pk "$ancestor" | awk 'NR == 2 {print $4}')
 [[ "$available" =~ ^[0-9]+$ && "$available" -ge "$required" ]] || { echo 'Insufficient space on the selected disk; choose another directory or disk' >&2; exit 1; }
 echo "Installation directory: $prefix"
 echo "Free disk space: $((available / 1024)) MiB; reserved space for peak installation usage: $((required / 1024)) MiB"
-echo 'A full installation downloads about 1-2 GiB and uses about 2-4 GiB. CLI-only installations are smaller. Sizes vary by platform and dependencies.'
+echo 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB, depending on GPU support. CLI-only installations are smaller.'
 if [[ "$confirmed" != true ]]; then
     [[ -t 3 ]] || { echo 'Non-interactive installation requires --yes' >&2; exit 1; }
     prompt='Start downloading and installing? [y/N]: '

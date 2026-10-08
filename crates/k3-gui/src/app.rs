@@ -16,8 +16,8 @@ use crate::{
     logging::DiagnosticLog,
     separation::{self, Profile, SeparationRequest},
     settings::{
-        GuiLanguage, GuiQualityModel, GuiSeparationProfile, GuiSettings, SettingsWriter,
-        SettingsWriterHandle,
+        GuiLanguage, GuiQualityModel, GuiSeparationDevice, GuiSeparationProfile, GuiSettings,
+        SettingsWriter, SettingsWriterHandle,
     },
     ui_text,
 };
@@ -266,6 +266,7 @@ fn configure_window(ui: &K3Window, settings: &GuiSettings) -> Result<(), Box<dyn
     ui.set_language_index(settings.language.index());
     ui.set_separation_profile(settings.separation_profile.index());
     ui.set_quality_model_index(settings.separation_quality_model.index());
+    ui.set_separation_device_index(settings.separation_device.index());
     if let Ok(path) = GuiSettings::path() {
         ui.set_settings_path(path_text(&path));
     }
@@ -373,6 +374,21 @@ fn install_preference_callbacks(
             };
             if let Ok(mut data) = data.lock() {
                 data.settings.separation_profile = profile;
+                if data.settings_writable {
+                    settings_writer.persist(data.settings.clone());
+                }
+            }
+        });
+    }
+    {
+        let data = Arc::clone(data);
+        let settings_writer = settings_writer.clone();
+        ui.on_select_separation_device(move |index| {
+            let Some(device) = GuiSeparationDevice::from_index(index) else {
+                return;
+            };
+            if let Ok(mut data) = data.lock() {
+                data.settings.separation_device = device;
                 if data.settings_writable {
                     settings_writer.persist(data.settings.clone());
                 }
@@ -888,6 +904,29 @@ fn install_queue_selected_sources(ui: &K3Window, data: &Arc<Mutex<AppData>>) {
     });
 }
 
+fn separation_request(
+    ui: &K3Window,
+    source: &str,
+    projects_root: PathBuf,
+    profile_index: i32,
+    model_index: i32,
+    allow_replace: bool,
+) -> SeparationRequest {
+    let profile = Profile::from_index(profile_index);
+    let quality_model = GuiQualityModel::from_index(model_index).unwrap_or_default();
+    SeparationRequest {
+        device: GuiSeparationDevice::from_index(ui.get_separation_device_index())
+            .unwrap_or_default(),
+        source: PathBuf::from(source),
+        projects_root,
+        profile,
+        model_id: (profile == Profile::Quality)
+            .then(|| quality_model.model_id())
+            .flatten(),
+        allow_replace,
+    }
+}
+
 fn install_start_separation(
     ui: &K3Window,
     data: &Arc<Mutex<AppData>>,
@@ -911,17 +950,14 @@ fn install_start_separation(
             ui.set_separation_message("Choose a projects folder first".into());
             return;
         };
-        let profile = Profile::from_index(profile_index);
-        let quality_model = GuiQualityModel::from_index(model_index).unwrap_or_default();
-        let request = SeparationRequest {
-            source: PathBuf::from(source.as_str()),
-            projects_root: root.clone(),
-            profile,
-            model_id: (profile == Profile::Quality)
-                .then(|| quality_model.model_id())
-                .flatten(),
+        let request = separation_request(
+            &ui,
+            source.as_str(),
+            root.clone(),
+            profile_index,
+            model_index,
             allow_replace,
-        };
+        );
         let (project, exists) = match separation::destination(&request.source, &root) {
             Ok(destination) => destination,
             Err(error) => {

@@ -27,10 +27,10 @@ Linux：開啟終端機，貼上並執行：
 curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
-選擇**至少有 8 GiB 可用空間**的磁碟，輸入新的或空的安裝目錄，再輸入 `y` 確認。
+選擇**至少有 12 GiB 可用空間**的磁碟，輸入新的或空的安裝目錄，再輸入 `y` 確認。
 如果找到既有線上安裝，安裝入口會改為選擇原目錄並要求確認升級，詳見下方升級說明。
 安裝需要連線，會自動下載程式、Python 和預設分離模型，無需自行準備。
-完整安裝通常使用 2–4 GiB。安裝程式的提示使用英文。
+完整安裝通常使用 2–10 GiB。安裝程式的提示使用英文。
 
 Windows 需要 Windows 10/11；Linux 需要 glibc 2.39 或更新版本及圖形桌面。
 Ubuntu 24.04 請先安裝系統執行階段函式庫：
@@ -62,7 +62,7 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 安裝和升級入口會尋找既有的線上安裝：只找到一個時自動選擇目錄，核對後輸入 `y` 確認；
 找到多個時從清單中選擇；沒有找到時手動輸入**原來的 K3 安裝目錄**。
 升級入口會驗證下載的安裝程式，並在原目錄更新。
-完整安裝需至少 8 GiB 可用空間。既有模型權重的 SHA-256 符合新版要求時會直接重用，
+完整安裝需至少 12 GiB 可用空間。既有模型權重的 SHA-256 符合新版要求時會直接重用，
 只下載缺少或摘要變更的模型。工程與錄音會保留；從舊版升級還會在旁邊保留
 `.k3-previous-*` 舊安裝備份目錄，確認升級正常後再考慮清理備份。
 透過 `.exe`、`.deb` 或 `.pkg` 安裝的版本，請使用系統安裝程式或套件管理器升級。
@@ -84,9 +84,11 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 ## 3. 加入歌曲
 
 1. 點擊**分離歌曲（Separate song）**，再點**選擇檔案（Choose files）**，選擇一首或多首音訊。
-2. 初次使用保留**高質量（Quality）**和**運行環境預設模型（Runtime default）**；處理太慢時可試 Balanced 或 Fast。
+2. 初次使用保留硬體推薦：CPU、舊顯示卡或低顯示記憶體推薦 Fast，較新顯示卡 6–8 GiB 顯示記憶體推薦 Balanced，8 GiB 以上推薦 Quality。既有設定會保留，也可在設定中修改模式和模型。
 3. 一首新歌點擊**創建並分離（Create and separate）**，多首點擊**加入佇列（Queue selected）**。
 4. 等歌曲出現在左側專案清單，再點擊它開啟。
+
+在分離頁面或設定中選擇「自動（優先 GPU）」「僅 CPU」或「僅 GPU」。CPU 模式停用 GPU 推論；GPU 無法使用時僅 GPU 模式會報錯，自動模式可退回 CPU。選擇會儲存，對新工作生效。
 
 處理期間可以繼續加歌。進度卡顯示目前歌曲和等待佇列，百分比表示目前處理階段的進度。
 按 **Esc** 可返回播放頁面，背景準備繼續；點擊進度卡可重新開啟。
@@ -105,7 +107,7 @@ curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/coanor/k3/
 | 音軌 | 聽到的內容 |
 | --- | --- |
 | **原唱（Original）** | 原始歌曲 |
-| **伴奏（Backing）** | 伴奏，預設保留和聲 |
+| **伴奏（Backing）** | 伴奏；Quality 預設保留和聲，Fast/Balanced 硬體推薦略過額外和聲分離 |
 | **人聲（Vocals）** | 分離出的主唱 |
 | **錄音（Take）** | 所選錄音與伴奏混合後的效果 |
 

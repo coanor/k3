@@ -4,12 +4,14 @@ param(
     [Alias("f")]
     [string[]]$Files,
     [Alias("d")]
-    [string]$Directory
+    [string]$Directory,
+    [ValidateSet("auto", "cpu", "gpu")]
+    [string]$Device
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
-# Windows PowerShell 5.1 默认使用本机代码页输出；GUI 通过管道按 UTF-8 记录诊断。
+# The GUI reads Windows PowerShell 5.1 diagnostics as UTF-8.
 $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 try { [Console]::OutputEncoding = $OutputEncoding } catch { }
 
@@ -59,7 +61,7 @@ function Write-SeparationOutputs {
         $relative = Get-PropertyValue -Object $details -Name $output.Name -Default $null
         if (-not [string]::IsNullOrWhiteSpace($relative)) {
             $nativeRelative = $relative -replace "/", [IO.Path]::DirectorySeparatorChar
-            Write-Host "  $($output.Label)：$(Join-Path $Project $nativeRelative)"
+            Write-Host "  $($output.Label): $(Join-Path $Project $nativeRelative)"
         }
     }
 }
@@ -75,6 +77,17 @@ $separationConfig = if ($null -ne $config) {
 } else {
     $null
 }
+$selectedDevice = if (-not [string]::IsNullOrWhiteSpace($Device)) {
+    $Device
+} elseif (-not [string]::IsNullOrWhiteSpace($env:K3_DEVICE)) {
+    $env:K3_DEVICE
+} else {
+    Get-PropertyValue -Object $separationConfig -Name "device" -Default "auto"
+}
+if ($selectedDevice -notin @("auto", "cpu", "gpu")) {
+    throw "Device must be auto, cpu, or gpu."
+}
+$env:K3_DEVICE = $selectedDevice
 
 if ([string]::IsNullOrWhiteSpace($Directory)) {
     if (-not [string]::IsNullOrWhiteSpace($env:K3_OUTPUT_DIR)) {
@@ -123,7 +136,32 @@ if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
     throw "Windows separation worker not found: $worker. Run .\install-separator.ps1 first."
 }
 
-$configuredProfile = Get-PropertyValue -Object $separationConfig -Name "profile" -Default "quality"
+$recommendations = $null
+foreach ($planPath in @(
+    (Join-Path $PSScriptRoot "runtime\python\k3-hardware.json"),
+    (Join-Path $PSScriptRoot ".venv-separator\k3-hardware.json")
+)) {
+    if (Test-Path -LiteralPath $planPath -PathType Leaf) {
+        try {
+            $plan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ((Get-PropertyValue -Object $plan -Name "schema_version" -Default 0) -eq 1) {
+                $recommendations = Get-PropertyValue -Object $plan -Name "separation" -Default $null
+                break
+            }
+        } catch { Write-Warning "Could not read runtime recommendations: $planPath" }
+    }
+}
+$recommendedProfile = Get-PropertyValue -Object $recommendations -Name "profile" -Default "quality"
+if ($selectedDevice -eq "cpu" -or ($selectedDevice -eq "gpu" -and
+    ($null -eq $recommendations -or (Get-PropertyValue -Object $plan -Name "backend" -Default "cpu") -eq "cpu"))) {
+    $recommendations = [PSCustomObject]@{
+        profile = "fast"; model = "uvr-mdx-karaoke-2"
+        segment_size = $(if ($selectedDevice -eq "cpu") { 256 } else { 128 })
+        autocast = $false; preserve_backing_vocals = $false
+    }
+    $recommendedProfile = "fast"
+}
+$configuredProfile = Get-PropertyValue -Object $separationConfig -Name "profile" -Default $recommendedProfile
 $profile = if (-not [string]::IsNullOrWhiteSpace($env:K3_PROFILE)) {
     $env:K3_PROFILE
 } else {
@@ -132,7 +170,10 @@ $profile = if (-not [string]::IsNullOrWhiteSpace($env:K3_PROFILE)) {
 $model = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL)) {
     $env:K3_MODEL
 } elseif ($profile -eq $configuredProfile) {
-    Get-PropertyValue -Object $separationConfig -Name "model" -Default $null
+    $defaultModel = if ($profile -eq $recommendedProfile) {
+        Get-PropertyValue -Object $recommendations -Name "model" -Default $null
+    } else { $null }
+    Get-PropertyValue -Object $separationConfig -Name "model" -Default $defaultModel
 } else {
     $null
 }
@@ -143,26 +184,37 @@ $modelDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL_DIR)) {
 } else {
     $null
 }
+$useRecommendations = $profile -eq $recommendedProfile -and
+    $model -eq (Get-PropertyValue -Object $recommendations -Name "model" -Default $null)
+$defaultSegment = if ($useRecommendations) {
+    Get-PropertyValue -Object $recommendations -Name "segment_size" -Default $null
+} else { $null }
+$defaultAutocast = if ($useRecommendations) {
+    Get-PropertyValue -Object $recommendations -Name "autocast" -Default $true
+} else { $true }
+$defaultBacking = if ($useRecommendations) {
+    Get-PropertyValue -Object $recommendations -Name "preserve_backing_vocals" -Default $true
+} else { $true }
 $segmentSize = if (-not [string]::IsNullOrWhiteSpace($env:K3_SEGMENT_SIZE)) {
     $env:K3_SEGMENT_SIZE
 } elseif ($profile -eq $configuredProfile) {
-    Get-PropertyValue -Object $separationConfig -Name "segment_size" -Default $null
+    Get-PropertyValue -Object $separationConfig -Name "segment_size" -Default $defaultSegment
 } else {
     $null
 }
 $autocast = if (-not [string]::IsNullOrWhiteSpace($env:K3_AUTOCAST)) {
     ConvertTo-Boolean -Value $env:K3_AUTOCAST -Name "K3_AUTOCAST"
 } elseif ($null -ne $config) {
-    [bool](Get-PropertyValue -Object $separationConfig -Name "autocast" -Default $true)
+    [bool](Get-PropertyValue -Object $separationConfig -Name "autocast" -Default $defaultAutocast)
 } else {
-    $true
+    [bool]$defaultAutocast
 }
 $preserveBackingVocals = if (-not [string]::IsNullOrWhiteSpace($env:K3_PRESERVE_BACKING_VOCALS)) {
     ConvertTo-Boolean -Value $env:K3_PRESERVE_BACKING_VOCALS -Name "K3_PRESERVE_BACKING_VOCALS"
 } elseif ($null -ne $config) {
-    [bool](Get-PropertyValue -Object $separationConfig -Name "preserve_backing_vocals" -Default $true)
+    [bool](Get-PropertyValue -Object $separationConfig -Name "preserve_backing_vocals" -Default $defaultBacking)
 } else {
-    $true
+    [bool]$defaultBacking
 }
 $logDir = Get-PropertyValue -Object $separationConfig -Name "log_dir" -Default $null
 if (-not [string]::IsNullOrWhiteSpace($logDir)) {
@@ -205,7 +257,8 @@ for ($index = 0; $index -lt $inputs.Count; $index++) {
         Invoke-K3 -Arguments @("new", "--root", $project, "--song", $input, "--title", $title)
     }
 
-    $arguments = @("separate", "--project", $project, "--profile", $profile, "--worker", $worker)
+    $arguments = @("separate", "--project", $project, "--profile", $profile, "--worker", $worker,
+                   "--device", $selectedDevice)
     if ($replacing) {
         $arguments += "--overwrite"
     }

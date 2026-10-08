@@ -226,7 +226,7 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
                                "libxkbcommon-x11-0 libegl1 libgl1-mesa-dri")
         if not ctypes.util.find_library("xkbcommon-x11"):
             print("Note: the X11 GUI also requires libxkbcommon-x11-0. Wayland and CLI installation can continue.", flush=True)
-    minimum = (6 * 1024**3 if runtime else 128 * 1024**2)
+    minimum = (12 * 1024**3 if runtime else 128 * 1024**2)
     if shutil.disk_usage(prefix.parent).free < minimum:
         raise RuntimeError("Insufficient free space on the selected disk")
     version = json.loads((SUPPORT / "online-version.json").read_text())["version"]
@@ -257,15 +257,20 @@ def install(prefix: Path, repo: str, uv: Path, assets: Path | None,
             shutil.copy2(SUPPORT / "crates/k3-gui/assets/licenses/LicenseRef-Slint-Royalty-free-2.0.md", licenses)
             shutil.copy2(SUPPORT / "crates/k3-gui/assets/k3.svg", root / "k3.svg")
         if runtime:
-            print("Preparing standalone Python, CPU separation dependencies, FFmpeg and default models", flush=True)
+            print("Preparing standalone Python, hardware-compatible separation dependencies, FFmpeg and default models", flush=True)
+            dependency_cache = prefix.parent / ".k3-download-cache"
+            if directory_link(dependency_cache):
+                raise RuntimeError("Dependency cache must not be a directory link")
+            dependency_cache.mkdir(exist_ok=True)
             environment = dict(os.environ, PATH=str(uv.parent) + os.pathsep + os.environ.get("PATH", ""),
-                               UV_CACHE_DIR=str(work / "cache"), UV_NO_CONFIG="1",
+                               UV_CACHE_DIR=str(dependency_cache), UV_NO_CONFIG="1",
                                TMPDIR=str(work / "tmp"), TMP=str(work / "tmp"), TEMP=str(work / "tmp"),
                                PYTHONUTF8="1", PYTHONNOUSERSITE="1")
             for credential in ("GITHUB_TOKEN", "GH_TOKEN"):
                 environment.pop(credential, None)
             (work / "tmp").mkdir()
-            args = [sys.executable, "-I", SUPPORT / "scripts/build-runtime.py", "--output", root / "runtime"]
+            args = [sys.executable, "-I", SUPPORT / "scripts/build-runtime.py", "--output", root / "runtime",
+                    "--backend", "auto"]
             if update and cache is None:
                 installed_models = prefix / "models"
                 if installed_models.is_dir() and not directory_link(installed_models):

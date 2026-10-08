@@ -43,6 +43,35 @@ class SeparationServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = SeparationService(ModelRegistry.load(), FakeRuntime())
 
+    def test_hardware_defaults_and_explicit_preferences(self) -> None:
+        defaults = {"profile": "fast", "model": "uvr-mdx-karaoke-2", "segment_size": 128,
+                    "autocast": False, "preserve_backing_vocals": False}
+        service = SeparationService(ModelRegistry.load(), FakeRuntime(), defaults=defaults, accelerator=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "song.wav"
+            source.write_bytes(b"source")
+            for name, settings in (("automatic", {}), ("explicit", {
+                    "profile": "quality", "model_id": "mel-band-roformer-kim-vocal-2",
+                    "options": {"segment_size": 64, "autocast": True},
+                    "preserve_backing_vocals": True}), ("balanced", {
+                    "profile": "balanced", "preserve_backing_vocals": False})):
+                result = service.handle({"method": "separate", "params": {
+                    "input_path": str(source), "output_dir": str(root / name), **settings}})
+                provenance = result["provenance"]
+                if name == "automatic":
+                    self.assertEqual("fast", provenance["profile"])
+                    self.assertEqual(128, provenance["runtime_options"]["segment_size"])
+                    self.assertFalse(provenance["runtime_options"]["autocast"])
+                    self.assertNotIn("backing_vocals", result)
+                elif name == "explicit":
+                    self.assertEqual("mel-band-roformer-kim-vocal-2", provenance["checkpoint_id"])
+                    self.assertEqual(64, provenance["runtime_options"]["segment_size"])
+                    self.assertTrue(provenance["runtime_options"]["autocast"])
+                    self.assertIn("backing_vocals", result)
+                else:
+                    self.assertEqual(128, provenance["runtime_options"]["segment_size"])
+
     def test_preserves_backing_vocals_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

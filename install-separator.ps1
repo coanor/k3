@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("gpu", "cpu")]
-    [string]$Backend = "gpu",
+    [ValidateSet("auto", "gpu", "cpu")]
+    [string]$Backend = "auto",
     [string]$VenvPath,
     [string]$PythonVersion = "3.11",
     [string]$ConfigPath
@@ -80,24 +80,25 @@ Invoke-Checked -Executable $venvPython -Arguments @(
     "-m", "pip", "install", "--upgrade", "pip", "setuptools<82", "wheel"
 )
 
-$torchIndex = if ($Backend -eq "gpu") {
-    "https://download.pytorch.org/whl/cu128"
-} else {
-    "https://download.pytorch.org/whl/cpu"
-}
 Invoke-Checked -Executable $venvPython -Arguments @(
-    "-m", "pip", "install",
-    "torch==2.11.0", "torchvision==0.26.0", "torchaudio==2.11.0",
-    "--index-url", $torchIndex
+    (Join-Path $separatorRoot "scripts\install-runtime.py"),
+    "--python", $venvPython, "--backend", $Backend
 )
 
-$separatorExtra = "audio-separator[$Backend]>=0.44.5,<0.45"
+$separatorExtra = "audio-separator>=0.44.5,<0.45"
 Invoke-Checked -Executable $venvPython -Arguments @(
     "-m", "pip", "install", $separatorExtra, "--no-deps"
 )
-$onnxRuntime = if ($Backend -eq "gpu") { "onnxruntime-gpu>=1.17" } else { "onnxruntime>=1.17" }
+$onnxRuntime = "onnxruntime==1.24.4"
+Invoke-Checked -Executable $venvPython -Arguments @(
+    "-m", "pip", "uninstall", "-y", "onnxruntime-gpu"
+)
 Invoke-Checked -Executable $venvPython -Arguments @(
     "-m", "pip", "install", "-r", $requirements, $onnxRuntime, "diffq-fixed>=0.2"
+)
+# CPU and GPU ONNX distributions share files; repair them after removing GPU ONNX.
+Invoke-Checked -Executable $venvPython -Arguments @(
+    "-m", "pip", "install", "--force-reinstall", "--no-deps", $onnxRuntime
 )
 Invoke-Checked -Executable $venvPython -Arguments @(
     "-m", "pip", "install", "--force-reinstall", "--no-deps", $separatorRoot
@@ -105,6 +106,8 @@ Invoke-Checked -Executable $venvPython -Arguments @(
 
 $runtimeCheck = @'
 import json
+from k3_separator.hardware import configure_device
+configure_device()
 import onnxruntime as ort
 import torch
 from audio_separator.separator import Separator
@@ -122,9 +125,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Windows separation runtime health check failed."
 }
 $runtimeStatus = $runtime | Select-Object -Last 1 | ConvertFrom-Json
-if ($Backend -eq "gpu" -and -not $runtimeStatus.cuda_available) {
-    throw "The GPU worker is installed, but CUDA is unavailable in PyTorch."
-}
 
 $modelDir = if (-not [string]::IsNullOrWhiteSpace($env:K3_MODEL_DIR)) {
     [IO.Path]::GetFullPath($env:K3_MODEL_DIR)
@@ -149,22 +149,36 @@ if (-not $health.ok -or -not $health.result.runtime.audio_separator_installed) {
     throw "k3-separator.exe health check failed: $healthText"
 }
 
-if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
-    $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not ($config.PSObject.Properties.Name -contains "separation")) {
-        $config | Add-Member -MemberType NoteProperty -Name "separation" -Value ([PSCustomObject]@{})
-    }
-    Set-JsonProperty -Object $config.separation -Name "worker" -Value $worker
-    Set-JsonProperty -Object $config.separation -Name "model_dir" -Value $modelDir
-    Set-JsonProperty -Object $config.separation -Name "log_dir" -Value $logDir
-    $json = $config | ConvertTo-Json -Depth 10
-    [IO.File]::WriteAllText(
-        [IO.Path]::GetFullPath($ConfigPath),
-        $json + [Environment]::NewLine,
-        [Text.UTF8Encoding]::new($false)
-    )
-    Write-Host "Configuration updated: $ConfigPath"
+$config = if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+    Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+} else {
+    [PSCustomObject]@{}
 }
+if (-not ($config.PSObject.Properties.Name -contains "separation")) {
+    $config | Add-Member -MemberType NoteProperty -Name "separation" -Value ([PSCustomObject]@{})
+}
+Set-JsonProperty -Object $config.separation -Name "worker" -Value $worker
+Set-JsonProperty -Object $config.separation -Name "model_dir" -Value $modelDir
+Set-JsonProperty -Object $config.separation -Name "log_dir" -Value $logDir
+$hardware = Get-Content -LiteralPath (Join-Path $VenvPath "k3-hardware.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not ($config.separation.PSObject.Properties.Name -contains "profile")) {
+    Set-JsonProperty -Object $config.separation -Name "profile" -Value $hardware.separation.profile
+}
+foreach ($property in $hardware.separation.PSObject.Properties) {
+    if (-not ($config.separation.PSObject.Properties.Name -contains $property.Name)) {
+        if ($config.separation.profile -ne $hardware.separation.profile) { continue }
+        if (($config.separation.PSObject.Properties.Name -contains "model") -and
+            $config.separation.model -ne $hardware.separation.model) { continue }
+        Set-JsonProperty -Object $config.separation -Name $property.Name -Value $property.Value
+    }
+}
+$json = $config | ConvertTo-Json -Depth 10
+[IO.File]::WriteAllText(
+    [IO.Path]::GetFullPath($ConfigPath),
+    $json + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false)
+)
+Write-Host "Configuration updated: $ConfigPath"
 
 Write-Host "Windows separation worker ready: $worker"
 Write-Host "CUDA available: $($runtimeStatus.cuda_available)"

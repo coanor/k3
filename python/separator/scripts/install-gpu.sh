@@ -10,20 +10,21 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 uv venv --allow-existing --python python3 "$venv_path"
-uv pip install --python "$venv_path/bin/python" \
-    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
-    --index-url https://download.pytorch.org/whl/cu128
+"$venv_path/bin/python" "$repo_root/python/separator/scripts/install-runtime.py" \
+    --python "$venv_path/bin/python" --uv "$(command -v uv)" --backend auto
 
 # audio-separator declares diffq on Linux. Its extension needs Python.h, while
 # the built-in K3 checkpoints do not use it, so install the reviewed direct
 # runtime set without dependency expansion.
 uv pip install --python "$venv_path/bin/python" \
-    'audio-separator[gpu]>=0.44.5,<0.45' --no-deps
+    'audio-separator>=0.44.5,<0.45' --no-deps
+uv pip uninstall --python "$venv_path/bin/python" onnxruntime-gpu
 uv pip install --python "$venv_path/bin/python" \
+    --reinstall-package onnxruntime \
     -r "$repo_root/python/separator/requirements-runtime.txt" \
-    'onnxruntime-gpu>=1.17'
+    'onnxruntime==1.24.4'
 uv pip install --python "$venv_path/bin/python" \
     -e "$repo_root/python/separator" --no-deps
 
 "$venv_path/bin/python" -c \
-    'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
+    'from audio_separator.separator import Separator; print("Separation worker ready")'

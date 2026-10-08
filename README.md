@@ -15,7 +15,7 @@ Use `install.sh` on Linux/macOS or `install.ps1` on Windows. You do not need to 
 Python, or uv beforehand. The installer asks you to choose a disk and directory, requests
 confirmation, and downloads the programs for your platform. Where supported, it also prepares
 standalone Python, separation dependencies, and models, then checks startup and models.
-A full installation needs **8 GiB** of free space at its peak and uses about **2–4 GiB** afterward.
+A full installation needs **12 GiB** of free space at its peak and uses about **2–10 GiB** afterward, depending on GPU support.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
 **Current release: [v0.1.6](https://github.com/coanor/k3/releases/tag/v0.1.6).
@@ -215,6 +215,22 @@ cargo run -p k3 -- separate \
   --worker ./.venv-separator/bin/k3-separator \
   --model-dir ~/.cache/k3/models
 ```
+
+## Hardware-aware separation
+
+Online installation and upgrades detect the GPU and prepare compatible PyTorch
+dependencies before K3 starts. GTX 750 Ti and other supported older NVIDIA GPUs
+use CUDA 12.6; Blackwell GPUs use CUDA 12.8. Kernel checks verify the selected
+runtime, with CPU fallback if acceleration fails. Apple Silicon uses MPS;
+AMD/Intel GPUs currently use CPU. The first GUI launch recommends Fast, Balanced
+or Quality based on the detected hardware and preserves existing preferences.
+See [hardware selection and defaults](docs/install-packages.md#hardware-selection).
+
+Choose **Auto (GPU preferred)**, **CPU only**, or **GPU only** in song preparation
+or Settings. CPU disables GPU inference; GPU requires a compatible CUDA/MPS
+device and reports an error instead of falling back. CLI: `k3 separate --project PATH --device cpu` (or `gpu` / `auto`). Batch scripts accept `--device cpu` on
+Bash or `-Device cpu` on PowerShell. `K3_DEVICE` and `separation.device` in
+`config.json` provide the same choice. Switching devices does not download dependencies.
 
 ## Optional offline packages
 

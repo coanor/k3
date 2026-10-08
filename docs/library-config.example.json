@@ -3,9 +3,17 @@
   "projects_root": "/home/tan/Music/k3",
   "scan": {
     "recursive": true,
-    "extensions": ["mp3", "flac", "wav", "m4a", "aac", "ogg"]
+    "extensions": [
+      "mp3",
+      "flac",
+      "wav",
+      "m4a",
+      "aac",
+      "ogg"
+    ]
   },
   "separation": {
+    "device": "auto",
     "worker": "/home/tan/k3-separator/.venv-separator/bin/k3-separator",
     "model_dir": "/home/tan/.cache/k3/models",
     "log_dir": "/home/tan/.local/state/k3/logs",

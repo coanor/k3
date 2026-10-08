@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::logging::DiagnosticLog;
+use crate::settings::GuiSeparationDevice;
 use k3_core::{FileProjectRepository, ProjectRepository, SeparationState};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -123,6 +124,7 @@ impl Profile {
 }
 
 pub(crate) struct SeparationRequest {
+    pub(crate) device: GuiSeparationDevice,
     pub(crate) source: PathBuf,
     pub(crate) projects_root: PathBuf,
     pub(crate) profile: Profile,
@@ -240,6 +242,7 @@ pub(crate) fn run(
         .arg("-d")
         .arg(&request.projects_root)
         .env("K3_PROFILE", request.profile.as_str())
+        .env("K3_DEVICE", request.device.as_str())
         .env(
             "K3_NO_OVERWRITE",
             if request.allow_replace { "0" } else { "1" },
@@ -346,6 +349,7 @@ mod tests {
         Profile, ProgressFile, ProgressPhase, SeparationRequest, destination,
         retryable_unprepared_destination, run,
     };
+    use crate::settings::GuiSeparationDevice;
     use k3_core::{CreateProject, FileProjectRepository, ProjectRepository};
     use std::{fs, path::Path};
 
@@ -424,6 +428,7 @@ mod tests {
         fs::create_dir(&project).unwrap();
         fs::write(project.join("project.json"), b"{}").unwrap();
         let request = SeparationRequest {
+            device: GuiSeparationDevice::Auto,
             source,
             projects_root: projects,
             profile: Profile::Balanced,
@@ -452,6 +457,7 @@ mod tests {
         )
         .unwrap();
         let request = SeparationRequest {
+            device: GuiSeparationDevice::Auto,
             source: source.clone(),
             projects_root: projects.clone(),
             profile: Profile::Quality,
@@ -530,6 +536,7 @@ PY
         )
         .unwrap();
         let request = SeparationRequest {
+            device: GuiSeparationDevice::Auto,
             source,
             projects_root: projects.clone(),
             profile: Profile::Quality,
@@ -565,6 +572,7 @@ PY
         let script = sandbox.path().join("legacy.sh");
         fs::write(&script, "sleep 1.1\n").unwrap();
         let request = SeparationRequest {
+            device: GuiSeparationDevice::Auto,
             source,
             projects_root: sandbox.path().into(),
             profile: Profile::Quality,

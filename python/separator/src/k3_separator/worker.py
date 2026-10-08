@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import TextIO
@@ -14,6 +15,7 @@ from .models import ModelRegistry
 from .runtime import AudioSeparatorRuntime
 from .service import SeparationService
 from .progress import ProgressReporter
+from .hardware import read_plan, separation_defaults
 
 
 def serve(service: SeparationService, input_stream: TextIO, output_stream: TextIO) -> None:
@@ -64,6 +66,9 @@ def _force_utf8(stream: TextIO) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="K3 local stem-separation worker")
     parser.add_argument("--models", type=Path, help="JSON registry merged over built-ins")
+    parser.add_argument("--device", choices=("auto", "cpu", "gpu"),
+                        default=os.environ.get("K3_DEVICE", "auto"),
+                        help="Select CPU, require GPU, or automatically choose a device")
     parser.add_argument(
         "--model-dir",
         type=Path,
@@ -73,8 +78,15 @@ def main() -> None:
     args = parser.parse_args()
     registry = ModelRegistry.load(args.models)
     progress = ProgressReporter.from_environment()
-    runtime = AudioSeparatorRuntime(args.model_dir, progress)
-    serve(SeparationService(registry, runtime, progress), sys.stdin, sys.stdout)
+    if args.device == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    runtime = AudioSeparatorRuntime(args.model_dir, progress, args.device)
+    plan = read_plan()
+    service = SeparationService(
+        registry, runtime, progress, separation_defaults(args.device),
+        accelerator=args.device == "gpu" or bool(args.device == "auto" and plan and plan.get("backend") in {"cuda", "mps"}),
+    )
+    serve(service, sys.stdin, sys.stdout)
 
 
 if __name__ == "__main__":
