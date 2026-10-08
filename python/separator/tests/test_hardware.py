@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -124,8 +125,9 @@ class SetupRuntimeTests(unittest.TestCase):
         cpu = select_runtime([], "linux", "x86_64", "cpu")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            python = root / "bin/python3"
+            python = root / ("python.exe" if os.name == "nt" else "bin/python3")
             with (patch("k3_separator.setup_runtime.detect_runtime", side_effect=[selected, cpu]),
+                  patch("k3_separator.setup_runtime.shutil.disk_usage", return_value=SimpleNamespace(free=64 * 1024**3)),
                   patch("k3_separator.setup_runtime.subprocess.run", side_effect=[
                       subprocess.CompletedProcess([], 0), subprocess.CalledProcessError(1, "probe"),
                       subprocess.CompletedProcess([], 0)]) as run):
@@ -145,10 +147,10 @@ class SetupRuntimeTests(unittest.TestCase):
             write_plan(root, select_runtime([], "linux", "x86_64", "cpu"))
             original = (root / "k3-hardware.json").read_bytes()
             with (patch("k3_separator.setup_runtime.detect_runtime", return_value=plan),
-                  patch("k3_separator.setup_runtime.shutil.disk_usage", return_value=type("Disk", (), {"free": 18 * 1024**3})()),
+                  patch("k3_separator.setup_runtime.shutil.disk_usage", return_value=SimpleNamespace(free=18 * 1024**3)),
                   patch("k3_separator.setup_runtime.subprocess.run") as run):
                 with self.assertRaisesRegex(RuntimeError, "24 GiB"):
-                    install_torch(root / "bin/python3")
+                    install_torch(root / ("python.exe" if os.name == "nt" else "bin/python3"))
             run.assert_not_called()
             self.assertEqual(original, (root / "k3-hardware.json").read_bytes())
 
@@ -157,9 +159,10 @@ class SetupRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (patch("k3_separator.setup_runtime.detect_runtime", return_value=plan),
+                  patch("k3_separator.setup_runtime.shutil.disk_usage", return_value=SimpleNamespace(free=64 * 1024**3)),
                   patch("k3_separator.setup_runtime.subprocess.run", side_effect=subprocess.CalledProcessError(1, "download"))):
                 with self.assertRaises(subprocess.CalledProcessError):
-                    install_torch(root / "bin/python3")
+                    install_torch(root / ("python.exe" if os.name == "nt" else "bin/python3"))
             self.assertFalse((root / "k3-hardware.json").exists())
 
     def test_managed_python_and_windows_venv_locations(self):
