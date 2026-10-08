@@ -10,8 +10,9 @@ K3 是一个本地优先的 K 歌工作区，提供 Linux/Windows 桌面 GUI 和
 
 使用 `install.sh`（Linux/macOS）或 `install.ps1`（Windows）安装，无需预先安装 Rust、
 Python 或 uv。安装器会让你选择磁盘和目录，确认后下载当前平台的程序，并在平台支持时
-准备独立 Python、分离依赖及模型，最后执行启动和模型检查。完整安装需预留 **8 GiB**
-峰值空间，安装后约占 **2–4 GiB**；
+准备独立 Python、分离依赖及模型，最后执行启动和模型检查。完整 CPU/MPS 安装需预留 **12 GiB**
+空间；CUDA 安装需 **24 GiB**，用于运行库、下载缓存及临时文件。安装目录约占
+**2–10 GiB**，保留的依赖缓存还需额外空间；
 Windows ARM64 和 Intel macOS 的精简 CLI 安装需预留 **512 MiB**。
 
 **当前正式版本：[v0.1.2](https://github.com/coanor/k3/releases/tag/v0.1.2)。
@@ -186,6 +187,11 @@ cargo run -p k3 -- separate \
   --worker ./.venv-separator/bin/k3-separator \
   --model-dir ~/.cache/k3/models
 ```
+
+在线安装和升级会检测显卡并准备兼容的 PyTorch；首次使用按硬件推荐分离质量，已有设置优先。750 Ti 使用 CUDA 12.6 和 Fast；Blackwell 使用 CUDA 12.8。Apple Silicon 使用 MPS，AMD/Intel 显卡目前使用 CPU。依赖在安装阶段下载，详见 [硬件自动适配](docs/install-packages.zh-Hans.md#硬件自动适配)。
+
+
+分离页面和设置中可选择自动、仅 CPU、仅 GPU。CPU 模式关闭 GPU 推理；GPU 模式不可用时会报错，不会回退 CPU。命令行支持 `--device auto|cpu|gpu`，PowerShell 批处理支持 `-Device cpu`，也可配置 `K3_DEVICE` 或 `separation.device`。切换设备不会下载依赖。
 
 ## 可选的离线发行包
 

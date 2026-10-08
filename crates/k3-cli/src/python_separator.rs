@@ -17,8 +17,35 @@ use k3_core::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceSelection {
+    #[default]
+    Auto,
+    Cpu,
+    Gpu,
+}
+
+impl DeviceSelection {
+    pub fn from_environment(default: Self) -> Result<Self, String> {
+        match env::var("K3_DEVICE") {
+            Ok(value) => <Self as clap::ValueEnum>::from_str(&value, false),
+            Err(env::VarError::NotPresent) => Ok(default),
+            Err(error) => Err(format!("cannot read K3_DEVICE: {error}")),
+        }
+    }
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PythonSeparatorConfig {
+    pub device: DeviceSelection,
     pub worker: PathBuf,
     pub model_dir: Option<PathBuf>,
     pub project_root: PathBuf,
@@ -101,6 +128,7 @@ impl PythonStemSeparator {
 
         let worker = resolve_worker(&self.config.worker);
         let mut command = Command::new(&worker);
+        command.env("K3_DEVICE", self.config.device.as_str());
         if let Some(model_dir) = &self.config.model_dir {
             command.arg("--model-dir").arg(model_dir);
         }
@@ -560,6 +588,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut separator = PythonStemSeparator::with_cancellation(
                 PythonSeparatorConfig {
+                    device: super::DeviceSelection::Auto,
                     worker,
                     model_dir: None,
                     project_root: project_root.clone(),

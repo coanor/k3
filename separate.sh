@@ -23,9 +23,10 @@ if [[ "${K3_SEPARATE_WORKER_MODE:-}" == "1" ]]; then
 fi
 
 default_output_dir="${K3_OUTPUT_DIR:-/mnt/h/CloudMusic/k3}"
+device="${K3_DEVICE:-auto}"
 
 usage() {
-    echo "usage: $0 -f AUDIO_FILE... [-d PROJECTS_DIR]" >&2
+    echo "usage: $0 -f AUDIO_FILE... [-d PROJECTS_DIR] [--device auto|cpu|gpu]" >&2
     echo "default projects directory: $default_output_dir" >&2
     echo "set K3_PRESERVE_BACKING_VOCALS=false to disable keeping backing vocals in accompaniment" >&2
 }
@@ -58,6 +59,14 @@ input_args=()
 output_arg="$default_output_dir"
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --device)
+            if [[ $# -lt 2 ]]; then
+                echo "k3-separate: --device requires auto, cpu, or gpu" >&2
+                exit 2
+            fi
+            device="$2"
+            shift 2
+            ;;
         -f)
             shift
             file_count=0
@@ -97,6 +106,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+case "$device" in
+    auto|cpu|gpu) export K3_DEVICE="$device" ;;
+    *) echo "k3-separate: device must be auto, cpu, or gpu" >&2; exit 2 ;;
+esac
 
 if [[ ${#input_args[@]} -eq 0 ]]; then
     usage
@@ -167,9 +181,34 @@ if [[ ! -x "$k3_bin" ]]; then
     exit 1
 fi
 
-profile="${K3_PROFILE:-quality}"
+mapfile -t hardware_defaults < <("$python_bin" -I -X utf8 - <<'PY'
+try:
+    import os
+    from k3_separator.hardware import separation_defaults
+    settings = separation_defaults(os.environ.get("K3_DEVICE", "auto"))
+except ImportError:
+    settings = {}
+for key, fallback in (("profile", "quality"), ("model", ""), ("segment_size", ""),
+                      ("autocast", True), ("preserve_backing_vocals", True)):
+    print(str(settings.get(key, fallback)).lower())
+PY
+)
+if [[ ${#hardware_defaults[@]} -ne 5 ]]; then
+    echo "k3-separate: could not read runtime defaults" >&2
+    exit 1
+fi
+profile="${K3_PROFILE:-${hardware_defaults[0]}}"
 model_id="${K3_MODEL:-}"
-case "${K3_AUTOCAST:-true}" in
+segment_size="${K3_SEGMENT_SIZE:-}"
+default_autocast=true
+default_backing=true
+if [[ "$profile" == "${hardware_defaults[0]}" && ( -z "$model_id" || "$model_id" == "${hardware_defaults[1]}" ) ]]; then
+    model_id="${model_id:-${hardware_defaults[1]}}"
+    segment_size="${segment_size:-${hardware_defaults[2]}}"
+    default_autocast="${hardware_defaults[3]}"
+    default_backing="${hardware_defaults[4]}"
+fi
+case "${K3_AUTOCAST:-$default_autocast}" in
     1|true|yes|on)
         disable_autocast=0
         ;;
@@ -181,7 +220,7 @@ case "${K3_AUTOCAST:-true}" in
         exit 2
         ;;
 esac
-case "${K3_PRESERVE_BACKING_VOCALS:-true}" in
+case "${K3_PRESERVE_BACKING_VOCALS:-$default_backing}" in
     1|true|yes|on)
         preserve_backing_vocals=1
         ;;
@@ -224,6 +263,7 @@ for index in "${!input_paths[@]}"; do
         separate
         --project "$project_dir"
         --profile "$profile"
+        --device "$device"
         --worker "$script_path"
     )
     if [[ $replacing -eq 1 ]]; then
@@ -235,8 +275,8 @@ for index in "${!input_paths[@]}"; do
     if [[ -n "${K3_MODEL_DIR:-}" ]]; then
         separate_args+=(--model-dir "$K3_MODEL_DIR")
     fi
-    if [[ -n "${K3_SEGMENT_SIZE:-}" ]]; then
-        separate_args+=(--segment-size "$K3_SEGMENT_SIZE")
+    if [[ -n "$segment_size" ]]; then
+        separate_args+=(--segment-size "$segment_size")
     fi
     if [[ $disable_autocast -eq 1 ]]; then
         separate_args+=(--no-autocast)

@@ -27,10 +27,10 @@ Linux — open a terminal and paste:
 curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
-For a new installation, choose a disk with **at least 8 GiB free**, enter a new or empty installation folder,
+For a new installation, choose a disk with **at least 12 GiB free (24 GiB for CUDA)**, enter a new or empty installation folder,
 and confirm with `y`. Installation needs internet access. It downloads the programs,
 Python and default separation models; you do not need to install them yourself.
-A full installation usually uses 2–4 GiB afterward. Installer messages are in English.
+The installation directory usually uses 2–10 GiB afterward; retained dependency caches use additional space. Installer messages are in English.
 If an existing online installation is found, the installer instead selects it for
 an update and asks you to confirm; see the upgrade instructions below.
 
@@ -66,7 +66,7 @@ one is found, its folder is selected automatically; confirm the displayed folder
 `y`. If several are found, select one from the list. If none is found, enter the
 **existing K3 installation folder** manually. The upgrade entry verifies the downloaded
 installer and updates K3 in place. Keep at least
-8 GiB free for a full installation. Existing model weights are reused when their
+12 GiB free for a full CPU/MPS installation, or 24 GiB for CUDA. Existing model weights are reused when their
 SHA-256 matches the new release; only missing or changed weights are downloaded.
 Your projects and recordings are retained;
 upgrades from legacy releases also keep the old installation in a sibling
@@ -93,9 +93,11 @@ editing is needed. K3 reopens your last project paused when you launch it again.
 ## 3. Add a song
 
 1. Click **Separate song**, then **Choose files**. Select one or more audio files.
-2. Keep **Quality** and **Runtime default** to start. Try **Balanced** or **Fast** if processing is too slow.
+2. Start with the hardware recommendation: **Fast** for CPU/older or small GPUs, **Balanced** for modern GPUs with 6–8 GiB VRAM, or **Quality** at 8 GiB or more. Existing preferences are kept. You can change the profile and quality model in Settings.
 3. Click **Create and separate** for one new song, or **Queue selected** for several.
 4. Wait for the prepared song to appear in the left-hand project list, then select it.
+
+Select **Auto (GPU preferred)**, **CPU only**, or **GPU only** in the separation page or Settings. CPU disables GPU inference. GPU reports an error when no compatible accelerator is available; Auto can fall back to CPU. The choice is saved and applies to new jobs.
 
 You can add more songs while K3 works. The progress card shows the current song and queue;
 its percentage is for the current processing stage. Press **Esc** to return to playback:
@@ -117,7 +119,7 @@ Click Play and select a track:
 | Track | What you hear |
 | --- | --- |
 | **Original** | The original song |
-| **Backing** | The accompaniment, with backing vocals preserved by default |
+| **Backing** | The accompaniment; Quality defaults preserve backing vocals, while Fast/Balanced hardware recommendations skip the extra pass |
 | **Vocals** | The separated lead vocal |
 | **Take** | Your selected saved recording mixed with accompaniment |
 

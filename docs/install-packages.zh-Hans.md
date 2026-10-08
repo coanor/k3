@@ -1,18 +1,41 @@
 # 安装 K3
 
+## 硬件自动适配
+
+在线安装和升级时检测显卡、驱动与显存，再安装兼容的 PyTorch；启动程序时无需等待下载。
+750 Ti 等 Maxwell/Pascal/Volta 显卡使用 CUDA 12.6，Blackwell 使用 CUDA 12.8，
+Apple Silicon 使用 MPS；AMD/Intel 或不兼容的显卡、驱动使用 CPU。
+安装后执行卷积与 CUDA FFT 验证，验证失败则安装 CPU 版本；下载失败会停止安装。
+
+首次打开 GUI 时，旧显卡或显存不足 6 GiB 推荐 Fast，较新显卡 6–8 GiB 推荐 Balanced，
+8 GiB 以上推荐 Quality；已有设置与手动选择优先。750 Ti 默认 MDX 分段为 128，
+关闭 autocast 和额外和声分离。离线包仍默认使用 CPU。
+依赖下载保存在安装目录旁的 `.k3-download-cache`，升级可复用；安装后可删除缓存。
+更换显卡后运行升级以重新适配。详见 [英文硬件选择说明](install-packages.md#hardware-selection)。
+
+### 选择分离设备
+
+GUI 的分离页面和设置提供“自动（优先 GPU）”“仅 CPU”和“仅 GPU”，并保存选择。
+CPU 模式关闭 GPU 推理；GPU 模式会验证 CUDA/MPS 算子，不可用时报错，不会悄悄回退 CPU。
+更改对后续任务生效，当前任务继续使用原设备；音频解码和文件写入仍由 CPU 完成。
+CLI 使用 `k3 separate --project PATH --device cpu`，Bash 使用 `separate.sh --device gpu`，
+PowerShell 使用 `separate.ps1 -Device cpu`。还可使用 `K3_DEVICE` 环境变量，或在
+`config.json` 的 `separation` 中设置 `"device": "cpu"`。切换不会下载依赖，GPU 依赖需预先安装。
+仅 GPU 模式要求 MDX 分段不同于模型原生分段，内置模型使用 128；原生 ONNX CPU 推理会被拒绝。
+
 ## 在线安装（默认方式）
 
 Linux/macOS 使用发行版中的 `install.sh`，Windows 使用 `install.ps1`。
 安装器分别下载当前平台的 CLI、GUI（平台提供时）及分离启动器，再准备独立 Python、
-CPU 分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安装 Rust、Python 或 uv。
+适配硬件的分离依赖、FFmpeg 和 Fast / Balanced / Quality 模型，无需预先安装 Rust、Python 或 uv。
 程序文件与模型分开下载，不需要先下载大型完整 ZIP。
 
 | 平台 | 程序与分离支持 |
 | --- | --- |
-| Linux x86_64 / ARM64 | GUI、CLI/TUI、CPU 分离环境；glibc ≥ 2.39 |
-| Windows x64 | GUI、CLI/TUI、CPU 分离环境；Windows 10/11 |
+| Linux x86_64 / ARM64 | GUI、CLI/TUI、CPU/CUDA 分离环境（CUDA 限 x86_64）；glibc ≥ 2.39 |
+| Windows x64 | GUI、CLI/TUI、CPU/CUDA 分离环境；Windows 10/11 |
 | Windows ARM64 | 原生 CLI/TUI；Windows 11；目前无 GUI 和完整分离依赖 |
-| macOS Apple Silicon | CLI/TUI、CPU 分离环境；macOS ≥ 14；目前无 GUI |
+| macOS Apple Silicon | CLI/TUI、CPU/MPS 分离环境；macOS ≥ 14；目前无 GUI |
 | macOS Intel | 原生 CLI/TUI；macOS ≥ 14；目前无 GUI 和完整分离依赖 |
 
 `coanor/k3` 已公开，安装器默认从该仓库读取发行版，无需额外配置公开二进制仓库。
@@ -68,8 +91,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k
 ```
 
 Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录。Linux/macOS 会列出挂载点，
-让你输入相应磁盘上的路径。完整安装目前估计下载约 1–2 GiB、安装后约 2–4 GiB，
-要求至少预留 8 GiB 峰值空间；CLI 精简安装预留 512 MiB。实际大小随平台和依赖变化。
+让你输入相应磁盘上的路径。完整安装目前估计下载约 1–5 GiB、安装后约 2–10 GiB，
+完整 CPU/MPS 安装预留 12 GiB；CUDA 依赖下载前会检查至少 24 GiB，用于运行库、缓存和临时文件。
+CLI 精简安装预留 512 MiB。保留的依赖缓存还需额外空间。
 确认默认是“否”；拒绝时不会下载组件。`--yes` / `-Yes` 只用于自动化，并且必须同时明确指定安装目录。
 
 模型、独立 Python、下载缓存及临时文件均写在所选磁盘；完成或失败后清理安装器临时目录。

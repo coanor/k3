@@ -21,6 +21,7 @@ from typing import Any, Iterator, Protocol
 from .errors import WorkerError
 from .models import SeparationModel
 from .progress import ProgressReporter
+from .hardware import check_accelerator, configure_device, read_plan
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class RuntimeResult:
     checkpoint_sha256: str
     backing_vocals: Path | None = None
     backing_vocals_checkpoint_sha256: str | None = None
+    backing_vocals_runtime_options: dict[str, Any] | None = None
 
 
 class SeparationRuntime(Protocol):
@@ -48,7 +50,13 @@ class SeparationRuntime(Protocol):
 class AudioSeparatorRuntime:
     """Runs any allow-listed audio-separator checkpoint and emits two WAV stems."""
 
-    def __init__(self, model_dir: Path, progress: ProgressReporter | None = None) -> None:
+    def __init__(self, model_dir: Path, progress: ProgressReporter | None = None,
+                 device: str | None = None) -> None:
+        self._device = device if device is not None else os.environ.get("K3_DEVICE", "auto")
+        if self._device not in {"auto", "cpu", "gpu"}:
+            raise WorkerError("invalid_request", "device must be auto, cpu, or gpu")
+        self._backend: str | None = None
+        configure_device()
         self._progress = progress or ProgressReporter()
         self._model_dir = model_dir.expanduser().resolve()
         self._model_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +93,36 @@ class AudioSeparatorRuntime:
             "device": device,
             "ffmpeg": shutil.which("ffmpeg"),
             "model_dir": str(self._model_dir),
+            "hardware": read_plan(),
+            "device_selection": self._device,
+            "selected_backend": self._backend,
         }
+
+    def _inference_backend(self) -> str:
+        if self._backend is not None:
+            return self._backend
+        plan = read_plan()
+        if self._device == "cpu" or (self._device == "auto" and plan and plan["backend"] == "cpu"):
+            self._backend = "cpu"
+            logging.getLogger(__name__).info("Separation device selection: %s; backend: cpu", self._device)
+            return self._backend
+        try:
+            import torch
+
+            backend = ("cuda" if torch.cuda.is_available() else
+                       "mps" if torch.backends.mps.is_available() else "cpu")
+            if backend == "cpu" and self._device == "gpu":
+                raise RuntimeError("No compatible CUDA/MPS GPU is available; install a compatible runtime or select CPU")
+            if backend != "cpu":
+                check_accelerator(backend)
+        except Exception as error:
+            if self._device == "gpu":
+                raise WorkerError("gpu_unavailable", f"GPU-only separation is unavailable: {error}") from error
+            logging.getLogger(__name__).warning("GPU validation failed; using CPU: %s", error)
+            backend = "cpu"
+        self._backend = backend
+        logging.getLogger(__name__).info("Separation device selection: %s; backend: %s", self._device, backend)
+        return backend
 
     def _configure_ffmpeg(self) -> None:
         if shutil.which("ffmpeg") is not None:
@@ -142,8 +179,12 @@ class AudioSeparatorRuntime:
         primary_dir.mkdir()
         backing_dir.mkdir()
         primary = self._separate_once(input_path, primary_dir, model, options)
+        backing_options = dict(options)
+        if (self._inference_backend() != "cpu" and backing_vocals_model.architecture == "mdx-net"
+                and backing_options.get("segment_size", 256) == 256):
+            backing_options["segment_size"] = 128
         separated_vocals = self._separate_once(
-            primary.vocals, backing_dir, backing_vocals_model, options, "backing_vocals"
+            primary.vocals, backing_dir, backing_vocals_model, backing_options, "backing_vocals"
         )
         self._progress.stage("writing_audio")
         lead_vocals = scratch_dir / "vocals.wav"
@@ -161,6 +202,7 @@ class AudioSeparatorRuntime:
             primary.checkpoint_sha256,
             backing_vocals,
             separated_vocals.checkpoint_sha256,
+            {**backing_vocals_model.runtime_options, **backing_options},
         )
 
     def _separate_once(
@@ -172,6 +214,7 @@ class AudioSeparatorRuntime:
         pass_kind: str = "vocals",
     ) -> RuntimeResult:
         self._progress.stage(f"loading_{pass_kind}")
+        backend = self._inference_backend()
         try:
             from audio_separator.separator import Separator
         except ImportError as error:
@@ -226,7 +269,24 @@ class AudioSeparatorRuntime:
             with self._inference_model_dir(scratch_dir) as inference_models:
                 common["model_file_dir"] = str(inference_models)
                 separator = Separator(**common)
+                import torch
+
+                separator.torch_device = torch.device(backend)
+                separator.torch_device_mps = torch.device("mps") if backend == "mps" else None
+                if backend == "cpu":
+                    separator.onnx_execution_provider = ["CPUExecutionProvider"]
                 separator.load_model(model_filename=model.filename)
+                if self._device == "gpu":
+                    instance = separator.model_instance
+                    actual_device = getattr(instance, "torch_device", None)
+                    if getattr(actual_device, "type", None) != backend:
+                        raise WorkerError("gpu_unavailable", f"GPU-only separation requires a model on {backend}; the loaded model uses {actual_device}")
+                    # Check the loaded inference path, including checkpoints whose
+                    # custom registry architecture does not match their real type.
+                    dim_t = getattr(instance, "dim_t", None)
+                    if dim_t is not None and getattr(instance, "segment_size", None) == dim_t:
+                        alternative = 128 if dim_t != 128 else 256
+                        raise WorkerError("invalid_request", f"GPU-only MDX separation requires a non-native segment size; try segment size {alternative}")
                 output_names = {stem: self._output_name(stem) for stem in model.output_stems}
                 self._progress.stage(f"separating_{pass_kind}")
                 with self._progress.watch_inference():

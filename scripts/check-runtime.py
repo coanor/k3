@@ -33,7 +33,13 @@ def check(root: Path) -> None:
     check_artifacts(root, manifest["artifacts"])
     os.environ["PATH"] = str(root / "runtime/bin") + os.pathsep + os.environ.get("PATH", "")
     sys.addaudithook(deny_network)
+    from k3_separator.hardware import check_accelerator, configure_device, read_plan
+    configure_device()
+    plan = read_plan()
+    if plan:
+        check_accelerator(plan["backend"])
     from audio_separator.separator import Separator
+    import torch
     from k3_separator.models import ModelRegistry
     from k3_separator.runtime import AudioSeparatorRuntime
 
@@ -46,6 +52,11 @@ def check(root: Path) -> None:
         model = registry.select(entry["profiles"][0], entry["id"])
         runtime._prepare_primary_artifact(model)
         separator = Separator(model_file_dir=str(root / "models"), output_format="WAV")
+        # Validate all bundled models on CPU even on small GPUs. The selected
+        # accelerator has already passed kernel checks above.
+        separator.torch_device = torch.device("cpu")
+        separator.torch_device_mps = None
+        separator.onnx_execution_provider = ["CPUExecutionProvider"]
         separator.load_model(model_filename=model.filename)
         print(f"Offline model loading passed: {model.id}", flush=True)
         del separator

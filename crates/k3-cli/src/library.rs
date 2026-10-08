@@ -14,8 +14,8 @@ use k3_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::python_separator::{
-    PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs, separation_log_path,
-    separation_output_paths,
+    DeviceSelection, PythonSeparatorConfig, PythonStemSeparator, cleanup_obsolete_outputs,
+    separation_log_path, separation_output_paths,
 };
 
 const DEFAULT_EXTENSIONS: [&str; 6] = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
@@ -90,6 +90,8 @@ impl Default for ScanConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SeparationConfig {
+    #[serde(default)]
+    pub device: DeviceSelection,
     pub worker: PathBuf,
     pub model_dir: Option<PathBuf>,
     pub log_dir: Option<PathBuf>,
@@ -379,6 +381,7 @@ fn replace_source_and_reseparate_inner(
         project.replace_source(relative_source)?;
 
         let separator_config = PythonSeparatorConfig {
+            device: DeviceSelection::from_environment(config.separation.device)?,
             worker: config.separation.worker.clone(),
             model_dir: config.separation.model_dir.clone(),
             project_root: staging.clone(),
@@ -527,6 +530,7 @@ fn separate_into_project(
     project_root: &Path,
     cancellation: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf, Box<dyn Error>> {
+    let device = DeviceSelection::from_environment(config.separation.device)?;
     let repository = FileProjectRepository;
     let replacing = project_root.exists();
     let title = source
@@ -554,6 +558,7 @@ fn separate_into_project(
     };
     let previous_outputs = separation_output_paths(&project);
     let separator_config = PythonSeparatorConfig {
+        device,
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
         project_root: project.root().to_path_buf(),

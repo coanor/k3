@@ -15,6 +15,7 @@ fn separate_command_runs_worker_and_persists_ready_project() {
         &worker,
         r#"#!/usr/bin/env python3
 import json
+import os
 import pathlib
 import sys
 
@@ -29,6 +30,7 @@ vocals.write_bytes(b"vocals")
 backing.write_bytes(b"backing vocals")
 accompaniment.write_bytes(b"accompaniment plus backing")
 (output / "request.json").write_text(json.dumps(request), encoding="utf-8")
+(output / "device.txt").write_text(os.environ["K3_DEVICE"], encoding="utf-8")
 print(json.dumps({
     "id": request["id"],
     "ok": True,
@@ -63,6 +65,8 @@ print(json.dumps({
         .env("K3_LOG_DIR", &log_dir)
         .args([
             "separate",
+            "--device",
+            "cpu",
             "--project",
             project_root.to_str().unwrap(),
             "--profile",
@@ -99,6 +103,10 @@ print(json.dumps({
     assert_eq!(manifest.provenance.profile, SeparationProfile::Quality);
 
     let request = read_json(&project_root.join("stems/request.json"));
+    assert_eq!(
+        fs::read_to_string(project_root.join("stems/device.txt")).unwrap(),
+        "cpu"
+    );
     assert_eq!(request["params"]["options"]["segment_size"], 128);
     assert_eq!(request["params"]["options"]["autocast"], true);
     assert_eq!(request["params"]["preserve_backing_vocals"], true);

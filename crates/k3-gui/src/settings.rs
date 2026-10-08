@@ -94,6 +94,8 @@ pub struct GuiSettings {
     #[serde(default)]
     pub separation_quality_model: GuiQualityModel,
     #[serde(default)]
+    pub separation_device: GuiSeparationDevice,
+    #[serde(default)]
     pub language: GuiLanguage,
     pub window: WindowSize,
     pub last_project_id: Option<String>,
@@ -108,6 +110,7 @@ impl Default for GuiSettings {
             recording: RecordingSettings::default(),
             separation_profile: GuiSeparationProfile::default(),
             separation_quality_model: GuiQualityModel::default(),
+            separation_device: GuiSeparationDevice::default(),
             language: GuiLanguage::default(),
             window: WindowSize::default(),
             last_project_id: None,
@@ -123,6 +126,45 @@ pub enum GuiSeparationProfile {
     #[default]
     Quality,
     Compatible,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuiSeparationDevice {
+    #[default]
+    Auto,
+    Cpu,
+    Gpu,
+}
+
+impl GuiSeparationDevice {
+    #[must_use]
+    pub const fn index(self) -> i32 {
+        match self {
+            Self::Auto => 0,
+            Self::Cpu => 1,
+            Self::Gpu => 2,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Auto),
+            1 => Some(Self::Cpu),
+            2 => Some(Self::Gpu),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+        }
+    }
 }
 
 impl GuiSeparationProfile {
@@ -255,7 +297,45 @@ impl GuiSettings {
     ///
     /// Returns an error for unreadable, invalid, or unsupported settings.
     pub fn load() -> Result<Self, SettingsError> {
-        Self::load_from(&Self::path()?)
+        let path = Self::path()?;
+        let first_use = !path.exists();
+        let mut settings = Self::load_from(&path)?;
+        if first_use
+            && let Ok(script) = crate::separation::bundled_script()
+            && let Some(root) = script.parent()
+        {
+            let candidates = [
+                (root.join("config.json"), false),
+                (root.join("runtime/python/k3-hardware.json"), true),
+                (root.join(".venv-separator/k3-hardware.json"), true),
+            ];
+            for (candidate, requires_schema) in candidates {
+                if let Ok(bytes) = fs::read(candidate)
+                    && let Ok(plan) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                    && (!requires_schema || plan["schema_version"] == 1)
+                {
+                    if !requires_schema
+                        && let Ok(device) =
+                            serde_json::from_value(plan["separation"]["device"].clone())
+                    {
+                        settings.separation_device = device;
+                    }
+                    if let Ok(profile) =
+                        serde_json::from_value(plan["separation"]["profile"].clone())
+                    {
+                        settings.separation_profile = if requires_schema
+                            && settings.separation_device == GuiSeparationDevice::Cpu
+                        {
+                            GuiSeparationProfile::Fast
+                        } else {
+                            profile
+                        };
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(settings)
     }
 
     /// Loads GUI settings from an explicit path.
