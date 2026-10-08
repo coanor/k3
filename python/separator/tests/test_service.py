@@ -1,3 +1,4 @@
+from dataclasses import replace
 import hashlib
 import os
 import tempfile
@@ -6,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from k3_separator.errors import WorkerError
-from k3_separator.models import ModelRegistry
+from k3_separator.models import BUILTIN_MODELS, ModelRegistry
 from k3_separator.runtime import RuntimeResult
 from k3_separator.service import SeparationService
 
@@ -71,6 +72,42 @@ class SeparationServiceTests(unittest.TestCase):
                     self.assertIn("backing_vocals", result)
                 else:
                     self.assertEqual(128, provenance["runtime_options"]["segment_size"])
+
+    def test_hardware_defaults_preserve_registry_overrides(self) -> None:
+        defaults = {"profile": "fast", "model": "uvr-mdx-karaoke-2", "segment_size": 128,
+                    "autocast": False, "preserve_backing_vocals": False}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "song.wav"
+            source.write_bytes(b"audio")
+            for architecture, segment in (("mdx-net", 64), ("htdemucs", 10)):
+                with self.subTest(architecture=architecture):
+                    custom = replace(BUILTIN_MODELS[0], architecture=architecture,
+                                     runtime_options={"segment_size": segment, "autocast": True})
+                    registry = ModelRegistry((custom, *BUILTIN_MODELS[1:]))
+                    service = SeparationService(registry, FakeRuntime(), defaults=defaults, accelerator=True)
+                    result = service.handle({"method": "separate", "params": {
+                        "input_path": str(source), "output_dir": str(root / architecture),
+                        "preserve_backing_vocals": False}})
+                    options = result["provenance"]["runtime_options"]
+                    self.assertEqual(segment, options["segment_size"])
+                    self.assertTrue(options["autocast"])
+            custom = replace(BUILTIN_MODELS[0], id="custom-no-segment",
+                             runtime_options={"autocast": False})
+            result = SeparationService(ModelRegistry((custom,)), FakeRuntime(), defaults=defaults, accelerator=True).handle({
+                "method": "separate", "params": {"input_path": str(source),
+                "output_dir": str(root / "no-segment"), "preserve_backing_vocals": False}})
+            self.assertEqual(128, result["provenance"]["runtime_options"]["segment_size"])
+            self.assertFalse(result["provenance"]["runtime_options"]["autocast"])
+            # A registry can also move the recommended checkpoint to another profile.
+            changed = replace(BUILTIN_MODELS[0], profiles=("quality",))
+            alternate = replace(BUILTIN_MODELS[0], id="custom-fast", runtime_options={"segment_size": 64})
+            registry = ModelRegistry((changed, alternate, *BUILTIN_MODELS[1:]))
+            result = SeparationService(registry, FakeRuntime(), defaults=defaults, accelerator=True).handle({
+                "method": "separate", "params": {"input_path": str(source),
+                "output_dir": str(root / "new-profile"), "preserve_backing_vocals": False}})
+            self.assertEqual("custom-fast", result["provenance"]["checkpoint_id"])
+            self.assertEqual(64, result["provenance"]["runtime_options"]["segment_size"])
 
     def test_preserves_backing_vocals_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -87,6 +87,7 @@ $selectedDevice = if (-not [string]::IsNullOrWhiteSpace($Device)) {
 if ($selectedDevice -notin @("auto", "cpu", "gpu")) {
     throw "Device must be auto, cpu, or gpu."
 }
+$selectedDevice = ([string]$selectedDevice).ToLowerInvariant()
 $env:K3_DEVICE = $selectedDevice
 
 if ([string]::IsNullOrWhiteSpace($Directory)) {

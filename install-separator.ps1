@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$Backend = $Backend.ToLowerInvariant()
 
 if ([string]::IsNullOrWhiteSpace($VenvPath)) {
     $VenvPath = Join-Path $PSScriptRoot ".venv-separator"

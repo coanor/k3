@@ -77,7 +77,6 @@ def detect_nvidia() -> list[NvidiaGpu]:
         return []
     devices = []
     visibility = os.environ.get("CUDA_VISIBLE_DEVICES")
-    visible = None if visibility is None else {value.strip() for value in visibility.split(",") if value.strip()}
     for fields in csv.reader(result.stdout.splitlines(), skipinitialspace=True):
         try:
             index, uuid, name, capability, memory, driver = (value.strip() for value in fields)
@@ -86,22 +85,18 @@ def detect_nvidia() -> list[NvidiaGpu]:
                 continue
             gpu = NvidiaGpu(int(index), uuid, name, cc, int(float(memory)),
                             tuple(int(value) for value in driver.split(".")))
-            if (visible is None or str(gpu.index) in visible
-                    or any(gpu.uuid.startswith(value) for value in visible if value.startswith("GPU-"))):
-                devices.append(gpu)
+            devices.append(gpu)
         except (ValueError, TypeError):
             continue
-    if visibility is not None:
-        # PyTorch uses the first visible device. Preserve the user's ordering.
-        ordered = []
-        for token in visibility.split(","):
-            token = token.strip()
-            for gpu in devices:
-                if token == str(gpu.index) or (token.startswith("GPU-") and gpu.uuid.startswith(token)):
-                    ordered.append(gpu)
-                    break
-        return ordered[:1]
-    return devices
+    if visibility is None:
+        return devices
+    # CUDA stops at an invalid visibility token; never skip it to enable a
+    # later GPU. Only the first visible device is used by the worker.
+    token = visibility.split(",", 1)[0].strip()
+    matches = [gpu for gpu in devices if token == str(gpu.index)
+               or (token.startswith("GPU-") and gpu.uuid.startswith(token))]
+    # UUID prefixes must uniquely identify a physical card.
+    return matches if len(matches) == 1 else []
 
 
 def select_runtime(gpus: list[NvidiaGpu], system: str, machine: str,

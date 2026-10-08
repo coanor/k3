@@ -276,10 +276,16 @@ class AudioSeparatorRuntime:
                 if backend == "cpu":
                     separator.onnx_execution_provider = ["CPUExecutionProvider"]
                 separator.load_model(model_filename=model.filename)
-                if self._device == "gpu" and model.architecture == "mdx-net":
+                if self._device == "gpu":
                     instance = separator.model_instance
-                    if instance.segment_size == instance.dim_t:
-                        alternative = 128 if instance.dim_t != 128 else 256
+                    actual_device = getattr(instance, "torch_device", None)
+                    if getattr(actual_device, "type", None) != backend:
+                        raise WorkerError("gpu_unavailable", f"GPU-only separation requires a model on {backend}; the loaded model uses {actual_device}")
+                    # Check the loaded inference path, including checkpoints whose
+                    # custom registry architecture does not match their real type.
+                    dim_t = getattr(instance, "dim_t", None)
+                    if dim_t is not None and getattr(instance, "segment_size", None) == dim_t:
+                        alternative = 128 if dim_t != 128 else 256
                         raise WorkerError("invalid_request", f"GPU-only MDX separation requires a non-native segment size; try segment size {alternative}")
                 output_names = {stem: self._output_name(stem) for stem in model.output_stems}
                 self._progress.stage(f"separating_{pass_kind}")

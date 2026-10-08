@@ -164,7 +164,7 @@ available=$(df -Pk "$ancestor" | awk 'NR == 2 {print $4}')
 [[ "$available" =~ ^[0-9]+$ && "$available" -ge "$required" ]] || { echo 'Insufficient space on the selected disk; choose another directory or disk' >&2; exit 1; }
 echo "Installation directory: $prefix"
 echo "Free disk space: $((available / 1024)) MiB; reserved space for peak installation usage: $((required / 1024)) MiB"
-echo 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB, depending on GPU support. CLI-only installations are smaller.'
+echo 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB plus dependency caches. CUDA setup requires at least 24 GiB free; CPU/MPS reserves 12 GiB. CLI-only installations are smaller.'
 if [[ "$confirmed" != true ]]; then
     [[ -t 3 ]] || { echo 'Non-interactive installation requires --yes' >&2; exit 1; }
     prompt='Start downloading and installing? [y/N]: '

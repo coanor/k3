@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,10 @@ def install_torch(python: Path, uv: str | Path | None = None,
         python_root = python.parent
     elif (python.parent.parent / "pyvenv.cfg").exists():
         python_root = python.parent.parent
+    # Copying packages into the runtime keeps it relocatable, but CUDA wheels
+    # also occupy the persistent uv/pip cache and download staging space.
+    if plan.backend == "cuda" and shutil.disk_usage(python_root).free < 24 * 1024**3:
+        raise RuntimeError("CUDA runtime preparation requires at least 24 GiB free for installed packages, cached downloads and temporary files; choose another disk or free space")
     environment = dict(os.environ, PYTHONUTF8="1")
     if plan.gpu:
         environment["CUDA_VISIBLE_DEVICES"] = plan.gpu.uuid

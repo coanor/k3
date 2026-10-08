@@ -80,7 +80,9 @@ class HardwareTests(unittest.TestCase):
               patch("k3_separator.hardware.subprocess.run", return_value=subprocess.CompletedProcess([], 0, output)),
               patch.dict(os.environ, {}, clear=True)):
             self.assertEqual([0, 1], [item.index for item in detect_nvidia()])
-            for value, indices in (("1,0", [1]), ("GPU-zero", [0]), ("", []), ("-1", [])):
+            for value, indices in (("1,0", [1]), ("GPU-zero", [0]), ("", []), ("-1", []),
+                                   ("-1,0", []), ("missing,1", []), (",1", []),
+                                   ("GPU-,1", [])):
                 os.environ["CUDA_VISIBLE_DEVICES"] = value
                 self.assertEqual(indices, [item.index for item in detect_nvidia()])
 
@@ -135,6 +137,20 @@ class SetupRuntimeTests(unittest.TestCase):
             self.assertIn("torch==2.11.0+cu126", install)
             self.assertEqual(["--check", "cuda"], probe[-2:])
             self.assertIn("torch==2.11.0+cpu", fallback)
+
+    def test_cuda_install_checks_space_before_downloading_or_changing_metadata(self):
+        plan = select_runtime([gpu()], "linux", "x86_64")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_plan(root, select_runtime([], "linux", "x86_64", "cpu"))
+            original = (root / "k3-hardware.json").read_bytes()
+            with (patch("k3_separator.setup_runtime.detect_runtime", return_value=plan),
+                  patch("k3_separator.setup_runtime.shutil.disk_usage", return_value=type("Disk", (), {"free": 18 * 1024**3})()),
+                  patch("k3_separator.setup_runtime.subprocess.run") as run):
+                with self.assertRaisesRegex(RuntimeError, "24 GiB"):
+                    install_torch(root / "bin/python3")
+            run.assert_not_called()
+            self.assertEqual(original, (root / "k3-hardware.json").read_bytes())
 
     def test_network_failure_does_not_claim_gpu_is_ready(self):
         plan = select_runtime([gpu()], "linux", "x86_64")

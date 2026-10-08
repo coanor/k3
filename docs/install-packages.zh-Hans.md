@@ -92,7 +92,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Repo coanor/k
 
 Windows 会列出磁盘及剩余空间，先选择磁盘，再填写安装目录。Linux/macOS 会列出挂载点，
 让你输入相应磁盘上的路径。完整安装目前估计下载约 1–5 GiB、安装后约 2–10 GiB，
-要求至少预留 12 GiB 峰值空间；CLI 精简安装预留 512 MiB。实际大小随平台和依赖变化。
+完整 CPU/MPS 安装预留 12 GiB；CUDA 依赖下载前会检查至少 24 GiB，用于运行库、缓存和临时文件。
+CLI 精简安装预留 512 MiB。保留的依赖缓存还需额外空间。
 确认默认是“否”；拒绝时不会下载组件。`--yes` / `-Yes` 只用于自动化，并且必须同时明确指定安装目录。
 
 模型、独立 Python、下载缓存及临时文件均写在所选磁盘；完成或失败后清理安装器临时目录。

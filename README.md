@@ -15,7 +15,8 @@ Use `install.sh` on Linux/macOS or `install.ps1` on Windows. You do not need to 
 Python, or uv beforehand. The installer asks you to choose a disk and directory, requests
 confirmation, and downloads the programs for your platform. Where supported, it also prepares
 standalone Python, separation dependencies, and models, then checks startup and models.
-A full installation needs **12 GiB** of free space at its peak and uses about **2–10 GiB** afterward, depending on GPU support.
+A full CPU/MPS installation reserves **12 GiB** of free space; CUDA setup requires **24 GiB** to cover installed packages, cached downloads and temporary files.
+The installation directory uses about **2–10 GiB** afterward. Retained dependency caches use additional space.
 The minimal CLI installation on Windows ARM64 and Intel macOS needs **512 MiB** of free space.
 
 **Current release: [v0.1.6](https://github.com/coanor/k3/releases/tag/v0.1.6).

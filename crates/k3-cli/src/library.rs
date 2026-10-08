@@ -530,6 +530,7 @@ fn separate_into_project(
     project_root: &Path,
     cancellation: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf, Box<dyn Error>> {
+    let device = DeviceSelection::from_environment(config.separation.device)?;
     let repository = FileProjectRepository;
     let replacing = project_root.exists();
     let title = source
@@ -557,7 +558,7 @@ fn separate_into_project(
     };
     let previous_outputs = separation_output_paths(&project);
     let separator_config = PythonSeparatorConfig {
-        device: DeviceSelection::from_environment(config.separation.device)?,
+        device,
         worker: config.separation.worker.clone(),
         model_dir: config.separation.model_dir.clone(),
         project_root: project.root().to_path_buf(),

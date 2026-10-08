@@ -106,16 +106,29 @@ $global:LASTEXITCODE = 0
     foreach ($name in @("K3_PROFILE", "K3_MODEL", "K3_SEGMENT_SIZE", "K3_AUTOCAST", "K3_PRESERVE_BACKING_VOCALS")) {
         [Environment]::SetEnvironmentVariable($name, "", "Process")
     }
-    foreach ($device in @("cpu", "gpu")) {
+    foreach ($device in @("cpu", "gpu", "CPU", "GPU")) {
         & $script -f $audio -d $projectRoot -Device $device | Out-Null
         $captured = Get-Content -LiteralPath (Join-Path $fixture "captured.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $expectedSegment = if ($device -eq "cpu") { "256" } else { "128" }
-        if ($captured[$captured.IndexOf("--device") + 1] -ne $device -or
+        if ($captured[$captured.IndexOf("--device") + 1] -cne $device.ToLowerInvariant() -or
             $captured[$captured.IndexOf("--segment-size") + 1] -ne $expectedSegment) {
             throw "Explicit device selection did not reach the separation command."
         }
     }
     Write-Output "CPU-only and GPU-only commands passed on Windows PowerShell"
+
+    # Exercise the real installer's parameter setup without creating a runtime
+    # or downloading dependencies. ValidateSet accepts mixed-case input.
+    $installerPath = Join-Path (Split-Path -Parent $ScriptPath) "install-separator.ps1"
+    $installerText = Get-Content -LiteralPath $installerPath -Raw -Encoding UTF8
+    $setupEnd = $installerText.IndexOf('$runtimeCache =')
+    if ($setupEnd -lt 0) { throw "Installer parameter setup was not found." }
+    $parameterSetup = [scriptblock]::Create($installerText.Substring(0, $setupEnd) + 'Write-Output $Backend')
+    foreach ($backend in @("GPU", "CpU", "AUTO")) {
+        $selected = & $parameterSetup -Backend $backend -VenvPath $fixture -ConfigPath (Join-Path $fixture "config.json")
+        if ($selected -cne $backend.ToLowerInvariant()) { throw "Installer backend was not normalized." }
+    }
+    Write-Output "Installer backend case normalization passed on Windows PowerShell"
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }

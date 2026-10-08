@@ -27,10 +27,10 @@ Linux — open a terminal and paste:
 curl -fsSL https://github.com/coanor/k3/releases/download/v0.1.6/install.sh | bash -s -- --version v0.1.6
 ```
 
-For a new installation, choose a disk with **at least 12 GiB free**, enter a new or empty installation folder,
+For a new installation, choose a disk with **at least 12 GiB free (24 GiB for CUDA)**, enter a new or empty installation folder,
 and confirm with `y`. Installation needs internet access. It downloads the programs,
 Python and default separation models; you do not need to install them yourself.
-A full installation usually uses 2–10 GiB afterward. Installer messages are in English.
+The installation directory usually uses 2–10 GiB afterward; retained dependency caches use additional space. Installer messages are in English.
 If an existing online installation is found, the installer instead selects it for
 an update and asks you to confirm; see the upgrade instructions below.
 
@@ -66,7 +66,7 @@ one is found, its folder is selected automatically; confirm the displayed folder
 `y`. If several are found, select one from the list. If none is found, enter the
 **existing K3 installation folder** manually. The upgrade entry verifies the downloaded
 installer and updates K3 in place. Keep at least
-12 GiB free for a full installation. Existing model weights are reused when their
+12 GiB free for a full CPU/MPS installation, or 24 GiB for CUDA. Existing model weights are reused when their
 SHA-256 matches the new release; only missing or changed weights are downloaded.
 Your projects and recordings are retained;
 upgrades from legacy releases also keep the old installation in a sibling

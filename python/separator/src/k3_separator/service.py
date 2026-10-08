@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import WorkerError
-from .models import BACKING_VOCALS_MODEL_ID, ModelRegistry
+from .models import BACKING_VOCALS_MODEL_ID, BUILTIN_MODELS, ModelRegistry
 from .runtime import SeparationRuntime
 from .progress import ProgressReporter
 
@@ -72,9 +72,11 @@ class SeparationService:
         overwrite = params.get("overwrite", False)
         if not isinstance(overwrite, bool):
             raise WorkerError("invalid_request", "overwrite must be a boolean")
-        if profile == self._defaults.get("profile") and model_id is None:
-            model_id = self._defaults.get("model")
-        recommended_model = model_id == self._defaults.get("model") and profile == self._defaults.get("profile")
+        model = self._registry.select(profile, model_id)
+        # Registry overrides are explicit model choices. Hardware policy only
+        # supplies defaults for the unchanged built-in checkpoints it tested.
+        recommended_model = (model in BUILTIN_MODELS and model.id == self._defaults.get("model")
+                             and profile == self._defaults.get("profile"))
         if recommended_model:
             options = {**{key: self._defaults[key] for key in ("segment_size", "autocast")
                           if key in self._defaults}, **options}
@@ -86,8 +88,8 @@ class SeparationService:
                 "invalid_request", "preserve_backing_vocals must be a boolean"
             )
 
-        model = self._registry.select(profile, model_id)
-        if self._accelerator and model.architecture == "mdx-net":
+        if (self._accelerator and model.architecture == "mdx-net"
+                and (model in BUILTIN_MODELS or "segment_size" not in model.runtime_options)):
             # A non-native segment uses audio-separator's ONNX-to-Torch path.
             options.setdefault("segment_size", 128)
         backing_vocals_model = (

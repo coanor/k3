@@ -153,7 +153,7 @@ if ($driveInfo.DriveType -eq [IO.DriveType]::Network) { throw 'Install on a loca
 if (-not $driveInfo.IsReady -or $driveInfo.AvailableFreeSpace -lt $required) { throw 'Insufficient space on the selected disk; choose another directory or disk' }
 Write-Host "Installation directory: $InstallDir"
 Write-Host ("Free disk space: {0:N1} GiB; reserved space for peak installation usage: {1:N1} GiB" -f ($driveInfo.AvailableFreeSpace / 1GB), ($required / 1GB))
-Write-Host 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB, depending on GPU support. CLI-only installations are smaller.'
+Write-Host 'A full installation downloads about 1-5 GiB and uses about 2-10 GiB plus dependency caches. CUDA setup requires at least 24 GiB free; CPU/MPS reserves 12 GiB. CLI-only installations are smaller.'
 if (-not $Yes) {
     $prompt = 'Start downloading and installing? [y/N]'
     if ($Update) { $prompt = 'Download and update all K3 components? [y/N]' }

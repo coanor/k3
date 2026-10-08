@@ -54,10 +54,10 @@ class AudioSeparatorRuntimeTests(unittest.TestCase):
 
         class FakeSeparator:
             def __init__(self, **options):
-                self.segment_size = options["mdx_params"]["segment_size"]
+                self.segment_size = options.get("mdx_params", {}).get("segment_size", 128)
 
             def load_model(self, model_filename):
-                self.model_instance = types.SimpleNamespace(segment_size=self.segment_size, dim_t=128)
+                self.model_instance = types.SimpleNamespace(segment_size=self.segment_size, dim_t=128, torch_device=self.torch_device)
 
             def separate(self, *args):
                 raise AssertionError("CPU ONNX inference must not run in GPU-only mode")
@@ -68,14 +68,42 @@ class AudioSeparatorRuntimeTests(unittest.TestCase):
             root = Path(directory)
             scratch = root / "scratch"
             scratch.mkdir()
-            model = SeparationModel(id="custom", filename="custom.onnx", architecture="mdx-net", profiles=("fast",))
+            for architecture in ("mdx-net", "bs-roformer"):
+                with self.subTest(registry_architecture=architecture):
+                    model = SeparationModel(id="custom", filename="custom.onnx", architecture=architecture, profiles=("fast",))
+                    with (patch.dict(sys.modules, {"audio_separator.separator": module}),
+                          patch("k3_separator.runtime.AudioSeparatorRuntime._inference_backend", return_value="cuda")):
+                        runtime = AudioSeparatorRuntime(root / "models", device="gpu")
+                        with self.assertRaises(WorkerError) as error:
+                            runtime.separate(root / "source.wav", scratch, model, {"segment_size": 128})
+                        self.assertEqual("invalid_request", error.exception.code)
+                        self.assertFalse(list(scratch.glob("*.wav")))
+
+    def test_gpu_only_rejects_a_model_loaded_on_cpu(self):
+        import torch
+
+        class FakeSeparator:
+            def __init__(self, **options):
+                pass
+
+            def load_model(self, model_filename):
+                self.model_instance = types.SimpleNamespace(torch_device=torch.device("cpu"))
+
+            def separate(self, *args):
+                raise AssertionError("GPU-only mode must reject a CPU model before inference")
+
+        module = types.ModuleType("audio_separator.separator")
+        module.Separator = FakeSeparator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = SeparationModel(id="custom", filename="custom.ckpt", architecture="bs-roformer", profiles=("quality",))
             with (patch.dict(sys.modules, {"audio_separator.separator": module}),
                   patch("k3_separator.runtime.AudioSeparatorRuntime._inference_backend", return_value="cuda")):
                 runtime = AudioSeparatorRuntime(root / "models", device="gpu")
                 with self.assertRaises(WorkerError) as error:
-                    runtime.separate(root / "source.wav", scratch, model, {"segment_size": 128})
-                self.assertEqual("invalid_request", error.exception.code)
-                self.assertFalse(list(scratch.glob("*.wav")))
+                    runtime.separate(root / "source.wav", root, model, {})
+                self.assertEqual("gpu_unavailable", error.exception.code)
+                self.assertFalse(list(root.glob("*.wav")))
 
     def test_gpu_quality_backing_pass_uses_torch_and_reports_actual_options(self):
         import torch
@@ -89,8 +117,10 @@ class AudioSeparatorRuntimeTests(unittest.TestCase):
                 self.model_dir = Path(options["model_file_dir"])
 
             def load_model(self, model_filename):
-                self.model_instance = types.SimpleNamespace(
-                    dim_t=256, segment_size=self.options.get("mdx_params", {}).get("segment_size", 256))
+                self.model_instance = types.SimpleNamespace(torch_device=self.torch_device)
+                if model_filename.endswith(".onnx"):
+                    self.model_instance.dim_t = 256
+                    self.model_instance.segment_size = self.options["mdx_params"]["segment_size"]
                 (self.model_dir / model_filename).write_bytes(b"model")
 
             def separate(self, _input_path, output_names):
